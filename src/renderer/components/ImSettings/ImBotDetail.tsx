@@ -192,6 +192,7 @@ export default function ImBotDetail({
                 baseUrl: p.config.baseUrl,
                 authType: p.authType,
                 apiKey: p.type !== 'subscription' ? apiKeys[p.id] : undefined,
+                models: p.models.map(m => ({ model: m.model, modelName: m.modelName })),
             }));
 
         const allServers = await getAllMcpServers();
@@ -573,6 +574,7 @@ export default function ImBotDetail({
                             id: p.id, name: p.name, primaryModel: p.primaryModel,
                             baseUrl: p.config.baseUrl, authType: p.authType,
                             apiKey: p.type !== 'subscription' ? apiKeys[p.id] : undefined,
+                            models: p.models.map(m => ({ model: m.model, modelName: m.modelName })),
                         }));
                     await hotUpdateRunning('cmd_update_im_bot_ai_config', {
                         model: newModel || null,

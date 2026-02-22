@@ -109,6 +109,7 @@ export default function ImBotList({
                 baseUrl: p.config.baseUrl,
                 authType: p.authType,
                 apiKey: p.type !== 'subscription' ? apiKeys[p.id] : undefined,
+                models: p.models.map(m => ({ model: m.model, modelName: m.modelName })),
             }));
 
         const allServers = await getAllMcpServers();

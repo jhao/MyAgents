@@ -729,8 +729,8 @@ pub async fn start_im_bot<R: Runtime>(
                              /new — 开始新对话（清空当前上下文）\n\
                              /workspace — 查看当前工作区\n\
                              /workspace <路径> — 切换工作区目录\n\
-                             /model — 查看当前 AI 模型\n\
-                             /model <名称> — 切换模型（sonnet / opus / haiku）\n\
+                             /model — 查看当前供应商的可用模型\n\
+                             /model <序号或模型ID> — 切换模型\n\
                              /provider — 查看可用 AI 供应商\n\
                              /provider <序号或ID> — 切换供应商\n\
                              /mode — 查看当前权限模式\n\
@@ -812,49 +812,98 @@ pub async fn start_im_bot<R: Runtime>(
                         continue;
                     }
 
-                    // /model — show or switch AI model
+                    // /model — show or switch AI model (dynamic list from current provider)
                     if text.starts_with("/model") {
                         let arg = text.strip_prefix("/model").unwrap_or("").trim().to_string();
+
+                        // Find current provider's models from available_providers_json
+                        let models: Vec<serde_json::Value> = {
+                            let providers: Vec<serde_json::Value> = {
+                                let ap = available_providers_for_loop.read().await;
+                                ap.as_ref()
+                                    .and_then(|json| serde_json::from_str(json).ok())
+                                    .unwrap_or_default()
+                            };
+                            let current_env = current_provider_env_for_loop.read().await;
+                            let current_provider = if current_env.is_none() {
+                                // Subscription (Anthropic) — find provider whose id contains "sub"
+                                providers.iter().find(|p| {
+                                    p["id"].as_str().map(|s| s.contains("sub")).unwrap_or(false)
+                                }).cloned()
+                            } else {
+                                // Match by baseUrl
+                                let base_url = current_env.as_ref()
+                                    .and_then(|v| v["baseUrl"].as_str());
+                                providers.iter()
+                                    .find(|p| p["baseUrl"].as_str() == base_url)
+                                    .cloned()
+                            };
+                            current_provider
+                                .and_then(|p| p["models"].as_array().cloned())
+                                .unwrap_or_default()
+                        };
+
                         if arg.is_empty() {
                             let current = current_model_for_loop.read().await;
-                            let display = current.as_deref().unwrap_or("claude-sonnet-4-6 (默认)");
-                            let help = format!(
-                                "📊 当前模型: {}\n\n可用快捷名:\n\
-                                 • sonnet → claude-sonnet-4-6\n\
-                                 • opus → claude-opus-4-6\n\
-                                 • haiku → claude-haiku-4-5\n\n\
-                                 用法: /model <名称>",
-                                display,
-                            );
-                            let _ = adapter_for_reply.send_message(&chat_id, &help).await;
+                            let display = current.as_deref().unwrap_or("(默认)");
+
+                            if models.is_empty() {
+                                // Fallback: no models info available
+                                let help = format!(
+                                    "📊 当前模型: {}\n\n提示: 可直接输入模型 ID 切换\n用法: /model <模型ID>",
+                                    display,
+                                );
+                                let _ = adapter_for_reply.send_message(&chat_id, &help).await;
+                            } else {
+                                let mut menu = format!("📊 当前模型: {}\n\n可用模型:\n", display);
+                                for (i, m) in models.iter().enumerate() {
+                                    let model_id = m["model"].as_str().unwrap_or("?");
+                                    let model_name = m["modelName"].as_str().unwrap_or(model_id);
+                                    menu.push_str(&format!("{}. {} ({})\n", i + 1, model_name, model_id));
+                                }
+                                menu.push_str("\n用法: /model <序号或模型ID>");
+                                let _ = adapter_for_reply.send_message(&chat_id, &menu).await;
+                            }
                         } else {
-                            let model_id = match arg.to_lowercase().as_str() {
-                                "sonnet" => "claude-sonnet-4-6".to_string(),
-                                "opus" => "claude-opus-4-6".to_string(),
-                                "haiku" => "claude-haiku-4-5".to_string(),
-                                other => other.to_string(),
+                            // Resolve target model: by index (1-based) or by model ID
+                            let model_id = if let Ok(idx) = arg.parse::<usize>() {
+                                if idx == 0 {
+                                    None // invalid: 1-based index
+                                } else {
+                                    models.get(idx - 1)
+                                        .and_then(|m| m["model"].as_str())
+                                        .map(|s| s.to_string())
+                                }
+                            } else {
+                                Some(arg) // accept any string as model ID
                             };
-                            // Update shared model state
-                            {
-                                let mut model_guard = current_model_for_loop.write().await;
-                                *model_guard = Some(model_id.clone());
+
+                            match model_id {
+                                Some(id) => {
+                                    // Update shared model state
+                                    {
+                                        let mut model_guard = current_model_for_loop.write().await;
+                                        *model_guard = Some(id.clone());
+                                    }
+                                    // If peer has an active Sidecar, log it
+                                    let router = router_clone.lock().await;
+                                    let sessions = router.active_sessions();
+                                    if let Some(s) = sessions.iter().find(|s| s.session_key == session_key) {
+                                        drop(router);
+                                        ulog_info!("[im] /model: set to {} (session={})", id, s.session_key);
+                                    }
+                                    let _ = adapter_for_reply.send_message(
+                                        &chat_id,
+                                        &format!("✅ 模型已切换为: {}", id),
+                                    ).await;
+                                }
+                                None => {
+                                    let _ = adapter_for_reply.send_message(
+                                        &chat_id,
+                                        "❌ 无效的序号，请使用 /model 查看可用列表",
+                                    ).await;
+                                }
                             }
-                            // If peer has an active Sidecar, sync model via API
-                            let router = router_clone.lock().await;
-                            let sessions = router.active_sessions();
-                            if let Some(s) = sessions.iter().find(|s| s.session_key == session_key) {
-                                // Parse port from peer sessions (need to check via ensure_sidecar route)
-                                // Active sessions don't expose port directly, so use the http client
-                                // We'll sync on next message via ensure_sidecar + sync_ai_config pattern
-                                drop(router);
-                                // Attempt to sync if we can find the port
-                                // For now, the model will be picked up when session restarts
-                                ulog_info!("[im] /model: set to {} (session={})", model_id, s.session_key);
-                            }
-                            let _ = adapter_for_reply.send_message(
-                                &chat_id,
-                                &format!("✅ 模型已切换为: {}", model_id),
-                            ).await;
                         }
                         continue;
                     }
