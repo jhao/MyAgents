@@ -1214,6 +1214,7 @@ impl CronTaskManager {
             }
         }
 
+        task.updated_at = Utc::now();
         let updated = task.clone();
         drop(tasks);
         self.save_to_disk().await?;
