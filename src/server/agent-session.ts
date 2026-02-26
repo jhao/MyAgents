@@ -868,6 +868,9 @@ function buildSdkMcpServers(): Record<string, SdkMcpServerConfig | typeof cronTo
         url: server.url,
         headers: server.headers,
       };
+      console.log(`[agent] MCP ${server.id}: ${server.type} → ${server.url}`);
+    } else if (server.type === 'sse' || server.type === 'http') {
+      console.warn(`[agent] MCP ${server.id}: Missing url for ${server.type} server, skipping`);
     }
   }
 

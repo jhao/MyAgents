@@ -2777,9 +2777,192 @@ async function main() {
 
           console.log(`[api/mcp/enable] Enabling MCP: ${server.id}, type: ${server.type}, command: ${server.command}`);
 
-          // SSE/HTTP types: directly enable, no validation needed
+          // SSE/HTTP types: validate remote URL is reachable and protocol matches
           if (server.type === 'sse' || server.type === 'http') {
-            return jsonResponse({ success: true });
+            if (!server.url) {
+              return jsonResponse({
+                success: false,
+                error: { type: 'connection_failed', message: '缺少服务器 URL' }
+              });
+            }
+
+            try {
+              const controller = new AbortController();
+              const timeout = setTimeout(() => controller.abort(), 15000);
+
+              const headers: Record<string, string> = {
+                'Accept': server.type === 'sse' ? 'text/event-stream' : 'application/json',
+                ...(server.headers || {}),
+              };
+
+              let response: Response;
+
+              if (server.type === 'http') {
+                // Streamable HTTP: send MCP initialize JSON-RPC request
+                response = await fetch(server.url, {
+                  method: 'POST',
+                  headers: { ...headers, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    jsonrpc: '2.0',
+                    id: 1,
+                    method: 'initialize',
+                    params: {
+                      protocolVersion: '2025-03-26',
+                      capabilities: {},
+                      clientInfo: { name: 'MyAgents', version: '0.1.29' },
+                    },
+                  }),
+                  signal: controller.signal,
+                });
+              } else {
+                // SSE: send GET request to check if endpoint is reachable
+                response = await fetch(server.url, {
+                  method: 'GET',
+                  headers,
+                  signal: controller.signal,
+                });
+              }
+
+              clearTimeout(timeout);
+
+              // Helper: abort the underlying connection to prevent resource leaks
+              // (especially important for SSE — the response is an infinite stream).
+              const cleanup = () => { try { controller.abort(); } catch {} };
+
+              // Check HTTP status
+              if (response.status === 401 || response.status === 403) {
+                cleanup();
+                return jsonResponse({
+                  success: false,
+                  error: {
+                    type: 'connection_failed',
+                    message: `认证失败 (HTTP ${response.status})，请检查 Headers 配置`,
+                  }
+                });
+              }
+
+              if (response.status === 404) {
+                cleanup();
+                return jsonResponse({
+                  success: false,
+                  error: {
+                    type: 'connection_failed',
+                    message: `端点不存在 (HTTP 404)，请检查 URL 是否正确`,
+                  }
+                });
+              }
+
+              if (response.status === 405) {
+                // 405 Method Not Allowed: protocol mismatch
+                cleanup();
+                const hint = server.type === 'sse'
+                  ? '。该端点不支持 GET，可能是 Streamable HTTP 端点，请尝试切换传输协议'
+                  : '。该端点不支持 POST，可能是 SSE 端点，请尝试切换传输协议';
+                return jsonResponse({
+                  success: false,
+                  error: {
+                    type: 'connection_failed',
+                    message: `请求方法不被允许 (HTTP 405)${hint}`,
+                  }
+                });
+              }
+
+              if (!response.ok) {
+                cleanup();
+                return jsonResponse({
+                  success: false,
+                  error: {
+                    type: 'connection_failed',
+                    message: `服务器返回错误 (HTTP ${response.status})`,
+                  }
+                });
+              }
+
+              // Protocol-specific validation
+              const contentType = response.headers.get('content-type') || '';
+
+              if (server.type === 'sse') {
+                // SSE validation only needs headers — abort the infinite stream immediately
+                cleanup();
+
+                // SSE endpoint should return text/event-stream
+                if (!contentType.includes('text/event-stream')) {
+                  // If the URL returns JSON, it's likely a Streamable HTTP endpoint
+                  const hint = contentType.includes('application/json') || contentType.includes('text/html')
+                    ? '。该 URL 可能是 Streamable HTTP 端点，请尝试切换传输协议为 "Streamable HTTP"'
+                    : '';
+                  return jsonResponse({
+                    success: false,
+                    error: {
+                      type: 'connection_failed',
+                      message: `服务器返回的内容类型不是 SSE (${contentType || 'unknown'})${hint}`,
+                    }
+                  });
+                }
+              } else {
+                // Streamable HTTP: read body then cleanup
+                // (response.ok is guaranteed here — non-ok statuses returned above)
+                try {
+                  const body = await response.json();
+                  cleanup();
+                  if (!body.jsonrpc && !body.result && !body.error) {
+                    return jsonResponse({
+                      success: false,
+                      error: {
+                        type: 'connection_failed',
+                        message: '服务器响应不是有效的 JSON-RPC 格式，请检查 URL 和传输协议',
+                      }
+                    });
+                  }
+                } catch {
+                  cleanup();
+                  // Response is not JSON — might be SSE endpoint
+                  if (contentType.includes('text/event-stream')) {
+                    return jsonResponse({
+                      success: false,
+                      error: {
+                        type: 'connection_failed',
+                        message: '该 URL 是 SSE 端点，请切换传输协议为 "SSE"',
+                      }
+                    });
+                  }
+                  return jsonResponse({
+                    success: false,
+                    error: {
+                      type: 'connection_failed',
+                      message: `服务器响应不是有效的 JSON 格式 (${contentType || 'unknown'})`,
+                    }
+                  });
+                }
+              }
+
+              console.log(`[api/mcp/enable] Remote MCP validated: ${server.id} (${server.type}) → ${server.url}`);
+              return jsonResponse({ success: true });
+
+            } catch (err: unknown) {
+              const error = err instanceof Error ? err : new Error(String(err));
+              console.error(`[api/mcp/enable] Remote MCP validation failed: ${server.id}`, error.message);
+
+              let message: string;
+              if (error.name === 'AbortError') {
+                message = '连接超时（15秒），请检查 URL 是否正确或服务器是否可达';
+              } else if (error.message.includes('ENOTFOUND') || error.message.includes('getaddrinfo')) {
+                message = 'DNS 解析失败，请检查 URL 域名是否正确';
+              } else if (error.message.includes('ECONNREFUSED')) {
+                message = '连接被拒绝，请检查服务器是否在运行';
+              } else if (error.message.includes('ECONNRESET')) {
+                message = '连接被重置，请检查网络或服务器状态';
+              } else if (error.message.includes('certificate') || error.message.includes('SSL') || error.message.includes('TLS')) {
+                message = 'SSL/TLS 证书错误，请检查服务器证书配置';
+              } else {
+                message = `连接失败: ${error.message}`;
+              }
+
+              return jsonResponse({
+                success: false,
+                error: { type: 'connection_failed', message }
+              });
+            }
           }
 
           // stdio type: validate command

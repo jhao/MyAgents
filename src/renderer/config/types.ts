@@ -475,6 +475,26 @@ export const PRESET_PROVIDERS: Provider[] = [
     ],
   },
   {
+    id: 'aliyun-bailian-coding',
+    name: '阿里云百炼 Coding Plan',
+    vendor: '阿里云',
+    cloudProvider: '云服务商',
+    type: 'api',
+    primaryModel: 'qwen3.5-plus',
+    isBuiltin: true,
+    authType: 'auth_token',
+    websiteUrl: 'https://bailian.console.aliyun.com/',
+    config: {
+      baseUrl: 'https://coding.dashscope.aliyuncs.com/apps/anthropic',
+    },
+    models: [
+      { model: 'qwen3.5-plus', modelName: 'Qwen 3.5 Plus', modelSeries: 'aliyun' },
+      { model: 'kimi-k2.5', modelName: 'Kimi K2.5', modelSeries: 'aliyun' },
+      { model: 'glm-5', modelName: 'GLM 5', modelSeries: 'aliyun' },
+      { model: 'MiniMax-M2.5', modelName: 'MiniMax M2.5', modelSeries: 'aliyun' },
+    ],
+  },
+  {
     id: 'openrouter',
     name: 'OpenRouter',
     vendor: 'OpenRouter',
@@ -534,7 +554,7 @@ export type McpServerStatus = 'connected' | 'failed' | 'needs-auth' | 'pending' 
 /**
  * MCP enable error type (returned by /api/mcp/enable)
  */
-export type McpEnableErrorType = 'command_not_found' | 'warmup_failed' | 'package_not_found' | 'runtime_error' | 'unknown';
+export type McpEnableErrorType = 'command_not_found' | 'warmup_failed' | 'package_not_found' | 'runtime_error' | 'connection_failed' | 'unknown';
 
 /**
  * MCP enable error response
