@@ -1501,6 +1501,10 @@ function localizeImError(rawError: string): string {
   if (rawError.includes('overloaded') || rawError.includes('503')) {
     return 'AI 服务繁忙，请稍后重试';
   }
+  // Stale session (SDK conversation data lost after Sidecar restart)
+  if (rawError.includes('No conversation found')) {
+    return '会话已过期，已自动重置。请重新发送消息';
+  }
   // Callback replaced
   if (rawError.includes('Replaced by a newer') || rawError.includes('消息处理被新请求取代')) {
     return '消息处理被新请求取代，请重新发送';
@@ -4353,6 +4357,21 @@ async function startStreamingSession(preWarm = false): Promise<void> {
         schedulePreWarm(); // Establish resumed session so next user message works
       }
       return; // Skip error broadcast, let finally handle cleanup + pre-warm retry
+    }
+
+    // "No conversation found" recovery: our metadata has sessionRegistered=true but
+    // the SDK session directory is gone (e.g., IM Bot restart after previous Sidecar
+    // failed to start — proxy leak, network error — so the session was persisted to
+    // im_state.json but the SDK conversation was never actually created).
+    // Fix: switch to create mode. Don't return — let the error flow through to notify
+    // IM/Desktop user. Pre-warm (scheduled here or in finally) will create a fresh session.
+    if (errorMessage.includes('No conversation found') && sessionRegistered) {
+      console.warn(`[agent] Session ${sessionId} not found by SDK, resetting sessionRegistered for fresh start`);
+      sessionRegistered = false;
+      if (!isPreWarming) {
+        schedulePreWarm(); // Establish fresh session so next user message works
+      }
+      // Fall through to error handling so IM SSE stream closes properly
     }
 
     // Enhanced error diagnostics for Windows subprocess failures
