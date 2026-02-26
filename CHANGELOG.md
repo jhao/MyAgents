@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.28] - 2026-02-26
+
+### Added
+- **IM Bot 群聊完整支持**：实现群聊全链路功能
+  - 群授权审批流程：Bot 入群 → 桌面端 pending/approved 管理 → 群内提示消息
+  - 智能触发模式：mention 模式（@Bot / 回复 Bot / `/ask`）+ always 模式（NO_REPLY 静默）
+  - 群聊上下文增强：发送者身份 `[from: name]`、Pending History 积累、群聊系统提示
+  - 安全隔离：群工具黑名单（SDK disallowedTools）、Heartbeat 屏蔽群聊
+  - 前端 UI：群权限管理列表（折叠/徽标）+ 激活模式切换
+  - 飞书：用户名 LRU 缓存、群事件检测、@mention 检测
+  - Telegram：my_chat_member 订阅、reply-to-bot 检测、大小写不敏感 @mention
+- **ultra-research bundled skill**：新增 ultra-research 内置技能
+
+### Fixed
+- **定时任务不执行**：SDK 升级后要求 `--resume` 参数为标准 UUID 格式，旧 `cron-im-{uuid}` 前缀格式被拒绝导致进程退出。Session ID 改用纯 UUID，并增加三级 UUID 校验策略兼容历史数据
+- **用户消息换行符双倍渲染**：`whitespace-pre-wrap` CSS 与 `remarkBreaks` 插件冲突，ReactMarkdown 在块元素间插入的 `\n` 文本节点被二次渲染为可见换行
+- **图片自动缩放移至后端统一处理**：前端 Canvas API 缩放无法覆盖 IM Bot 图片路径（Telegram/飞书图片走 Rust→Bun 管道），且 GIF 缩放后 mimeType 不一致。迁移到后端 `enqueueUserMessage()` 使用 jimp 统一处理
+
+---
+
 ## [0.1.27] - 2026-02-25
 
 ### Added
