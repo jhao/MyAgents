@@ -428,11 +428,16 @@ function writeAgentBrowserWrapper(cliPath: string): boolean {
 
   const isWin = process.platform === 'win32';
   if (isWin) {
+    // CMD: double any existing " in paths (extremely rare but defensive)
+    const safeBun = bunPath.replace(/"/g, '""');
+    const safeCli = cliPath.replace(/"/g, '""');
     const wrapperPath = join(binDir, 'agent-browser.cmd');
-    writeFileSync(wrapperPath, `@"${bunPath}" "${cliPath}" %*\r\n`);
+    writeFileSync(wrapperPath, `@"${safeBun}" "${safeCli}" %*\r\n`);
   } else {
+    // POSIX sh: escape backslash, double-quote, dollar, backtick inside double-quoted strings
+    const shellEscape = (s: string) => s.replace(/([\\"`$])/g, '\\$1');
     const wrapperPath = join(binDir, 'agent-browser');
-    writeFileSync(wrapperPath, `#!/bin/sh\nexec "${bunPath}" "${cliPath}" "$@"\n`, { mode: 0o755 });
+    writeFileSync(wrapperPath, `#!/bin/sh\nexec "${shellEscape(bunPath)}" "${shellEscape(cliPath)}" "$@"\n`, { mode: 0o755 });
   }
   console.log(`[agent-browser] Wrapper created: ${binDir}/agent-browser`);
   return true;
@@ -504,22 +509,25 @@ function autoInstallAgentBrowser(): void {
   const installDir = join(homeDir, '.myagents', 'agent-browser-cli');
   const lockFile = join(installDir, '.installing');
 
-  // Prevent concurrent installs
+  if (!existsSync(installDir)) mkdirSync(installDir, { recursive: true });
+
+  // Atomic lock: stale check + exclusive create (same pattern as ensureChromiumInstalled)
   if (existsSync(lockFile)) {
     try {
       const lockTime = statSync(lockFile).mtimeMs;
-      // Stale lock (>5 min) — remove and retry
-      if (Date.now() - lockTime > 5 * 60 * 1000) {
-        rmSync(lockFile, { force: true });
-      } else {
+      if (Date.now() - lockTime < 5 * 60 * 1000) {
         console.log('[agent-browser] Install already in progress, skipping');
         return;
       }
+      rmSync(lockFile, { force: true }); // stale lock
     } catch { /* ignore */ }
   }
-
-  if (!existsSync(installDir)) mkdirSync(installDir, { recursive: true });
-  writeFileSync(lockFile, String(process.pid));
+  try {
+    writeFileSync(lockFile, String(process.pid), { flag: 'wx' }); // exclusive create
+  } catch {
+    console.log('[agent-browser] Install already in progress, skipping');
+    return;
+  }
 
   // Ensure package.json exists (bun add requires it)
   const pkgJsonPath = join(installDir, 'package.json');
@@ -546,6 +554,8 @@ function autoInstallAgentBrowser(): void {
       rmSync(lockFile, { force: true });
       new Response(proc.stderr).text().then((stderr) => {
         console.error(`[agent-browser] Auto-install failed (exit ${code}):`, stderr.slice(0, 500));
+      }).catch(() => {
+        console.error(`[agent-browser] Auto-install failed (exit ${code})`);
       });
       return;
     }
@@ -968,7 +978,6 @@ async function main() {
           // Atomic write: temp file + rename to prevent corruption
           const tmpPath = settingsPath + '.tmp';
           await Bun.write(tmpPath, JSON.stringify(settings, null, 2) + '\n');
-          const { rename } = await import('fs/promises');
           await rename(tmpPath, settingsPath);
           console.log('[claude-settings] Cleared ANTHROPIC_BASE_URL/API_KEY from ~/.claude/settings.json');
           return jsonResponse({ success: true });

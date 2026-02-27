@@ -335,11 +335,22 @@ try {
     # 预装 agent-browser CLI
     Write-Host "  预装 agent-browser CLI..." -ForegroundColor Cyan
     $agentBrowserDir = Join-Path $ProjectDir "src-tauri\resources\agent-browser-cli"
+    # 版本号从 index.ts 的 AGENT_BROWSER_VERSION 常量获取（单一来源）
+    $indexTs = Get-Content (Join-Path $ProjectDir "src\server\index.ts") -Raw
+    if ($indexTs -match "const AGENT_BROWSER_VERSION = '([^']+)'") {
+        $abVersion = $Matches[1]
+    } else {
+        throw "无法从 index.ts 读取 AGENT_BROWSER_VERSION"
+    }
+    Write-Host "  版本: $abVersion" -ForegroundColor Cyan
     if (Test-Path $agentBrowserDir) {
         Remove-Item -Recurse -Force $agentBrowserDir
     }
     New-Item -ItemType Directory -Path $agentBrowserDir -Force | Out-Null
-    & npm install --prefix $agentBrowserDir agent-browser@0.15.1 --omit=dev
+    '{}' | Set-Content (Join-Path $agentBrowserDir "package.json") -Encoding UTF8
+    Push-Location $agentBrowserDir
+    & bun add "agent-browser@$abVersion"
+    Pop-Location
     if ($LASTEXITCODE -ne 0) {
         throw "agent-browser 预装失败"
     }

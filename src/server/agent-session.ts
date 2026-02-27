@@ -8,7 +8,7 @@ import { getCrossPlatformEnv } from './utils/platform';
 import { resizeImageIfNeeded } from './utils/imageResize';
 import { cronToolsServer, getCronTaskContext, clearCronTaskContext } from './tools/cron-tools';
 import { imCronToolServer, getImCronContext } from './tools/im-cron-tool';
-import { imMediaToolServer, getImMediaContext } from './tools/im-media-tool';
+import { imMediaToolServer, getImMediaContext, clearImMediaContext } from './tools/im-media-tool';
 
 import type { ToolInput } from '../renderer/types/chat';
 import { parsePartialJson } from '../shared/parsePartialJson';
@@ -2387,6 +2387,7 @@ function handleMessageComplete(): void {
   imTextBlockIndices.clear();
 
   clearCronTaskContext();
+  clearImMediaContext();
 
   // Only transition to idle if no queued messages waiting.
   if (messageQueue.length === 0) {
@@ -4682,6 +4683,7 @@ async function startStreamingSession(preWarm = false): Promise<void> {
     }
 
     clearCronTaskContext();
+    clearImMediaContext();
     resolveTermination!();
 
     if (wasPreWarming) {

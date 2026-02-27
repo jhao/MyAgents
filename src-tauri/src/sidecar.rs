@@ -2962,7 +2962,7 @@ pub async fn cmd_propagate_proxy(
     let client = crate::local_http::builder()
         .timeout(Duration::from_secs(5))
         .build()
-        .unwrap_or_default();
+        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
 
     let mut ok = 0u32;
     let mut fail = 0u32;

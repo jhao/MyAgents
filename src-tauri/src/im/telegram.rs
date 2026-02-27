@@ -391,9 +391,10 @@ impl TelegramAdapter {
         filename: &str,
         caption: Option<&str>,
     ) -> Result<Option<i64>, TelegramError> {
+        let mime = super::util::ext_to_mime(filename);
         let photo_part = reqwest::multipart::Part::bytes(data)
             .file_name(filename.to_string())
-            .mime_str("image/png")
+            .mime_str(mime)
             .unwrap_or_else(|_| reqwest::multipart::Part::bytes(Vec::new()));
 
         let mut form = reqwest::multipart::Form::new()

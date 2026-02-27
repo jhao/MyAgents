@@ -229,14 +229,22 @@ cp -R "${SDK_SRC}/vendor" "${SDK_DEST}/"
 # 预装 agent-browser CLI
 echo -e "  ${CYAN}预装 agent-browser CLI...${NC}"
 AGENT_BROWSER_DIR="${PROJECT_DIR}/src-tauri/resources/agent-browser-cli"
+# 版本号从 index.ts 的 AGENT_BROWSER_VERSION 常量获取（单一来源）
+AB_VERSION=$(grep "const AGENT_BROWSER_VERSION" "${PROJECT_DIR}/src/server/index.ts" | sed "s/.*= '//;s/'.*//" )
+if [ -z "$AB_VERSION" ]; then
+    echo -e "${RED}✗ 无法从 index.ts 读取 AGENT_BROWSER_VERSION${NC}"
+    exit 1
+fi
+echo -e "  版本: ${AB_VERSION}"
 rm -rf "${AGENT_BROWSER_DIR}"
 mkdir -p "${AGENT_BROWSER_DIR}"
-npm install --prefix "${AGENT_BROWSER_DIR}" agent-browser@0.15.1 --omit=dev
+echo '{}' > "${AGENT_BROWSER_DIR}/package.json"
+(cd "${AGENT_BROWSER_DIR}" && bun add "agent-browser@${AB_VERSION}")
 if [ $? -ne 0 ]; then
     echo -e "${RED}✗ agent-browser 预装失败${NC}"
     exit 1
 fi
-chmod 755 "${AGENT_BROWSER_DIR}/node_modules/agent-browser/bin/agent-browser.js"
+chmod 755 "${AGENT_BROWSER_DIR}/node_modules/agent-browser/bin/agent-browser.js" 2>/dev/null || true
 # 删除不需要的 Rust native binary（使用 Bun + JS fallback）
 rm -rf "${AGENT_BROWSER_DIR}/node_modules/agent-browser/bin/agent-browser-"* 2>/dev/null || true
 echo -e "${GREEN}  ✓ agent-browser CLI 预装完成${NC}"
