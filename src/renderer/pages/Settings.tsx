@@ -2,6 +2,7 @@ import { Check, Download, FolderOpen, KeyRound, Loader2, Plus, RefreshCw, Trash2
 import { ExternalLink } from '@/components/ExternalLink';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
+import { invoke } from '@tauri-apps/api/core';
 import { homeDir, join } from '@tauri-apps/api/path';
 
 import { track } from '@/analytics';
@@ -256,6 +257,22 @@ export default function Settings({ initialSection, onSectionChange, isActive, up
             onSectionChangeRef.current?.();
         }
     }, [initialSection]);
+
+    // Propagate proxy config changes to all running Sidecars
+    const prevProxyRef = useRef<string | undefined>(undefined);
+    useEffect(() => {
+        const key = JSON.stringify(config.proxySettings ?? null);
+        if (prevProxyRef.current === undefined) {
+            prevProxyRef.current = key; // First mount — don't trigger
+            return;
+        }
+        if (prevProxyRef.current === key) return;
+        prevProxyRef.current = key;
+
+        invoke('cmd_propagate_proxy').catch(err =>
+            console.error('[Settings] Proxy propagation failed:', err)
+        );
+    }, [config.proxySettings]);
 
     const [showCustomForm, setShowCustomForm] = useState(false);
     const [customForm, setCustomForm] = useState<CustomProviderForm>(EMPTY_CUSTOM_FORM);

@@ -641,6 +641,64 @@ function loadMcpServersFromConfig(): McpServerDefinition[] {
 }
 
 /**
+ * Hot-reload proxy configuration into the current process environment.
+ * Mutates process.env so that subsequent SDK subprocess spawns inherit the new proxy.
+ * Triggers session restart (abort + resume + pre-warm) identical to MCP config changes,
+ * but only when the effective proxy URL actually changed.
+ */
+export function setProxyConfig(proxySettings: {
+  enabled: boolean;
+  protocol?: string;
+  host?: string;
+  port?: number;
+} | null): void {
+  const PROXY_VARS = ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY', 'all_proxy', 'NO_PROXY', 'no_proxy'];
+  const NO_PROXY_VAL = 'localhost,localhost.localdomain,127.0.0.1,127.0.0.0/8,::1,[::1]';
+
+  // Compute the new effective proxy URL for change detection
+  const oldProxyUrl = process.env.HTTP_PROXY || '';
+  const newProxyUrl = proxySettings?.enabled
+    ? `${proxySettings.protocol || 'http'}://${proxySettings.host || '127.0.0.1'}:${proxySettings.port || 7890}`
+    : '';
+  const proxyChanged = oldProxyUrl !== newProxyUrl;
+
+  if (proxySettings?.enabled) {
+    process.env.HTTP_PROXY = newProxyUrl;
+    process.env.HTTPS_PROXY = newProxyUrl;
+    process.env.http_proxy = newProxyUrl;
+    process.env.https_proxy = newProxyUrl;
+    process.env.NO_PROXY = NO_PROXY_VAL;
+    process.env.no_proxy = NO_PROXY_VAL;
+    delete process.env.ALL_PROXY;
+    delete process.env.all_proxy;
+    console.log(`[agent] Proxy hot-reloaded: ${newProxyUrl}`);
+  } else {
+    for (const v of PROXY_VARS) delete process.env[v];
+    console.log('[agent] Proxy cleared (direct connection)');
+  }
+
+  if (!proxyChanged) {
+    if (isDebugMode) console.log('[agent] Proxy config unchanged, skipping session restart');
+    return;
+  }
+
+  // Same pattern as setMcpServers: abort+resume running session, then pre-warm
+  if (querySession) {
+    if (isProcessing && !isPreWarming) {
+      console.log('[agent] Proxy changed, deferring restart (active turn)');
+      pendingConfigRestart = true;
+    } else {
+      if (isDebugMode) console.log('[agent] Proxy changed, restarting session with resume');
+      abortPersistentSession();
+    }
+  }
+  preWarmFailCount = 0;
+  if (!isProcessing || isPreWarming) {
+    schedulePreWarm();
+  }
+}
+
+/**
  * Set the MCP servers to use for subsequent queries
  * Called from renderer when user toggles MCP in workspace
  * If MCP config changed and a session is running, it will be restarted with resume

@@ -516,6 +516,27 @@ impl SidecarManager {
         self.instances.iter()
     }
 
+    /// Get all unique ports of running Sidecars (session-centric + legacy global).
+    /// Used for broadcasting config changes (e.g. proxy hot-reload) to all Sidecars.
+    pub fn get_all_active_ports(&mut self) -> Vec<u16> {
+        let mut ports = Vec::new();
+        // Session-centric sidecars (Tab/CronTask/BackgroundCompletion)
+        for sc in self.sidecars.values_mut() {
+            if sc.is_running() {
+                ports.push(sc.port);
+            }
+        }
+        // Legacy instances (Global Sidecar)
+        for inst in self.instances.values_mut() {
+            if inst.is_running() {
+                ports.push(inst.port);
+            }
+        }
+        ports.sort();
+        ports.dedup();
+        ports
+    }
+
     /// Stop all instances (session sidecars and global sidecar)
     pub fn stop_all(&mut self) {
         log::info!(
@@ -2890,5 +2911,105 @@ pub async fn cmd_execute_cron_task(
     };
 
     execute_cron_task(&app_handle, &state, &workspacePath, payload).await
+}
+
+// ============= Proxy Hot-Reload =============
+
+/// Build the proxy payload from disk config for broadcasting to Sidecars.
+fn build_proxy_payload() -> serde_json::Value {
+    match proxy_config::read_proxy_settings() {
+        Some(s) => match proxy_config::get_proxy_url(&s) {
+            Ok(_) => serde_json::json!({
+                "enabled": true,
+                "protocol": s.protocol.unwrap_or_else(|| "http".into()),
+                "host": s.host.unwrap_or_else(|| "127.0.0.1".into()),
+                "port": s.port.unwrap_or(7890),
+            }),
+            Err(_) => serde_json::json!({ "enabled": false }),
+        },
+        None => serde_json::json!({ "enabled": false }),
+    }
+}
+
+/// POST proxy config to a single Sidecar.
+async fn post_proxy(client: &reqwest::Client, port: u16, payload: &serde_json::Value) -> bool {
+    let url = format!("http://127.0.0.1:{}/api/proxy/set", port);
+    match client.post(&url).json(payload).send().await {
+        Ok(r) if r.status().is_success() => {
+            log::info!("[proxy-propagate] Updated sidecar on port {}", port);
+            true
+        }
+        Ok(r) => {
+            log::warn!("[proxy-propagate] Port {} returned {}", port, r.status());
+            false
+        }
+        Err(e) => {
+            log::warn!("[proxy-propagate] Port {} unreachable: {}", port, e);
+            false
+        }
+    }
+}
+
+/// Propagate proxy settings from disk config to all running Sidecars.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn cmd_propagate_proxy(
+    sidecarManager: tauri::State<'_, ManagedSidecarManager>,
+    imState: tauri::State<'_, crate::im::ManagedImBots>,
+) -> Result<serde_json::Value, String> {
+    let payload = build_proxy_payload();
+
+    let client = crate::local_http::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap_or_default();
+
+    let mut ok = 0u32;
+    let mut fail = 0u32;
+
+    // 1. Tab + Global Sidecars
+    let ports = sidecarManager
+        .lock()
+        .map_err(|e| e.to_string())?
+        .get_all_active_ports();
+    for port in &ports {
+        if post_proxy(&client, *port, &payload).await {
+            ok += 1;
+        } else {
+            fail += 1;
+        }
+    }
+
+    // 2. IM Bot Sidecars — collect ports under lock, then release before network I/O
+    let im_ports: Vec<u16> = {
+        let im_guard = imState.lock().await;
+        let mut collected = Vec::new();
+        for (_bot_id, instance) in im_guard.iter() {
+            let router = instance.router.lock().await;
+            for port in router.active_sidecar_ports() {
+                if !ports.contains(&port) {
+                    collected.push(port);
+                }
+            }
+        }
+        collected.sort();
+        collected.dedup();
+        collected
+    }; // Both im_guard and router locks released here
+
+    for port in &im_ports {
+        if post_proxy(&client, *port, &payload).await {
+            ok += 1;
+        } else {
+            fail += 1;
+        }
+    }
+
+    log::info!(
+        "[proxy-propagate] Done: {} updated, {} failed",
+        ok,
+        fail
+    );
+    Ok(serde_json::json!({ "updated": ok, "failed": fail }))
 }
 

@@ -107,6 +107,7 @@ import {
   setSidecarPort,
   getOpenAiBridgeConfig,
   syncProjectUserConfig,
+  setProxyConfig,
   type ProviderEnv,
 } from './agent-session';
 import { getHomeDirOrNull } from './utils/platform';
@@ -2729,6 +2730,23 @@ async function main() {
       }
 
       // ============= END PROVIDER VERIFICATION API =============
+
+      // ============= PROXY API =============
+
+      // POST /api/proxy/set - Hot-reload proxy config into this Sidecar process
+      if (pathname === '/api/proxy/set' && request.method === 'POST') {
+        try {
+          const payload = await request.json();
+          setProxyConfig(payload);
+          return jsonResponse({ success: true });
+        } catch (error) {
+          console.error('[api/proxy/set] Error:', error);
+          return jsonResponse(
+            { success: false, error: error instanceof Error ? error.message : 'Failed to set proxy config' },
+            500
+          );
+        }
+      }
 
       // ============= MCP API =============
 
