@@ -6,6 +6,16 @@ allowed-tools: Bash(agent-browser:*)
 
 # Browser Automation with agent-browser
 
+## First-time Setup
+
+On the first use, the browser (Chromium) may not be downloaded yet. If you get an error like "Executable doesn't exist", run this first:
+
+```bash
+agent-browser install
+```
+
+This downloads Chromium (~160MB, one-time). Inform the user it may take a minute. After installation, all subsequent commands will work immediately.
+
 ## Core Workflow
 
 Every browser automation follows this pattern:

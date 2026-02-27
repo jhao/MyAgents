@@ -112,7 +112,7 @@ import {
   type ProviderEnv,
 } from './agent-session';
 import { getHomeDirOrNull } from './utils/platform';
-import { getScriptDir, getAgentBrowserCliPath, getBundledRuntimePath } from './utils/runtime';
+import { getScriptDir, getAgentBrowserCliPath, getBundledRuntimePath, getPackageManagerPath } from './utils/runtime';
 import { buildDirectoryTree, expandDirectory } from './dir-info';
 import {
   createSession,
@@ -409,39 +409,115 @@ function seedBundledSkills(): void {
  * This makes `agent-browser` available as a bare command in SDK subprocess PATH.
  * The wrapper delegates to `{bun} {agent-browser.js}`.
  */
+const AGENT_BROWSER_VERSION = '0.15.1';
+
+/**
+ * Write the agent-browser wrapper script to ~/.myagents/bin/.
+ * Returns true on success.
+ */
+function writeAgentBrowserWrapper(cliPath: string): boolean {
+  const bunPath = getBundledRuntimePath();
+  const homeDir = getHomeDirOrNull();
+  if (!homeDir) {
+    console.warn('[agent-browser] Home directory not found, skipping wrapper setup');
+    return false;
+  }
+  const binDir = join(homeDir, '.myagents', 'bin');
+  if (!existsSync(binDir)) mkdirSync(binDir, { recursive: true });
+
+  const isWin = process.platform === 'win32';
+  if (isWin) {
+    const wrapperPath = join(binDir, 'agent-browser.cmd');
+    writeFileSync(wrapperPath, `@"${bunPath}" "${cliPath}" %*\r\n`);
+  } else {
+    const wrapperPath = join(binDir, 'agent-browser');
+    writeFileSync(wrapperPath, `#!/bin/sh\nexec "${bunPath}" "${cliPath}" "$@"\n`, { mode: 0o755 });
+  }
+  console.log(`[agent-browser] Wrapper created: ${binDir}/agent-browser`);
+  return true;
+}
+
+/**
+ * Auto-install agent-browser to ~/.myagents/agent-browser-cli/ using bundled bun or system npm.
+ * Runs in the background so it doesn't block Sidecar startup.
+ */
+function autoInstallAgentBrowser(): void {
+  const homeDir = getHomeDirOrNull();
+  if (!homeDir) return;
+
+  const installDir = join(homeDir, '.myagents', 'agent-browser-cli');
+  const lockFile = join(installDir, '.installing');
+
+  // Prevent concurrent installs
+  if (existsSync(lockFile)) {
+    try {
+      const lockTime = statSync(lockFile).mtimeMs;
+      // Stale lock (>5 min) — remove and retry
+      if (Date.now() - lockTime > 5 * 60 * 1000) {
+        rmSync(lockFile, { force: true });
+      } else {
+        console.log('[agent-browser] Install already in progress, skipping');
+        return;
+      }
+    } catch { /* ignore */ }
+  }
+
+  if (!existsSync(installDir)) mkdirSync(installDir, { recursive: true });
+  writeFileSync(lockFile, String(process.pid));
+
+  // Ensure package.json exists (bun add requires it)
+  const pkgJsonPath = join(installDir, 'package.json');
+  if (!existsSync(pkgJsonPath)) {
+    writeFileSync(pkgJsonPath, '{}');
+  }
+
+  const pm = getPackageManagerPath();
+  const pkg = `agent-browser@${AGENT_BROWSER_VERSION}`;
+  // bun add <pkg> / npm install <pkg> — both work with cwd
+  const finalArgs = pm.installArgs(pkg);
+
+  console.log(`[agent-browser] Auto-installing ${pkg} to ${installDir} using ${pm.type}...`);
+
+  const proc = Bun.spawn([pm.command, ...finalArgs], {
+    cwd: installDir,
+    stdout: 'ignore',
+    stderr: 'pipe',
+  });
+
+  // Handle in background — don't block startup
+  proc.exited.then((code) => {
+    rmSync(lockFile, { force: true });
+    if (code === 0) {
+      console.log('[agent-browser] Auto-install completed');
+      // Now create the wrapper
+      const cliPath = getAgentBrowserCliPath();
+      if (cliPath) {
+        writeAgentBrowserWrapper(cliPath);
+      } else {
+        console.warn('[agent-browser] CLI still not found after install');
+      }
+    } else {
+      new Response(proc.stderr).text().then((stderr) => {
+        console.error(`[agent-browser] Auto-install failed (exit ${code}):`, stderr.slice(0, 500));
+      });
+    }
+  }).catch((err) => {
+    rmSync(lockFile, { force: true });
+    console.error('[agent-browser] Auto-install error:', err);
+  });
+}
+
 function setupAgentBrowserWrapper(): void {
   try {
     const cliPath = getAgentBrowserCliPath();
-    if (!cliPath) {
-      console.log('[agent-browser] CLI not found, skipping wrapper setup');
+    if (cliPath) {
+      writeAgentBrowserWrapper(cliPath);
       return;
     }
 
-    const bunPath = getBundledRuntimePath();
-    const homeDir = getHomeDirOrNull();
-    if (!homeDir) {
-      console.warn('[agent-browser] Home directory not found, skipping wrapper setup');
-      return;
-    }
-    const binDir = join(homeDir, '.myagents', 'bin');
-
-    if (!existsSync(binDir)) mkdirSync(binDir, { recursive: true });
-
-    const isWin = process.platform === 'win32';
-
-    if (isWin) {
-      // Windows: generate .cmd wrapper
-      const wrapperPath = join(binDir, 'agent-browser.cmd');
-      const content = `@"${bunPath}" "${cliPath}" %*\r\n`;
-      writeFileSync(wrapperPath, content);
-    } else {
-      // macOS/Linux: generate shell wrapper
-      const wrapperPath = join(binDir, 'agent-browser');
-      const content = `#!/bin/sh\nexec "${bunPath}" "${cliPath}" "$@"\n`;
-      writeFileSync(wrapperPath, content, { mode: 0o755 });
-    }
-
-    console.log(`[agent-browser] Wrapper created: ${binDir}/agent-browser`);
+    // CLI not bundled — auto-install to ~/.myagents/agent-browser-cli/
+    console.log('[agent-browser] CLI not found in bundle, starting auto-install...');
+    autoInstallAgentBrowser();
   } catch (err) {
     console.error('[agent-browser] Error setting up wrapper:', err);
   }
