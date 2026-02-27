@@ -8,6 +8,7 @@ import { getCrossPlatformEnv } from './utils/platform';
 import { resizeImageIfNeeded } from './utils/imageResize';
 import { cronToolsServer, getCronTaskContext, clearCronTaskContext } from './tools/cron-tools';
 import { imCronToolServer, getImCronContext } from './tools/im-cron-tool';
+import { imMediaToolServer, getImMediaContext } from './tools/im-media-tool';
 
 import type { ToolInput } from '../renderer/types/chat';
 import { parsePartialJson } from '../shared/parsePartialJson';
@@ -303,6 +304,7 @@ let currentGroupToolsDeny: string[] = [];
 let shouldResetSessionAfterError = false;
 // Track text block indices for detecting text-type content_block_stop
 const imTextBlockIndices = new Set<number>();
+
 const childToolToParent: Map<string, string> = new Map();
 let messageSequence = 0;
 let sessionId = randomUUID();
@@ -1010,6 +1012,13 @@ function buildSdkMcpServers(): Record<string, SdkMcpServerConfig | typeof cronTo
   if (imCronCtx && process.env.MYAGENTS_MANAGEMENT_PORT) {
     result['im-cron'] = imCronToolServer;
     console.log(`[agent] Added im-cron MCP server for bot ${imCronCtx.botId}`);
+  }
+
+  // Add IM media tool if we're in an IM context with management API available
+  const imMediaCtx = getImMediaContext();
+  if (imMediaCtx && process.env.MYAGENTS_MANAGEMENT_PORT) {
+    result['im-media'] = imMediaToolServer;
+    console.log(`[agent] Added im-media MCP server for bot ${imMediaCtx.botId}`);
   }
 
   // Return early if no user MCP servers (but may have cron-tools)
@@ -2368,6 +2377,7 @@ function handleMessageComplete(): void {
   toolResultIndexToId.clear();
   childToolToParent.clear();
   imTextBlockIndices.clear();
+
   clearCronTaskContext();
 
   // Only transition to idle if no queued messages waiting.
@@ -2401,6 +2411,7 @@ function handleMessageStopped(): void {
   toolResultIndexToId.clear();
   childToolToParent.clear();
   imTextBlockIndices.clear();
+
 
   // Only transition to idle if no queued messages waiting (same logic as handleMessageComplete)
   if (messageQueue.length === 0) {
@@ -2779,6 +2790,7 @@ function clearMessageState(): void {
   toolResultIndexToId.clear();
   childToolToParent.clear();
   imTextBlockIndices.clear();
+
   strippedToolResultIds.clear();
   isStreamingMessage = false;
   messageSequence = 0;
@@ -3231,6 +3243,7 @@ export async function enqueueUserMessage(
     streamIndexToToolId.clear();
     toolResultIndexToId.clear();
     imTextBlockIndices.clear();
+  
     if (isDebugMode) console.log(`[agent] session terminated for provider switch`);
   } else if (providerEnv) {
     // Provider not changed (or first message with API provider), just update tracking
@@ -3661,6 +3674,7 @@ async function startStreamingSession(preWarm = false): Promise<void> {
   let detectedAlreadyInUse = false; // stderr reported "Session ID already in use"
   streamIndexToToolId.clear();
   imTextBlockIndices.clear();
+
   // Don't broadcast 'running' during pre-warm — session is invisible to frontend
   if (!preWarm) {
     setSessionState('running');

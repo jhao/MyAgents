@@ -28,6 +28,7 @@ import {
   CRON_TASK_EXIT_REASON_PATTERN,
 } from './tools/cron-tools';
 import { setImCronContext } from './tools/im-cron-tool';
+import { setImMediaContext } from './tools/im-media-tool';
 
 // ============= CRASH DIAGNOSTICS =============
 // File-based logging to capture crashes before process dies
@@ -4945,6 +4946,13 @@ async function main() {
                 authType: payload.providerEnv.authType,
                 apiProtocol: payload.providerEnv.apiProtocol,
               } : undefined,
+            });
+
+            // Set IM media context for the im-media tool (send_media)
+            setImMediaContext({
+              botId: payload.botId,
+              chatId: payload.sourceId,
+              platform: payload.source.split('_')[0],
             });
           }
 
