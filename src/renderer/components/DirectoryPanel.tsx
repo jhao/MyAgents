@@ -69,6 +69,8 @@ interface DirectoryPanelProps {
   enabledAgents?: Record<string, { description: string; prompt?: string; model?: string; scope?: 'user' | 'project' }>;
   enabledSkills?: Array<{ name: string; description: string; scope?: 'user' | 'project'; folderName?: string }>;
   enabledCommands?: Array<{ name: string; description: string; scope?: 'user' | 'project' }>;
+  /** Set of global skill folderNames (for hiding "sync to global" on already-global skills) */
+  globalSkillFolderNames?: Set<string>;
   /** Insert /command into chat input */
   onInsertSlashCommand?: (command: string) => void;
   /** Open settings panel to a specific tab */
@@ -119,6 +121,7 @@ const DirectoryPanel = memo(forwardRef<DirectoryPanelHandle, DirectoryPanelProps
   enabledAgents,
   enabledSkills,
   enabledCommands,
+  globalSkillFolderNames,
   onInsertSlashCommand,
   onOpenSettings,
   onSyncSkillToGlobal,
@@ -1239,6 +1242,7 @@ const DirectoryPanel = memo(forwardRef<DirectoryPanelHandle, DirectoryPanelProps
               enabledAgents={enabledAgents}
               enabledSkills={enabledSkills}
               enabledCommands={enabledCommands}
+              globalSkillFolderNames={globalSkillFolderNames}
               onInsertSlashCommand={onInsertSlashCommand}
               onOpenSettings={onOpenSettings}
               onSyncSkillToGlobal={onSyncSkillToGlobal}

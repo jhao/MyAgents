@@ -3567,6 +3567,11 @@ async function main() {
           // 3. Add builtin commands at the end (so custom/skills can override them)
           commands.push(...BUILTIN_SLASH_COMMANDS);
 
+          // Collect global skill folderNames before dedup (dedup removes global version when project version exists)
+          const globalSkillFolderNames = commands
+            .filter(c => c.source === 'skill' && c.scope === 'user' && c.folderName)
+            .map(c => c.folderName!);
+
           // Deduplicate commands by name (keep first occurrence - custom/skills take precedence over builtin)
           const seenNames = new Set<string>();
           const uniqueCommands = commands.filter(cmd => {
@@ -3577,7 +3582,7 @@ async function main() {
             return true;
           });
 
-          return jsonResponse({ success: true, commands: uniqueCommands });
+          return jsonResponse({ success: true, commands: uniqueCommands, globalSkillFolderNames });
         } catch (error) {
           console.error('[api/commands] Error:', error);
           return jsonResponse(

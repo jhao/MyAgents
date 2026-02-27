@@ -182,6 +182,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
   // Enabled skills/commands for sidebar display
   const [enabledSkills, setEnabledSkills] = useState<Array<{ name: string; description: string; scope?: 'user' | 'project'; folderName?: string }>>([]);
   const [enabledCommands, setEnabledCommands] = useState<Array<{ name: string; description: string; scope?: 'user' | 'project' }>>([]);
+  const [globalSkillFolderNames, setGlobalSkillFolderNames] = useState<Set<string>>(new Set());
   // Initial tab for workspace config panel (set when opening from capabilities panel)
   const [workspaceConfigInitialTab, setWorkspaceConfigInitialTab] = useState<WorkspaceTab | undefined>();
 
@@ -602,10 +603,11 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
   // Load skills/commands for sidebar display
   const loadSkillsAndCommands = useCallback(async () => {
     try {
-      const response = await apiGet<{ success: boolean; commands: Array<{ name: string; description: string; source: string; scope?: 'user' | 'project'; folderName?: string }> }>('/api/commands');
+      const response = await apiGet<{ success: boolean; commands: Array<{ name: string; description: string; source: string; scope?: 'user' | 'project'; folderName?: string }>; globalSkillFolderNames?: string[] }>('/api/commands');
       if (response.success && response.commands) {
         setEnabledSkills(response.commands.filter(c => c.source === 'skill').map(c => ({ name: c.name, description: c.description, scope: c.scope, folderName: c.folderName })));
         setEnabledCommands(response.commands.filter(c => c.source === 'custom').map(c => ({ name: c.name, description: c.description, scope: c.scope })));
+        setGlobalSkillFolderNames(new Set(response.globalSkillFolderNames || []));
       }
     } catch (err) {
       console.error('[Chat] Failed to load skills/commands:', err);
@@ -1372,6 +1374,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
             enabledAgents={enabledAgents}
             enabledSkills={enabledSkills}
             enabledCommands={enabledCommands}
+            globalSkillFolderNames={globalSkillFolderNames}
             onInsertSlashCommand={handleInsertSlashCommand}
             onOpenSettings={handleOpenSettings}
             onSyncSkillToGlobal={handleSyncSkillToGlobal}

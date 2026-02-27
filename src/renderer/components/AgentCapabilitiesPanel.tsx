@@ -34,6 +34,8 @@ interface AgentCapabilitiesPanelProps {
     onInsertSlashCommand?: (command: string) => void;
     /** Open settings panel to a specific tab */
     onOpenSettings?: (tab: Extract<WorkspaceTab, 'skills-commands' | 'agents'>) => void;
+    /** Set of global skill folderNames (for hiding "sync to global" on already-global skills) */
+    globalSkillFolderNames?: Set<string>;
     /** Copy a project skill to global skills */
     onSyncSkillToGlobal?: (folderName: string) => void;
     /** Called when expand/collapse state changes (for sibling layout recalculation) */
@@ -103,6 +105,7 @@ export default memo(function AgentCapabilitiesPanel({
     enabledCommands,
     onInsertSlashCommand,
     onOpenSettings,
+    globalSkillFolderNames,
     onSyncSkillToGlobal,
     onExpandChange,
 }: AgentCapabilitiesPanelProps) {
@@ -198,8 +201,8 @@ export default memo(function AgentCapabilitiesPanel({
                 onClick: () => openSettingsForScope(scope, 'skills-commands', 'skills'),
             },
         ];
-        // Project skills can be synced to global
-        if (scope === 'project' && folderName) {
+        // Project skills can be synced to global (hide if already exists globally)
+        if (scope === 'project' && folderName && !globalSkillFolderNames?.has(folderName)) {
             items.push({
                 label: '同步至全局技能',
                 onClick: () => {
