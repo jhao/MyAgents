@@ -1578,7 +1578,7 @@ const SimpleChatInput = memo(forwardRef<SimpleChatInputHandle, SimpleChatInputPr
                       </div>
                       {/* Provider submenu - opens upward */}
                       {showProviderSubmenu && providers.length > 0 && (
-                        <div className="absolute right-0 bottom-full mb-1 w-56 max-h-80 overflow-y-auto rounded-lg border border-[var(--line)] bg-[var(--paper)] shadow-xl py-1 z-10">
+                        <div className="absolute right-0 bottom-full mb-1 w-56 max-h-56 overflow-y-auto rounded-lg border border-[var(--line)] bg-[var(--paper)] shadow-xl py-1 z-10">
                           {providers.map((p) => {
                             const available = isProviderAvailable(p);
                             return (
