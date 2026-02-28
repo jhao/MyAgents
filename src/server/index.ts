@@ -426,20 +426,21 @@ function writeAgentBrowserWrapper(cliPath: string): boolean {
   const binDir = join(homeDir, '.myagents', 'bin');
   if (!existsSync(binDir)) mkdirSync(binDir, { recursive: true });
 
+  // POSIX sh: escape backslash, double-quote, dollar, backtick inside double-quoted strings
+  const shellEscape = (s: string) => s.replace(/([\\"`$])/g, '\\$1');
   const isWin = process.platform === 'win32';
   if (isWin) {
-    // CMD: double any existing " in paths (extremely rare but defensive)
+    // Windows needs TWO wrappers (like npm global installs):
+    // 1. .cmd for cmd.exe / PowerShell
+    // 2. extensionless POSIX sh for Git Bash (SDK uses Git Bash on Windows)
     const safeBun = bunPath.replace(/"/g, '""');
     const safeCli = cliPath.replace(/"/g, '""');
-    const wrapperPath = join(binDir, 'agent-browser.cmd');
-    writeFileSync(wrapperPath, `@"${safeBun}" "${safeCli}" %*\r\n`);
+    writeFileSync(join(binDir, 'agent-browser.cmd'), `@"${safeBun}" "${safeCli}" %*\r\n`);
+    writeFileSync(join(binDir, 'agent-browser'), `#!/bin/sh\nexec "${shellEscape(bunPath)}" "${shellEscape(cliPath)}" "$@"\n`);
   } else {
-    // POSIX sh: escape backslash, double-quote, dollar, backtick inside double-quoted strings
-    const shellEscape = (s: string) => s.replace(/([\\"`$])/g, '\\$1');
-    const wrapperPath = join(binDir, 'agent-browser');
-    writeFileSync(wrapperPath, `#!/bin/sh\nexec "${shellEscape(bunPath)}" "${shellEscape(cliPath)}" "$@"\n`, { mode: 0o755 });
+    writeFileSync(join(binDir, 'agent-browser'), `#!/bin/sh\nexec "${shellEscape(bunPath)}" "${shellEscape(cliPath)}" "$@"\n`, { mode: 0o755 });
   }
-  console.log(`[agent-browser] Wrapper created: ${binDir}/agent-browser`);
+  console.log(`[agent-browser] Wrapper created: ${join(binDir, 'agent-browser')}${isWin ? ' (.cmd + sh)' : ''}`);
   return true;
 }
 
