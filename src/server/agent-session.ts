@@ -4429,6 +4429,16 @@ async function startStreamingSession(preWarm = false): Promise<void> {
           if (rawError.includes('unknown variant') && rawError.includes('image')) {
             shouldResetSessionAfterError = true;
           }
+          // Detect stale session — SDK started (system_init received) but conversation
+          // data is broken (e.g., IM Bot restart: old session_id restored from disk,
+          // SDK directory exists but conversation context is unusable).
+          // Without this, the persistent session loops: every message gets the same error
+          // because sessionRegistered stays true and SDK keeps trying --resume.
+          // The catch-block recovery (below) only covers Scenario A (SDK throws on startup);
+          // this covers Scenario B (SDK starts, returns is_error in result message).
+          if (rawError.includes('No conversation found')) {
+            shouldResetSessionAfterError = true;
+          }
           if (imStreamCallback) {
             const errorText = localizeImError(rawError);
             console.warn('[agent] SDK result is_error, forwarding to IM:', errorText);
@@ -4530,10 +4540,12 @@ async function startStreamingSession(preWarm = false): Promise<void> {
         handleMessageComplete();
         signalTurnComplete();  // 解锁 generator 进入下一轮
 
-        // Auto-reset session if image content polluted conversation history
+        // Auto-reset session after unrecoverable errors (image content in history,
+        // stale "No conversation found", etc.) — generates new session ID so next
+        // message starts fresh without trying --resume on broken conversation data
         if (shouldResetSessionAfterError) {
           shouldResetSessionAfterError = false;
-          console.warn('[agent] Auto-resetting session due to image content error in history');
+          console.warn('[agent] Auto-resetting session due to unrecoverable conversation error');
           resetSession().catch(e => console.error('[agent] Auto-reset failed:', e));
         }
 
