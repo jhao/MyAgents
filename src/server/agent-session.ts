@@ -327,6 +327,9 @@ let isPreWarming = false;
 let preWarmTimer: ReturnType<typeof setTimeout> | null = null;
 let preWarmFailCount = 0;
 const PRE_WARM_MAX_RETRIES = 3;
+// Global Sidecar sets this to true via --no-pre-warm CLI flag to skip futile pre-warm attempts
+// (SDK CLI needs first stdin message before system_init, which never comes for Global Sidecar)
+let preWarmDisabled = false;
 let systemInitInfo: SystemInitInfo | null = null;
 type MessageQueueItem = {
   id: string;                     // Unique queue item ID
@@ -775,6 +778,7 @@ export function setSessionModel(model: string): void {
 function schedulePreWarm(): void {
   if (preWarmTimer) clearTimeout(preWarmTimer);
   if (!agentDir) return;
+  if (preWarmDisabled) return;
 
   // Stop retrying after consecutive failures to avoid infinite loop
   if (preWarmFailCount >= PRE_WARM_MAX_RETRIES) {
@@ -2881,7 +2885,12 @@ export async function initializeAgent(
   nextAgentDir: string,
   initialPrompt?: string | null,
   initialSessionId?: string,
+  options?: { preWarmDisabled?: boolean },
 ): Promise<void> {
+  if (options?.preWarmDisabled) {
+    preWarmDisabled = true;
+    console.log('[agent] pre-warm disabled via --no-pre-warm (Global Sidecar)');
+  }
   agentDir = nextAgentDir;
   hasInitialPrompt = Boolean(initialPrompt && initialPrompt.trim());
   systemInitInfo = null;
@@ -3853,21 +3862,26 @@ async function startStreamingSession(preWarm = false): Promise<void> {
     const STARTUP_TIMEOUT_MS = 60_000;
     let systemInitReceived = false;
 
-    startupTimeoutId = setTimeout(() => {
-        if (!systemInitReceived && !shouldAbortSession) {
-            console.error(`[agent] Startup timeout: no system_init in ${STARTUP_TIMEOUT_MS / 1000}s`);
-            abortedByTimeout = true;
-            if (!isPreWarming) {
-                broadcast('chat:agent-error', {
-                    message: 'Agent 启动超时，请重试。如果持续出现，请检查网络连接和 API 配置。'
-                });
-                broadcast('chat:message-error', 'Agent 启动超时');
-            }
-            // abortPersistentSession 统一处理：设置 shouldAbortSession、唤醒 generator
-            // 的 waitForMessage/waitForTurnComplete、调用 interrupt() 解除 for-await 阻塞
-            abortPersistentSession();
-        }
-    }, STARTUP_TIMEOUT_MS);
+    // Pre-warm sessions skip startup timeout because SDK CLI needs the first stdin message
+    // before sending system_init. During pre-warm, messageGenerator() blocks at waitForMessage()
+    // with no message to yield — system_init will only arrive when user sends a message
+    // (triggering pre-warm → active transition). If the subprocess crashes during pre-warm,
+    // the for-await loop exits naturally and the finally block handles retry.
+    if (!preWarm) {
+      startupTimeoutId = setTimeout(() => {
+          if (!systemInitReceived && !shouldAbortSession) {
+              console.error(`[agent] Startup timeout: no system_init in ${STARTUP_TIMEOUT_MS / 1000}s`);
+              abortedByTimeout = true;
+              broadcast('chat:agent-error', {
+                  message: 'Agent 启动超时，请重试。如果持续出现，请检查网络连接和 API 配置。'
+              });
+              broadcast('chat:message-error', 'Agent 启动超时');
+              // abortPersistentSession 统一处理：设置 shouldAbortSession、唤醒 generator
+              // 的 waitForMessage/waitForTurnComplete、调用 interrupt() 解除 for-await 阻塞
+              abortPersistentSession();
+          }
+      }, STARTUP_TIMEOUT_MS);
+    }
 
     let messageCount = 0;
 

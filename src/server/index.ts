@@ -240,7 +240,7 @@ function buildCronSystemPromptAppend(
   return content;
 }
 
-function parseArgs(argv: string[]): { agentDir: string; initialPrompt?: string; port: number; sessionId?: string } {
+function parseArgs(argv: string[]): { agentDir: string; initialPrompt?: string; port: number; sessionId?: string; noPreWarm?: boolean } {
   const args = argv.slice(2);
   const getArgValue = (flag: string) => {
     const index = args.indexOf(flag);
@@ -254,12 +254,13 @@ function parseArgs(argv: string[]): { agentDir: string; initialPrompt?: string; 
   const initialPrompt = getArgValue('--prompt') ?? undefined;
   const port = Number(getArgValue('--port') ?? 3000);
   const sessionId = getArgValue('--session-id') ?? undefined;
+  const noPreWarm = args.includes('--no-pre-warm');
 
   if (!agentDir) {
     throw new Error('Missing required argument: --agent-dir <path>');
   }
 
-  return { agentDir, initialPrompt, port: Number.isNaN(port) ? 3000 : port, sessionId };
+  return { agentDir, initialPrompt, port: Number.isNaN(port) ? 3000 : port, sessionId, noPreWarm };
 }
 
 /**
@@ -898,7 +899,7 @@ function startupBeacon(step: string): void {
 async function main() {
   startupBeacon(`main() entered, pid=${process.pid}, platform=${process.platform}, argv=${process.argv.length} args`);
 
-  const { agentDir, initialPrompt, port, sessionId: initialSessionId } = parseArgs(process.argv);
+  const { agentDir, initialPrompt, port, sessionId: initialSessionId, noPreWarm } = parseArgs(process.argv);
   startupBeacon(`args parsed, port=${port}, agentDir=${agentDir.slice(-40)}`);
 
   let currentAgentDir = await ensureAgentDir(agentDir);
@@ -920,7 +921,7 @@ async function main() {
   setupAgentBrowserWrapper();
   console.log('[startup] setupAgentBrowserWrapper done');
 
-  await initializeAgent(currentAgentDir, initialPrompt, initialSessionId);
+  await initializeAgent(currentAgentDir, initialPrompt, initialSessionId, { preWarmDisabled: noPreWarm });
   console.log('[startup] initializeAgent done');
 
   // Store sidecar port for OpenAI bridge loopback

@@ -1317,6 +1317,9 @@ pub fn start_tab_sidecar<R: Runtime>(
 
     // Determine if this is a global sidecar and handle agent directory
     let is_global = agent_dir.is_none();
+    if is_global {
+        cmd.arg("--no-pre-warm");
+    }
     let effective_agent_dir = if let Some(ref dir) = agent_dir {
         cmd.arg("--agent-dir").arg(dir);
         Some(dir.clone())
