@@ -988,16 +988,13 @@ function pinMcpPackageVersions(args: string[]): string[] {
  * - Custom MCP can use any user-preferred tools
  */
 function buildSdkMcpServers(): Record<string, SdkMcpServerConfig | typeof cronToolsServer> {
-  // Use memory cache if set (even if empty - user explicitly disabled all MCP)
-  // Only fall back to config file if never set (null)
-  let servers: McpServerDefinition[];
-  if (currentMcpServers === null) {
-    servers = loadMcpServersFromConfig();
-    console.log(`[agent] Loaded MCP from config file: ${servers.map(s => s.id).join(', ') || 'none'}`);
-  } else {
-    servers = currentMcpServers;
-    if (isDebugMode) console.log(`[agent] Using workspace MCP: ${servers.map(s => s.id).join(', ') || 'none'}`);
-  }
+  // null = MCP not yet configured (e.g. Global sidecar, or Tab pre-warm before /api/mcp/set)
+  // [] = explicitly no MCP (user has none enabled)
+  // [...]= user's enabled MCP servers
+  // Never fall back to config file — the frontend's /api/mcp/set is the single source of truth.
+  // Global sidecar never receives /api/mcp/set and correctly gets no MCP.
+  const servers: McpServerDefinition[] = currentMcpServers ?? [];
+  if (isDebugMode) console.log(`[agent] MCP servers: ${servers.map(s => s.id).join(', ') || 'none'}`);
 
   const result: Record<string, SdkMcpServerConfig | typeof cronToolsServer> = {};
 
