@@ -249,10 +249,17 @@ if [ $? -ne 0 ]; then
     echo -e "${RED}✗ agent-browser 预装失败${NC}"
     exit 1
 fi
-chmod 755 "${AGENT_BROWSER_DIR}/node_modules/agent-browser/bin/agent-browser.js" 2>/dev/null || true
-# 删除不需要的 Rust native binary（使用 Bun + JS fallback）
-rm -rf "${AGENT_BROWSER_DIR}/node_modules/agent-browser/bin/agent-browser-"* 2>/dev/null || true
-echo -e "${GREEN}  ✓ agent-browser CLI 预装完成${NC}"
+# npm 包内含全平台 native binary，仅保留 darwin 的（删除 linux/win32 避免公证扫描）
+AB_BIN_DIR="${AGENT_BROWSER_DIR}/node_modules/agent-browser/bin"
+rm -f "${AB_BIN_DIR}/agent-browser-linux-"* "${AB_BIN_DIR}/agent-browser-win32-"* 2>/dev/null || true
+chmod 755 "${AB_BIN_DIR}"/agent-browser-darwin-* 2>/dev/null || true
+# 验证 native binary 存在
+NATIVE_BIN="${AB_BIN_DIR}/agent-browser-darwin-$(uname -m)"
+if [ ! -f "$NATIVE_BIN" ]; then
+    echo -e "${RED}✗ agent-browser native binary 不存在: $(basename "$NATIVE_BIN")${NC}"
+    exit 1
+fi
+echo -e "${GREEN}  ✓ agent-browser CLI 预装完成 (含 native binary)${NC}"
 
 # 构建前端
 echo -e "  ${CYAN}构建前端...${NC}"
@@ -333,7 +340,7 @@ echo ""
 # ========================================
 # 签名 agent-browser-cli 原生二进制
 # ========================================
-echo -e "  ${CYAN}签名 agent-browser-cli 原生二进制 (.bare prebuilds)...${NC}"
+echo -e "  ${CYAN}签名 agent-browser-cli 原生二进制...${NC}"
 
 AB_CLI_DIR="${PROJECT_DIR}/src-tauri/resources/agent-browser-cli"
 # 删除所有非 darwin 的 prebuilds（android/ios/linux/win32 含 Mach-O 会被 Apple 公证扫描）
@@ -347,9 +354,23 @@ find "${AB_CLI_DIR}/node_modules" -type d -name "prebuilds" 2>/dev/null | while 
     done
 done
 
-# 签名剩余的 darwin .bare 文件
+# 签名 agent-browser native CLI binary + darwin .bare prebuilds
 AB_SIGNED_COUNT=0
 AB_FAILED_COUNT=0
+
+# 1) 签名 agent-browser native binary (所有 darwin 架构)
+while IFS= read -r binary; do
+    echo -e "    ${CYAN}签名: agent-browser/bin/$(basename "$binary")${NC}"
+    if codesign --force --options runtime --timestamp \
+        --sign "$APPLE_SIGNING_IDENTITY" "$binary" 2>/dev/null; then
+        ((AB_SIGNED_COUNT++))
+    else
+        echo -e "    ${YELLOW}警告: 签名失败 - $binary${NC}"
+        ((AB_FAILED_COUNT++))
+    fi
+done < <(find "${AB_CLI_DIR}/node_modules/agent-browser/bin" -type f -name "agent-browser-darwin-*" 2>/dev/null)
+
+# 2) 签名 .bare prebuilds (bare-fs/bare-os 等 Node.js native addons)
 while IFS= read -r binary; do
     echo -e "    ${CYAN}签名: $(echo "$binary" | sed "s|.*/node_modules/||")${NC}"
     if codesign --force --options runtime --timestamp \

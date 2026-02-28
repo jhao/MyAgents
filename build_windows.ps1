@@ -362,12 +362,16 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "agent-browser 预装失败"
     }
-    # 删除不需要的 Rust native binary（使用 Bun + JS fallback）
-    $nativeBins = Get-ChildItem -Path "$agentBrowserDir\node_modules\agent-browser\bin" -Filter "agent-browser-*" -ErrorAction SilentlyContinue
-    if ($nativeBins) {
-        $nativeBins | Remove-Item -Force
+    # npm 包内含全平台 native binary，仅保留 win32 的（删除 darwin/linux）
+    $abBinDir = Join-Path $agentBrowserDir "node_modules\agent-browser\bin"
+    Get-ChildItem -Path $abBinDir -Filter "agent-browser-darwin-*" -ErrorAction SilentlyContinue | Remove-Item -Force
+    Get-ChildItem -Path $abBinDir -Filter "agent-browser-linux-*" -ErrorAction SilentlyContinue | Remove-Item -Force
+    # 验证 native binary 存在
+    $nativeBin = Join-Path $abBinDir "agent-browser-win32-x64.exe"
+    if (-not (Test-Path $nativeBin)) {
+        throw "agent-browser native binary 不存在: agent-browser-win32-x64.exe"
     }
-    Write-Host "    OK - agent-browser CLI 预装完成" -ForegroundColor Green
+    Write-Host "    OK - agent-browser CLI 预装完成 (含 native binary)" -ForegroundColor Green
 
     # 构建前端 (增加内存限制避免 OOM)
     Write-Host "  构建前端..." -ForegroundColor Cyan
