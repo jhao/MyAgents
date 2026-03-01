@@ -2,11 +2,12 @@ import { useCallback, useEffect, useState, useRef, memo } from 'react';
 import { arrayMove } from '@dnd-kit/sortable';
 
 import { initAnalytics, track } from '@/analytics';
-import { stopTabSidecar, startGlobalSidecar, stopAllSidecars, initGlobalSidecarReadyPromise, markGlobalSidecarReady, getGlobalServerUrl, getSessionActivation, updateSessionTab, ensureSessionSidecar, releaseSessionSidecar, activateSession, deactivateSession, upgradeSessionId, getSessionPort, stopSseProxy, startBackgroundCompletion, cancelBackgroundCompletion, sessionHasPersistentOwners } from '@/api/tauriClient';
+import { stopTabSidecar, startGlobalSidecar, stopAllSidecars, initGlobalSidecarReadyPromise, markGlobalSidecarReady, getGlobalServerUrl, getSessionActivation, updateSessionTab, ensureSessionSidecar, releaseSessionSidecar, activateSession, deactivateSession, upgradeSessionId, getSessionPort, stopSseProxy, startBackgroundCompletion, cancelBackgroundCompletion } from '@/api/tauriClient';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import CustomTitleBar from '@/components/CustomTitleBar';
 import TabBar from '@/components/TabBar';
 import TabProvider from '@/context/TabProvider';
+import { useToast } from '@/components/Toast';
 import { useUpdater } from '@/hooks/useUpdater';
 import { useTrayEvents } from '@/hooks/useTrayEvents';
 import { useConfig } from '@/hooks/useConfig';
@@ -180,15 +181,14 @@ export default function App() {
   const configProjectsRef = useRef(configProjects);
   configProjectsRef.current = configProjects;
 
+  // Toast (ref-stabilized per CLAUDE.md rules)
+  const toast = useToast();
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+
   // Per-tab loading state (keyed by tabId)
   const [loadingTabs, setLoadingTabs] = useState<Record<string, boolean>>({});
   const [tabErrors, setTabErrors] = useState<Record<string, string | null>>({});
-
-  // Tab close confirmation state
-  const [closeConfirmState, setCloseConfirmState] = useState<{
-    tabId: string;
-    tabTitle: string;
-  } | null>(null);
 
   // Exit confirmation state (for cron tasks)
   const [exitConfirmState, setExitConfirmState] = useState<{
@@ -533,21 +533,14 @@ export default function App() {
     void cleanupResources();
   }, []);
 
-  // Close tab with confirmation if generating (shows custom dialog)
-  // Exception: if a persistent owner (CronTask / ImBot) keeps the Sidecar alive,
-  // closing the Tab just releases the Tab owner — no work is lost, so skip confirmation.
+  // Close tab — if AI is generating, close immediately and let it finish in background.
+  // No confirmation dialog: background completion keeps the Sidecar alive.
   const closeTabWithConfirmation = useCallback(async (tabId: string) => {
     const tab = tabsRef.current.find(t => t.id === tabId);
 
     if (tab?.isGenerating && tab.sessionId) {
-      // Ask Rust if the Sidecar has background owners that survive this Tab closing
-      const hasBgOwner = await sessionHasPersistentOwners(tab.sessionId);
-      if (hasBgOwner) {
-        void performCloseTab(tabId);
-        return;
-      }
-
-      setCloseConfirmState({ tabId, tabTitle: tab.title });
+      void performCloseTab(tabId);
+      toastRef.current.info('AI 继续在后台完成任务');
       return;
     }
 
@@ -1427,22 +1420,6 @@ export default function App() {
           />
         ))}
       </div>
-
-      {/* Close confirmation dialog */}
-      {closeConfirmState && (
-        <ConfirmDialog
-          title="关闭标签页"
-          message={`正在与 AI 对话中，确定要关闭「${closeConfirmState.tabTitle}」吗？`}
-          confirmText="关闭"
-          cancelText="取消"
-          confirmVariant="danger"
-          onConfirm={() => {
-            void performCloseTab(closeConfirmState.tabId);
-            setCloseConfirmState(null);
-          }}
-          onCancel={() => setCloseConfirmState(null)}
-        />
-      )}
 
       {/* Exit confirmation dialog for running cron tasks */}
       {exitConfirmState && (
