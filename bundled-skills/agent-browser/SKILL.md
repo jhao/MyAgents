@@ -471,7 +471,7 @@ agent-browser eval -b "$(echo -n 'Array.from(document.querySelectorAll("a")).map
 
 ## Anti-Detection & Configuration
 
-Anti-detection defaults are pre-configured in `~/.myagents/agent-browser.json` — headed mode, hidden `navigator.webdriver`, realistic window size/UA, persistent browser profile. No extra flags needed for normal use.
+Anti-detection defaults are pre-configured in `~/.agent-browser/config.json` — headed mode, hidden `navigator.webdriver`, realistic window size/UA, persistent browser profile. No extra flags needed for normal use.
 
 **Persistent login:** The browser profile at `~/.playwright-mcp-profile/` persists cookies/localStorage across sessions. If a site requires login, guide the user to log in once in the headed browser window — subsequent runs will reuse the authenticated session automatically.
 
@@ -482,7 +482,7 @@ Anti-detection defaults are pre-configured in `~/.myagents/agent-browser.json` �
 agent-browser --user-agent "custom UA" open https://target.com
 ```
 
-**Persistent config edits:** edit `~/.myagents/agent-browser.json`. **IMPORTANT:** This file is auto-managed by MyAgents — it regenerates on every app startup when `"_managed_by": "myagents"` is present. To make persistent edits that survive restarts, you **must** first delete the `"_managed_by"` field, then save your changes. `args` field is split by **both comma and newline** — avoid args containing commas (e.g. `--window-size=W,H` will be split incorrectly; use `--start-maximized` instead). All CLI flags map to camelCase keys (`--executable-path` → `executablePath`).
+**Persistent config edits:** edit `~/.agent-browser/config.json`. **IMPORTANT:** This file is auto-managed by MyAgents — it regenerates on every app startup when `"_managed_by": "myagents"` is present. To make persistent edits that survive restarts, you **must** first delete the `"_managed_by"` field, then save your changes. `args` field is split by **both comma and newline** — avoid args containing commas (e.g. `--window-size=W,H` will be split incorrectly; use `--start-maximized` instead). All CLI flags map to camelCase keys (`--executable-path` → `executablePath`).
 
 Config priority (lowest → highest): `~/.agent-browser/config.json` < `./agent-browser.json` < env vars < CLI flags.
 

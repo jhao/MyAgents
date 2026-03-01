@@ -5,7 +5,6 @@ import { createRequire } from 'module';
 import { query, type Query, type SDKUserMessage, type AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { getScriptDir, getBundledBunDir, getAgentBrowserCliPath } from './utils/runtime';
 import { getCrossPlatformEnv } from './utils/platform';
-import { getAgentBrowserConfigPath } from './utils/browser-stealth';
 import { resizeImageIfNeeded } from './utils/imageResize';
 import { cronToolsServer, getCronTaskContext, clearCronTaskContext } from './tools/cron-tools';
 import { imCronToolServer, getImCronContext } from './tools/im-cron-tool';
@@ -1838,11 +1837,7 @@ export function buildClaudeSessionEnv(providerEnv?: ProviderEnv): NodeJS.Process
     // into project .claude/skills/ by syncProjectUserConfig() instead.
   };
 
-  // agent-browser: point to MyAgents-managed stealth config (headed + anti-detection)
-  const abConfigPath = getAgentBrowserConfigPath();
-  if (abConfigPath && !env.AGENT_BROWSER_CONFIG) {
-    env.AGENT_BROWSER_CONFIG = abConfigPath;
-  }
+  // agent-browser: config is at ~/.agent-browser/config.json (default path, no env var needed)
 
   // agent-browser: bypass Rust canonicalize() UNC path issue on Windows
   // https://github.com/vercel-labs/agent-browser/issues/393

@@ -1,15 +1,15 @@
 /**
  * Agent-browser anti-detection defaults & profile persistence.
  *
- * Generates ~/.myagents/agent-browser.json with headed mode, realistic UA,
- * persistent profile directory, and anti-detection Chrome flags.
- * The config is pointed to by AGENT_BROWSER_CONFIG env var in buildClaudeSessionEnv().
+ * Generates ~/.agent-browser/config.json (agent-browser's default config path)
+ * with headed mode, realistic UA, persistent profile directory, and anti-detection
+ * Chrome flags. No env var needed — agent-browser reads this path automatically.
  *
  * User override: remove the `_managed_by` field from the JSON file — MyAgents
- * will stop overwriting it. Or set AGENT_BROWSER_CONFIG env var to a custom path.
+ * will stop overwriting it.
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
 import { getHomeDirOrNull } from './platform';
@@ -133,7 +133,7 @@ function detectSystemLocale(): string {
 // ---- Public API ----
 
 /**
- * Ensure ~/.myagents/agent-browser.json exists with anti-detection defaults.
+ * Ensure ~/.agent-browser/config.json exists with anti-detection defaults.
  *
  * Called on every Sidecar startup. Regenerates the file when `_managed_by`
  * is "myagents" (keeps UA/locale fresh). Skips if the user removed the marker.
@@ -142,7 +142,8 @@ export function ensureBrowserStealthConfig(): void {
   const homeDir = getHomeDirOrNull();
   if (!homeDir) return;
 
-  const configPath = join(homeDir, '.myagents', 'agent-browser.json');
+  const configDir = join(homeDir, '.agent-browser');
+  const configPath = join(configDir, 'config.json');
 
   // Check if user has taken ownership
   if (existsSync(configPath)) {
@@ -187,20 +188,10 @@ export function ensureBrowserStealthConfig(): void {
   };
 
   try {
+    mkdirSync(configDir, { recursive: true });
     writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
     console.log(`[agent-browser] Stealth config written: ${configPath}`);
   } catch (err) {
     console.warn('[agent-browser] Failed to write stealth config:', err);
   }
-}
-
-/**
- * Return path to agent-browser.json if it exists, otherwise null.
- * Used by buildClaudeSessionEnv() to set AGENT_BROWSER_CONFIG.
- */
-export function getAgentBrowserConfigPath(): string | null {
-  const homeDir = getHomeDirOrNull();
-  if (!homeDir) return null;
-  const configPath = join(homeDir, '.myagents', 'agent-browser.json');
-  return existsSync(configPath) ? configPath : null;
 }
