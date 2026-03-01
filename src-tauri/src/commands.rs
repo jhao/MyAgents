@@ -548,7 +548,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 
 // ============= Admin Agent Sync =============
 
-const ADMIN_AGENT_VERSION: &str = "1";
+const ADMIN_AGENT_VERSION: &str = "2";
 
 /// Merge bundled admin agent files into ~/.myagents/
 /// Version-gated: only runs when ADMIN_AGENT_VERSION changes.
