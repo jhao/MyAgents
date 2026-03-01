@@ -161,10 +161,7 @@ export function ensureBrowserStealthConfig(): void {
     headed: true,
     profile: profileDir,
     userAgent: buildRealisticUserAgent(),
-    args: [
-      '--disable-blink-features=AutomationControlled',
-      `--lang=${detectSystemLocale()}`,
-    ],
+    args: `--disable-blink-features=AutomationControlled --lang=${detectSystemLocale()}`,
   };
 
   try {
