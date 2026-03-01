@@ -3403,6 +3403,7 @@ export default function Settings({ initialSection, onSectionChange, isActive, up
             {showBugReport && (
                 <BugReportOverlay
                     onClose={() => setShowBugReport(false)}
+                    onNavigateToProviders={() => { setShowBugReport(false); setActiveSection('providers'); }}
                     appVersion={appVersion}
                     providers={providers}
                     apiKeys={apiKeys}

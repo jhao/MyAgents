@@ -3,10 +3,10 @@ import { X, ChevronUp, Send } from 'lucide-react';
 
 import { CUSTOM_EVENTS } from '../../shared/constants';
 import type { Provider, ProviderVerifyStatus } from '@/config/types';
-import { SUBSCRIPTION_PROVIDER_ID } from '@/config/types';
 
 interface BugReportOverlayProps {
     onClose: () => void;
+    onNavigateToProviders: () => void;
     appVersion: string;
     providers: Provider[];
     apiKeys: Record<string, string>;
@@ -30,7 +30,7 @@ function isProviderAvailable(
 }
 
 export default function BugReportOverlay({
-    onClose, appVersion, providers, apiKeys, providerVerifyStatus,
+    onClose, onNavigateToProviders, appVersion, providers, apiKeys, providerVerifyStatus,
 }: BugReportOverlayProps) {
     const [description, setDescription] = useState('');
     const [showModelMenu, _setShowModelMenu] = useState(false);
@@ -164,53 +164,56 @@ export default function BugReportOverlay({
                                     <ChevronUp className="h-3 w-3" />
                                 </button>
 
-                                {/* Model dropdown menu */}
-                                {showModelMenu && (
-                                    <div className="absolute bottom-full left-0 mb-1 max-h-[300px] w-[260px] overflow-y-auto rounded-xl border border-[var(--line)] bg-[var(--paper)] shadow-lg">
-                                        {providers.length === 0 ? (
-                                            <div className="px-3 py-2 text-[12px] text-[var(--ink-muted)]">
-                                                暂无可用模型，请先在设置中配置
-                                            </div>
-                                        ) : (
-                                            providers.map(provider => {
-                                                const available = isProviderAvailable(provider, apiKeys, providerVerifyStatus);
-                                                return (
+                                {/* Model dropdown menu — only available providers */}
+                                {showModelMenu && (() => {
+                                    const availableProviders = providers.filter(p => isProviderAvailable(p, apiKeys, providerVerifyStatus));
+                                    return (
+                                        <div className="absolute bottom-full left-0 mb-1 max-h-[300px] w-[260px] overflow-y-auto rounded-xl border border-[var(--line)] bg-[var(--paper)] py-1 shadow-lg">
+                                            {availableProviders.length === 0 ? (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setShowModelMenu(false);
+                                                        onNavigateToProviders();
+                                                    }}
+                                                    className="w-full px-3 py-2.5 text-left text-[12px] text-[var(--accent)] transition-colors hover:bg-[var(--paper-contrast)]"
+                                                >
+                                                    请先配置模型 →
+                                                </button>
+                                            ) : (
+                                                availableProviders.map((provider, idx) => (
                                                     <div key={provider.id}>
-                                                        <div className="px-3 py-1.5 text-[11px] font-medium text-[var(--ink-muted)]">
+                                                        {idx > 0 && <div className="mx-2 my-1 border-t border-[var(--line)]" />}
+                                                        <div className="px-3 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--ink-muted)]/60">
                                                             {provider.name}
-                                                            {!available && (
-                                                                <span className="ml-1 text-[var(--ink-muted)]/50">
-                                                                    {provider.id === SUBSCRIPTION_PROVIDER_ID ? '(未验证)' : '(未配置)'}
-                                                                </span>
-                                                            )}
                                                         </div>
-                                                        {provider.models.map(model => (
-                                                            <button
-                                                                key={model.model}
-                                                                type="button"
-                                                                disabled={!available}
-                                                                onClick={() => {
-                                                                    setSelectedProviderId(provider.id);
-                                                                    setSelectedModel(model.model);
-                                                                    setShowModelMenu(false);
-                                                                }}
-                                                                className={`w-full px-3 py-1.5 text-left text-[12px] transition-colors ${
-                                                                    !available
-                                                                        ? 'cursor-not-allowed text-[var(--ink-muted)]/40'
-                                                                        : selectedProviderId === provider.id && selectedModel === model.model
-                                                                          ? 'bg-[var(--accent)]/10 text-[var(--accent)]'
-                                                                          : 'text-[var(--ink)] hover:bg-[var(--paper-contrast)]'
-                                                                }`}
-                                                            >
-                                                                {model.modelName}
-                                                            </button>
-                                                        ))}
+                                                        {provider.models.map(model => {
+                                                            const isSelected = selectedProviderId === provider.id && selectedModel === model.model;
+                                                            return (
+                                                                <button
+                                                                    key={model.model}
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        setSelectedProviderId(provider.id);
+                                                                        setSelectedModel(model.model);
+                                                                        setShowModelMenu(false);
+                                                                    }}
+                                                                    className={`w-full rounded-md px-3 py-1.5 text-left text-[12px] transition-colors ${
+                                                                        isSelected
+                                                                            ? 'bg-[var(--accent)]/10 font-medium text-[var(--accent)]'
+                                                                            : 'text-[var(--ink)] hover:bg-[var(--paper-contrast)]'
+                                                                    }`}
+                                                                >
+                                                                    {model.modelName}
+                                                                </button>
+                                                            );
+                                                        })}
                                                     </div>
-                                                );
-                                            })
-                                        )}
-                                    </div>
-                                )}
+                                                ))
+                                            )}
+                                        </div>
+                                    );
+                                })()}
                             </div>
 
                             {/* Send button */}
