@@ -59,7 +59,7 @@ coverage/
 *.local
 
 .agent/
-.claude/
+/.claude/
 .playwright-mcp/
 specs/prd/
 specs/research/
