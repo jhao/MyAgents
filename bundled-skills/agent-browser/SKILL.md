@@ -471,7 +471,9 @@ agent-browser eval -b "$(echo -n 'Array.from(document.querySelectorAll("a")).map
 
 ## Anti-Detection & Configuration
 
-Anti-detection defaults are pre-configured in `~/.myagents/agent-browser.json` — headed mode, hidden `navigator.webdriver`, realistic window size/UA, persistent profile at `~/.myagents/browser-profile/`. No extra flags needed for normal use.
+Anti-detection defaults are pre-configured in `~/.myagents/agent-browser.json` — headed mode, hidden `navigator.webdriver`, realistic window size/UA, persistent browser profile. No extra flags needed for normal use.
+
+**Persistent login:** The browser profile at `~/.myagents/browser-profile/` persists cookies/localStorage across sessions. If a site requires login, guide the user to log in once in the headed browser window — subsequent runs will reuse the authenticated session automatically.
 
 **If a site still blocks:** override per-command with CLI flags (temporary), or edit the config file (persistent). CLI flags always override the config file.
 
