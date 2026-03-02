@@ -7,12 +7,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getGlobalStats, type GlobalStats } from '@/api/sessionClient';
 import { formatTokens } from '@/utils/formatTokens';
 
-type TimeRange = '7d' | '30d' | 'all';
+type TimeRange = '7d' | '30d' | '60d';
 
 const RANGE_LABELS: Record<TimeRange, string> = {
     '7d': '7天',
     '30d': '30天',
-    'all': '全部',
+    '60d': '60天',
 };
 
 export default function UsageStatsPanel() {
@@ -267,6 +267,7 @@ function DailyTrendChart({ daily, totalTokens }: { daily: GlobalStats['daily']; 
                                     height={inputH}
                                     rx={0}
                                     fill={isHovered ? 'var(--accent)' : 'var(--accent-bg)'}
+                                    pointerEvents="none"
                                     style={{ transition: 'fill 0.15s' }}
                                 />
                                 {/* Output (top) */}
@@ -278,6 +279,7 @@ function DailyTrendChart({ daily, totalTokens }: { daily: GlobalStats['daily']; 
                                     rx={barWidth > 4 ? 3 : 1}
                                     fill={isHovered ? 'var(--accent)' : 'var(--accent)'}
                                     opacity={isHovered ? 0.7 : 0.4}
+                                    pointerEvents="none"
                                     style={{ transition: 'opacity 0.15s' }}
                                 />
                                 {/* X-axis label */}
@@ -288,6 +290,7 @@ function DailyTrendChart({ daily, totalTokens }: { daily: GlobalStats['daily']; 
                                     fill="var(--ink-muted)"
                                     fontSize="9"
                                     fontFamily="inherit"
+                                    pointerEvents="none"
                                 >
                                     {dateLabel}
                                 </text>
@@ -362,6 +365,9 @@ function ModelTable({ byModel, totalTokens }: { byModel: GlobalStats['byModel'];
                                 模型
                             </th>
                             <th className="px-4 py-2 text-right text-xs font-medium text-[var(--ink-muted)]">
+                                总 Token
+                            </th>
+                            <th className="px-4 py-2 text-right text-xs font-medium text-[var(--ink-muted)]">
                                 输入
                             </th>
                             <th className="px-4 py-2 text-right text-xs font-medium text-[var(--ink-muted)]">
@@ -380,6 +386,9 @@ function ModelTable({ byModel, totalTokens }: { byModel: GlobalStats['byModel'];
                             <tr key={model}>
                                 <td className="px-4 py-2 text-[var(--ink)]">
                                     {model}
+                                </td>
+                                <td className="px-4 py-2 text-right font-medium text-[var(--ink)]">
+                                    {formatTokens(data.inputTokens + data.outputTokens)}
                                 </td>
                                 <td className="px-4 py-2 text-right text-[var(--ink-muted)]">
                                     {formatTokens(data.inputTokens)}

@@ -181,7 +181,7 @@ export interface GlobalStats {
 /**
  * Get global token usage statistics
  */
-export async function getGlobalStats(range: '7d' | '30d' | 'all'): Promise<GlobalStats | null> {
+export async function getGlobalStats(range: '7d' | '30d' | '60d'): Promise<GlobalStats | null> {
     try {
         const result = await apiGetJson<{ success: boolean; stats: GlobalStats }>(
             `/api/global-stats?range=${range}`

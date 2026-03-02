@@ -1662,25 +1662,22 @@ async function main() {
 
       // ============= GLOBAL STATS API =============
 
-      // GET /api/global-stats?range=7d|30d|all - Aggregated token usage across all sessions
+      // GET /api/global-stats?range=7d|30d|60d - Aggregated token usage across all sessions
       if (pathname === '/api/global-stats' && request.method === 'GET') {
         try {
           const range = url.searchParams.get('range') || '30d';
-          if (!['7d', '30d', 'all'].includes(range)) {
-            return jsonResponse({ success: false, error: 'Invalid range. Use 7d, 30d, or all.' }, 400);
+          if (!['7d', '30d', '60d'].includes(range)) {
+            return jsonResponse({ success: false, error: 'Invalid range. Use 7d, 30d, or 60d.' }, 400);
           }
 
           const allSessions = getAllSessionMetadata();
 
           // Filter sessions by time range using lastActiveAt as a coarse pre-filter
           const now = Date.now();
-          const cutoff = range === '7d' ? now - 7 * 86400_000
-            : range === '30d' ? now - 30 * 86400_000
-            : 0;
+          const rangeDays = range === '7d' ? 7 : range === '30d' ? 30 : 60;
+          const cutoff = now - rangeDays * 86400_000;
 
-          const sessions = cutoff > 0
-            ? allSessions.filter(s => new Date(s.lastActiveAt).getTime() >= cutoff)
-            : allSessions;
+          const sessions = allSessions.filter(s => new Date(s.lastActiveAt).getTime() >= cutoff);
 
           // Aggregate summary from metadata.stats (fast, no JSONL reads)
           const totalSessions = sessions.length;
