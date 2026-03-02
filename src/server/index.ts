@@ -1660,6 +1660,143 @@ async function main() {
         }
       }
 
+      // ============= GLOBAL STATS API =============
+
+      // GET /api/global-stats?range=7d|30d|all - Aggregated token usage across all sessions
+      if (pathname === '/api/global-stats' && request.method === 'GET') {
+        try {
+          const range = url.searchParams.get('range') || '30d';
+          if (!['7d', '30d', 'all'].includes(range)) {
+            return jsonResponse({ success: false, error: 'Invalid range. Use 7d, 30d, or all.' }, 400);
+          }
+
+          const allSessions = getAllSessionMetadata();
+
+          // Filter sessions by time range using lastActiveAt as a coarse pre-filter
+          const now = Date.now();
+          const cutoff = range === '7d' ? now - 7 * 86400_000
+            : range === '30d' ? now - 30 * 86400_000
+            : 0;
+
+          const sessions = cutoff > 0
+            ? allSessions.filter(s => new Date(s.lastActiveAt).getTime() >= cutoff)
+            : allSessions;
+
+          // Aggregate summary from metadata.stats (fast, no JSONL reads)
+          const totalSessions = sessions.length;
+          let messageCount = 0;
+          let totalInputTokens = 0;
+          let totalOutputTokens = 0;
+          let totalCacheReadTokens = 0;
+          let totalCacheCreationTokens = 0;
+
+          for (const s of sessions) {
+            const stats = s.stats;
+            if (stats) {
+              messageCount += stats.messageCount ?? 0;
+              totalInputTokens += stats.totalInputTokens ?? 0;
+              totalOutputTokens += stats.totalOutputTokens ?? 0;
+              totalCacheReadTokens += stats.totalCacheReadTokens ?? 0;
+              totalCacheCreationTokens += stats.totalCacheCreationTokens ?? 0;
+            }
+          }
+
+          // Helper: convert ISO timestamp to local date string "YYYY-MM-DD"
+          const toLocalDate = (isoStr: string): string => {
+            const d = new Date(isoStr);
+            const y = d.getFullYear();
+            const mo = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${y}-${mo}-${day}`;
+          };
+
+          // Single pass through messages: aggregate both daily + byModel
+          const dailyMap: Record<string, { inputTokens: number; outputTokens: number; messageCount: number }> = {};
+          const byModel: Record<string, {
+            inputTokens: number;
+            outputTokens: number;
+            cacheReadTokens: number;
+            cacheCreationTokens: number;
+            count: number;
+          }> = {};
+
+          // Track the current user message date for daily bucketing
+          for (const s of sessions) {
+            const sessionData = getSessionData(s.id);
+            if (!sessionData) continue;
+
+            let lastUserDate = toLocalDate(s.createdAt); // fallback date for first assistant msg
+
+            for (const msg of sessionData.messages) {
+              if (msg.role === 'user') {
+                // Use user message timestamp for the date of this conversation turn
+                lastUserDate = msg.timestamp ? toLocalDate(msg.timestamp) : lastUserDate;
+              } else if (msg.role === 'assistant' && msg.usage) {
+                // Daily aggregation: attribute tokens to the date of the preceding user message
+                const date = msg.timestamp ? toLocalDate(msg.timestamp) : lastUserDate;
+                if (!dailyMap[date]) {
+                  dailyMap[date] = { inputTokens: 0, outputTokens: 0, messageCount: 0 };
+                }
+                dailyMap[date].inputTokens += msg.usage.inputTokens ?? 0;
+                dailyMap[date].outputTokens += msg.usage.outputTokens ?? 0;
+                dailyMap[date].messageCount++;
+
+                // byModel aggregation
+                if (msg.usage.modelUsage) {
+                  for (const [model, mu] of Object.entries(msg.usage.modelUsage)) {
+                    if (!byModel[model]) {
+                      byModel[model] = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, count: 0 };
+                    }
+                    byModel[model].inputTokens += mu.inputTokens ?? 0;
+                    byModel[model].outputTokens += mu.outputTokens ?? 0;
+                    byModel[model].cacheReadTokens += mu.cacheReadTokens ?? 0;
+                    byModel[model].cacheCreationTokens += mu.cacheCreationTokens ?? 0;
+                    byModel[model].count++;
+                  }
+                } else {
+                  const model = msg.usage.model || 'unknown';
+                  if (!byModel[model]) {
+                    byModel[model] = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, count: 0 };
+                  }
+                  byModel[model].inputTokens += msg.usage.inputTokens ?? 0;
+                  byModel[model].outputTokens += msg.usage.outputTokens ?? 0;
+                  byModel[model].cacheReadTokens += msg.usage.cacheReadTokens ?? 0;
+                  byModel[model].cacheCreationTokens += msg.usage.cacheCreationTokens ?? 0;
+                  byModel[model].count++;
+                }
+              }
+            }
+          }
+
+          // Sort daily entries chronologically
+          const daily = Object.entries(dailyMap)
+            .map(([date, d]) => ({ date, ...d }))
+            .sort((a, b) => a.date.localeCompare(b.date));
+
+          return jsonResponse({
+            success: true,
+            stats: {
+              summary: {
+                totalSessions,
+                messageCount,
+                totalInputTokens,
+                totalOutputTokens,
+                totalCacheReadTokens,
+                totalCacheCreationTokens,
+              },
+              daily,
+              byModel,
+            },
+          });
+        } catch (error) {
+          console.error('[global-stats] Error:', error);
+          return jsonResponse({
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          }, 500);
+        }
+      }
+
       // ============= SESSION API =============
 
       // GET /sessions - List all sessions or filter by agentDir

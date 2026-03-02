@@ -14,6 +14,7 @@ import GlobalSkillsPanel from '@/components/GlobalSkillsPanel';
 import GlobalAgentsPanel from '@/components/GlobalAgentsPanel';
 import CronTaskDebugPanel from '@/components/dev/CronTaskDebugPanel';
 import { ImSettings } from '@/components/ImSettings';
+import UsageStatsPanel from '@/components/UsageStatsPanel';
 import {
     getModelsDisplay,
     PRESET_PROVIDERS,
@@ -65,7 +66,7 @@ function parsePositiveInt(value: string): number | undefined {
 }
 
 // Settings sub-sections
-type SettingsSection = 'general' | 'providers' | 'mcp' | 'skills' | 'agents' | 'im' | 'about';
+type SettingsSection = 'general' | 'providers' | 'mcp' | 'skills' | 'agents' | 'im' | 'usage-stats' | 'about';
 
 import type { SubscriptionStatusWithVerify } from '@/types/subscription';
 
@@ -154,7 +155,7 @@ interface SettingsProps {
     onRestartAndUpdate?: () => void;
 }
 
-const VALID_SECTIONS: SettingsSection[] = ['general', 'providers', 'mcp', 'skills', 'agents', 'im', 'about'];
+const VALID_SECTIONS: SettingsSection[] = ['general', 'providers', 'mcp', 'skills', 'agents', 'im', 'usage-stats', 'about'];
 
 // Memoized component for model tag list to avoid recreating presetModelIds on every render
 const ModelTagList = React.memo(function ModelTagList({
@@ -1499,6 +1500,15 @@ export default function Settings({ initialSection, onSectionChange, isActive, up
                         聊天机器人 Bot
                     </button>
                     <button
+                        onClick={() => setActiveSection('usage-stats')}
+                        className={`w-full rounded-lg px-3 py-2.5 text-left text-[15px] font-medium transition-colors ${activeSection === 'usage-stats'
+                            ? 'bg-[var(--paper-contrast)] text-[var(--ink)]'
+                            : 'text-[var(--ink-muted)] hover:text-[var(--ink)]'
+                            }`}
+                    >
+                        使用统计
+                    </button>
+                    <button
                         onClick={() => setActiveSection('general')}
                         className={`w-full rounded-lg px-3 py-2.5 text-left text-[15px] font-medium transition-colors ${activeSection === 'general'
                             ? 'bg-[var(--paper-contrast)] text-[var(--ink)]'
@@ -1533,6 +1543,13 @@ export default function Settings({ initialSection, onSectionChange, isActive, up
                 {activeSection === 'im' && (
                     <div className="mx-auto max-w-4xl px-8 py-8">
                         <ImSettings />
+                    </div>
+                )}
+
+                {/* Usage Stats section */}
+                {activeSection === 'usage-stats' && (
+                    <div className="mx-auto max-w-4xl px-8 py-8">
+                        <UsageStatsPanel />
                     </div>
                 )}
 
