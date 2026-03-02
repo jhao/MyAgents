@@ -469,6 +469,8 @@ export default function Settings({ initialSection, onSectionChange, isActive, up
 
     // Ref for verify timeout cleanup
     const verifyTimeoutRef = useRef<Record<string, NodeJS.Timeout>>({});
+    // Per-provider generation counter to prevent stale verify results from overwriting newer ones
+    const verifyGenRef = useRef<Record<string, number>>({});
 
     // MCP state
     const [mcpServers, setMcpServersState] = useState<McpServerDefinition[]>([]);
@@ -1052,8 +1054,12 @@ export default function Settings({ initialSection, onSectionChange, isActive, up
             return;
         }
 
+        // Bump generation counter — any in-flight verify for this provider becomes stale
+        const gen = (verifyGenRef.current[provider.id] ?? 0) + 1;
+        verifyGenRef.current[provider.id] = gen;
+
         console.log('[verifyProvider] ========================');
-        console.log('[verifyProvider] Provider:', provider.id, provider.name);
+        console.log('[verifyProvider] Provider:', provider.id, provider.name, `(gen=${gen})`);
         console.log('[verifyProvider] baseUrl:', provider.config.baseUrl);
         console.log('[verifyProvider] model:', provider.primaryModel);
         console.log('[verifyProvider] apiKey:', apiKey.slice(0, 10) + '...');
@@ -1072,6 +1078,12 @@ export default function Settings({ initialSection, onSectionChange, isActive, up
                 upstreamFormat: provider.upstreamFormat,
             });
 
+            // Stale check: if a newer verify was triggered while we were waiting, discard this result
+            if (verifyGenRef.current[provider.id] !== gen) {
+                console.log(`[verifyProvider] Discarding stale result (gen=${gen}, current=${verifyGenRef.current[provider.id]})`);
+                return;
+            }
+
             console.log('[verifyProvider] Result:', JSON.stringify(result, null, 2));
             console.log('[verifyProvider] ========================');
 
@@ -1085,6 +1097,9 @@ export default function Settings({ initialSection, onSectionChange, isActive, up
                 toastRef.current.error(`${provider.name}: ${errorMsg}`);
             }
         } catch (err) {
+            // Stale check on error path too
+            if (verifyGenRef.current[provider.id] !== gen) return;
+
             console.error('[verifyProvider] Exception:', err);
             await saveProviderVerifyStatus(provider.id, 'invalid');
             const errorMsg = err instanceof Error ? err.message : '验证失败';
@@ -1094,7 +1109,10 @@ export default function Settings({ initialSection, onSectionChange, isActive, up
             }));
             toastRef.current.error(`${provider.name}: ${errorMsg}`);
         } finally {
-            setVerifyLoading((prev) => ({ ...prev, [provider.id]: false }));
+            // Only clear loading if this is still the latest generation
+            if (verifyGenRef.current[provider.id] === gen) {
+                setVerifyLoading((prev) => ({ ...prev, [provider.id]: false }));
+            }
         }
     }, [saveProviderVerifyStatus]);
 
