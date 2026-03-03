@@ -200,6 +200,11 @@ pub struct TelegramAdapter {
     short_id_map: Arc<Mutex<HashMap<String, (String, Instant)>>>,
     /// Channel for group lifecycle events (bot added/removed from groups)
     group_event_tx: mpsc::Sender<GroupEvent>,
+    /// Whether to use sendMessageDraft for streaming (experimental)
+    use_message_draft: bool,
+    /// Whether this adapter instance has fallen back to standard mode due to draft errors.
+    /// AtomicBool avoids try_lock fragility and contention issues across concurrent streams.
+    draft_fallback: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl TelegramAdapter {
@@ -232,6 +237,8 @@ impl TelegramAdapter {
             approval_tx,
             short_id_map: Arc::new(Mutex::new(HashMap::new())),
             group_event_tx,
+            use_message_draft: config.telegram_use_draft.unwrap_or(false),
+            draft_fallback: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -306,6 +313,9 @@ impl TelegramAdapter {
                 }
                 400 if description.contains("thread not found") => {
                     return Err(TelegramError::ThreadNotFound);
+                }
+                400 if description.contains("TEXTDRAFT_PEER_INVALID") => {
+                    return Err(TelegramError::DraftPeerInvalid);
                 }
                 400 if description.contains("REACTION_INVALID") || description.contains("REACTION_EMPTY") => {
                     // Permanent error: emoji not available as reaction in this chat
@@ -582,6 +592,43 @@ impl TelegramAdapter {
         )
         .await?;
         Ok(())
+    }
+
+    /// Use sendMessageDraft to send/update a typing draft.
+    /// On DraftPeerInvalid, sets draft_fallback = true for this adapter instance.
+    async fn send_draft_update(&self, chat_id: &str, text: &str, draft_id: i64) -> Result<(), TelegramError> {
+        use std::sync::atomic::Ordering;
+        if self.draft_fallback.load(Ordering::Relaxed) {
+            return Err(TelegramError::DraftPeerInvalid);
+        }
+        match self.api_call("sendMessageDraft", &json!({
+            "chat_id": chat_id,
+            "text": text,
+            "draft_id": draft_id,
+            "parse_mode": "Markdown"
+        })).await {
+            Ok(_) => Ok(()),
+            Err(TelegramError::DraftPeerInvalid) => {
+                self.draft_fallback.store(true, Ordering::Relaxed);
+                Err(TelegramError::DraftPeerInvalid)
+            }
+            Err(TelegramError::MarkdownParseError) => {
+                // Retry without Markdown parse_mode
+                match self.api_call("sendMessageDraft", &json!({
+                    "chat_id": chat_id,
+                    "text": text,
+                    "draft_id": draft_id
+                })).await {
+                    Ok(_) => Ok(()),
+                    Err(TelegramError::DraftPeerInvalid) => {
+                        self.draft_fallback.store(true, Ordering::Relaxed);
+                        Err(TelegramError::DraftPeerInvalid)
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Set reaction emoji on a message (ACK)
@@ -1432,10 +1479,37 @@ impl super::adapter::ImStreamAdapter for TelegramAdapter {
         chat_id: &str,
         text: &str,
     ) -> super::adapter::AdapterResult<Option<String>> {
-        self.send_message(chat_id, text)
-            .await
-            .map(|opt_id| opt_id.map(|id| id.to_string()))
-            .map_err(|e| e.to_string())
+        use std::sync::atomic::Ordering;
+        if self.use_message_draft && !self.draft_fallback.load(Ordering::Relaxed) {
+            // Draft mode: use sendMessageDraft, return virtual "draft:{id}" ID.
+            // The draft_id is encoded into the virtual ID string so each stream
+            // is self-contained — no shared mutable state across concurrent chats.
+            let draft_id = {
+                use std::time::{SystemTime, UNIX_EPOCH};
+                let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+                (t.as_millis() as i64).max(1)
+            };
+            match self.send_draft_update(chat_id, text, draft_id).await {
+                Ok(()) => {
+                    Ok(Some(format!("draft:{}", draft_id)))
+                }
+                Err(TelegramError::DraftPeerInvalid) => {
+                    // Fallback to standard mode
+                    ulog_warn!("[telegram] sendMessageDraft not supported, falling back to standard mode");
+                    self.send_message(chat_id, text)
+                        .await
+                        .map(|opt| opt.map(|id| id.to_string()))
+                        .map_err(|e| e.to_string())
+                }
+                Err(e) => Err(e.to_string()),
+            }
+        } else {
+            // Standard mode
+            self.send_message(chat_id, text)
+                .await
+                .map(|opt_id| opt_id.map(|id| id.to_string()))
+                .map_err(|e| e.to_string())
+        }
     }
 
     async fn edit_message(
@@ -1444,6 +1518,16 @@ impl super::adapter::ImStreamAdapter for TelegramAdapter {
         message_id: &str,
         text: &str,
     ) -> super::adapter::AdapterResult<()> {
+        // Parse draft_id directly from the virtual "draft:xxx" ID string.
+        // This keeps draft routing stream-local — no shared state across concurrent chats.
+        if let Some(id_str) = message_id.strip_prefix("draft:") {
+            let draft_id = id_str.parse::<i64>()
+                .map_err(|e| format!("Invalid draft ID: {}", e))?;
+            return self.send_draft_update(chat_id, text, draft_id)
+                .await
+                .map_err(|e| e.to_string());
+        }
+        // Standard mode
         let mid = message_id
             .parse::<i64>()
             .map_err(|e| format!("Invalid message_id: {}", e))?;
@@ -1457,6 +1541,11 @@ impl super::adapter::ImStreamAdapter for TelegramAdapter {
         chat_id: &str,
         message_id: &str,
     ) -> super::adapter::AdapterResult<()> {
+        if message_id.starts_with("draft:") {
+            // Drafts auto-clear when sendMessage is called, no need to delete
+            return Ok(());
+        }
+        // Standard mode
         let mid = message_id
             .parse::<i64>()
             .map_err(|e| format!("Invalid message_id: {}", e))?;
@@ -1517,6 +1606,14 @@ impl super::adapter::ImStreamAdapter for TelegramAdapter {
             .await
             .map(|opt_id| opt_id.map(|id| id.to_string()))
             .map_err(|e| e.to_string())
+    }
+
+    fn use_draft_streaming(&self) -> bool {
+        self.use_message_draft && !self.draft_fallback.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn preferred_throttle_ms(&self) -> u64 {
+        if self.use_draft_streaming() { 300 } else { 1000 }
     }
 }
 

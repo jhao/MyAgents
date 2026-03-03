@@ -210,6 +210,7 @@ export default function ImBotWizard({
             dingtalkClientSecret: cfg.dingtalkClientSecret || null,
             dingtalkUseAiCard: cfg.dingtalkUseAiCard ?? false,
             dingtalkCardTemplateId: cfg.dingtalkCardTemplateId || null,
+            telegramUseDraft: cfg.telegramUseDraft ?? false,
             heartbeatConfigJson: cfg.heartbeat ? JSON.stringify(cfg.heartbeat) : null,
             botName: cfg.name || null,
         };

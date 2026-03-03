@@ -75,6 +75,10 @@ export interface ImBotConfig {
   dingtalkUseAiCard?: boolean;
   dingtalkCardTemplateId?: string;
 
+  // ===== Telegram-specific options =====
+  /** Telegram: 使用 sendMessageDraft 实现打字机流式效果 (实验性, v0.1.34) */
+  telegramUseDraft?: boolean;
+
   // ===== AI config (independent from Desktop client) =====
   providerId?: string;          // Provider ID (e.g. 'anthropic-sub', 'deepseek')
   model?: string;               // Model ID (e.g. 'claude-sonnet-4-6')

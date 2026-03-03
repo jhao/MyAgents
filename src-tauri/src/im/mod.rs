@@ -211,6 +211,20 @@ impl adapter::ImStreamAdapter for AnyAdapter {
             Self::Dingtalk(a) => a.send_file(chat_id, data, filename, mime_type, caption).await,
         }
     }
+    fn use_draft_streaming(&self) -> bool {
+        match self {
+            Self::Telegram(a) => a.use_draft_streaming(),
+            Self::Feishu(a) => a.use_draft_streaming(),
+            Self::Dingtalk(a) => a.use_draft_streaming(),
+        }
+    }
+    fn preferred_throttle_ms(&self) -> u64 {
+        match self {
+            Self::Telegram(a) => a.preferred_throttle_ms(),
+            Self::Feishu(a) => a.preferred_throttle_ms(),
+            Self::Dingtalk(a) => a.preferred_throttle_ms(),
+        }
+    }
 }
 
 /// Managed state for the IM Bot subsystem (multi-bot: bot_id → instance)
@@ -2114,7 +2128,6 @@ async fn stream_to_im<A: adapter::ImStreamAdapter>(
     let mut first_content_sent = false;
 
     let mut session_id: Option<String> = None;
-    const THROTTLE: Duration = Duration::from_millis(1000);
 
     while let Some(chunk_result) = byte_stream.next().await {
         let chunk = chunk_result
@@ -2170,9 +2183,11 @@ async fn stream_to_im<A: adapter::ImStreamAdapter>(
                             first_content_sent = true;
                         }
 
-                        // Throttled edit (≥1s interval)
+                        // Throttled edit — re-evaluate interval dynamically so fallback
+                        // from 300ms→1000ms takes effect mid-stream.
                         if let Some(ref did) = draft_id {
-                            if last_edit.elapsed() >= THROTTLE {
+                            let throttle = Duration::from_millis(adapter.preferred_throttle_ms());
+                            if last_edit.elapsed() >= throttle {
                                 let display = format_draft_text(&block_text, adapter.max_message_length());
                                 if let Err(e) = adapter.edit_message(chat_id, did, &display).await {
                                     ulog_warn!("[im] Draft edit failed: {}", e);
@@ -2321,6 +2336,9 @@ async fn stream_to_im<A: adapter::ImStreamAdapter>(
 
 /// Finalize a text block's draft message.
 /// Uses adapter.max_message_length() to determine the platform's limit.
+/// Detects draft mode from the draft_id string (`draft:xxx` prefix) rather than the adapter
+/// trait method — this is safe even if `draft_fallback` flips mid-stream, because the decision
+/// is based on the actual ID type of the current block, not global adapter state.
 async fn finalize_block<A: adapter::ImStreamAdapter>(
     adapter: &A,
     chat_id: &str,
@@ -2330,21 +2348,32 @@ async fn finalize_block<A: adapter::ImStreamAdapter>(
     if text.is_empty() {
         return;
     }
-    let max_len = adapter.max_message_length();
-    if let Some(ref did) = draft_id {
-        if text.chars().count() <= max_len {
-            if let Err(e) = adapter.edit_message(chat_id, did, text).await {
-                ulog_warn!("[im] Finalize edit failed: {}, sending as new message", e);
+    let is_draft_id = draft_id.as_ref().map_or(false, |id| id.starts_with("draft:"));
+    if is_draft_id {
+        // Draft mode: delete draft (no-op for draft: IDs) + send permanent message.
+        // `sendMessageDraft` cannot be "committed" — only `sendMessage` creates a real message.
+        if let Some(ref did) = draft_id {
+            let _ = adapter.delete_message(chat_id, did).await;
+        }
+        let _ = adapter.send_message(chat_id, text).await;
+    } else {
+        // Standard mode: edit-in-place or delete+send
+        let max_len = adapter.max_message_length();
+        if let Some(ref did) = draft_id {
+            if text.chars().count() <= max_len {
+                if let Err(e) = adapter.edit_message(chat_id, did, text).await {
+                    ulog_warn!("[im] Finalize edit failed: {}, sending as new message", e);
+                    let _ = adapter.send_message(chat_id, text).await;
+                }
+            } else {
+                // Too long for edit: delete draft → send_message (auto-splits)
+                let _ = adapter.delete_message(chat_id, did).await;
                 let _ = adapter.send_message(chat_id, text).await;
             }
         } else {
-            // Too long for edit: delete draft → send_message (auto-splits)
-            let _ = adapter.delete_message(chat_id, did).await;
+            // No draft created (very fast response) → send directly
             let _ = adapter.send_message(chat_id, text).await;
         }
-    } else {
-        // No draft created (very fast response) → send directly
-        let _ = adapter.send_message(chat_id, text).await;
     }
 }
 
@@ -2613,6 +2642,7 @@ pub async fn cmd_start_im_bot(
     dingtalkClientSecret: Option<String>,
     dingtalkUseAiCard: Option<bool>,
     dingtalkCardTemplateId: Option<String>,
+    telegramUseDraft: Option<bool>,
     heartbeatConfigJson: Option<String>,
     botName: Option<String>,
 ) -> Result<ImBotStatus, String> {
@@ -2643,6 +2673,7 @@ pub async fn cmd_start_im_bot(
         dingtalk_client_secret: dingtalkClientSecret,
         dingtalk_use_ai_card: dingtalkUseAiCard,
         dingtalk_card_template_id: dingtalkCardTemplateId,
+        telegram_use_draft: telegramUseDraft,
         provider_id: None, // Not needed here — frontend passes providerEnvJson directly
         model,
         provider_env_json: providerEnvJson,
@@ -2778,6 +2809,11 @@ fn persist_bot_config_patch(bot_id: &str, patch: &BotConfigPatch) -> Result<(), 
         bot["dingtalkUseAiCard"] = serde_json::json!(val);
     }
 
+    // telegram_use_draft → boolean field
+    if let Some(val) = patch.telegram_use_draft {
+        bot["telegramUseDraft"] = serde_json::json!(val);
+    }
+
     // mcp_enabled_servers → persisted as "mcpEnabledServers"
     if let Some(ref servers) = patch.mcp_enabled_servers {
         bot["mcpEnabledServers"] = serde_json::json!(servers);
@@ -2868,6 +2904,7 @@ async fn update_bot_config_internal<R: Runtime>(
     let patch_dingtalk_secret = patch.dingtalk_client_secret.clone();
     let patch_dingtalk_ai_card = patch.dingtalk_use_ai_card;
     let patch_dingtalk_template = patch.dingtalk_card_template_id.clone();
+    let patch_telegram_draft = patch.telegram_use_draft;
     let patch_group_perms = patch.group_permissions.clone();
     let patch_group_activation = patch.group_activation.clone();
     let patch_group_tools_deny = patch.group_tools_deny.clone();
@@ -2890,6 +2927,7 @@ async fn update_bot_config_internal<R: Runtime>(
         dingtalk_client_secret: patch_dingtalk_secret,
         dingtalk_use_ai_card: patch_dingtalk_ai_card,
         dingtalk_card_template_id: patch_dingtalk_template,
+        telegram_use_draft: patch_telegram_draft,
         enabled: patch_enabled,
         setup_completed: patch_setup,
         group_permissions: patch_group_perms.clone(),

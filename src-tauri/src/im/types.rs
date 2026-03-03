@@ -30,6 +30,8 @@ pub struct BotConfigPatch {
     pub dingtalk_client_secret: Option<String>,
     pub dingtalk_use_ai_card: Option<bool>,
     pub dingtalk_card_template_id: Option<String>,
+    // ===== Telegram-specific options =====
+    pub telegram_use_draft: Option<bool>,
     pub enabled: Option<bool>,
     pub setup_completed: Option<bool>,
     pub group_permissions: Option<Vec<GroupPermission>>,
@@ -233,6 +235,9 @@ pub struct ImConfig {
     pub dingtalk_use_ai_card: Option<bool>,
     #[serde(default)]
     pub dingtalk_card_template_id: Option<String>,
+    // ===== Telegram-specific options =====
+    #[serde(default)]
+    pub telegram_use_draft: Option<bool>,
     // ===== AI config =====
     #[serde(default)]
     pub provider_id: Option<String>,
@@ -274,6 +279,7 @@ impl Default for ImConfig {
             dingtalk_client_secret: None,
             dingtalk_use_ai_card: None,
             dingtalk_card_template_id: None,
+            telegram_use_draft: None,
             provider_id: None,
             model: None,
             provider_env_json: None,
@@ -558,6 +564,8 @@ pub enum TelegramError {
     BotKicked,
     /// Bot token is invalid
     TokenUnauthorized,
+    /// sendMessageDraft not supported for this peer/chat type
+    DraftPeerInvalid,
     /// Other API error
     Other(String),
 }
@@ -573,6 +581,7 @@ impl std::fmt::Display for TelegramError {
             Self::ThreadNotFound => write!(f, "Thread not found"),
             Self::BotKicked => write!(f, "Bot kicked from group"),
             Self::TokenUnauthorized => write!(f, "Token unauthorized"),
+            Self::DraftPeerInvalid => write!(f, "Draft peer invalid"),
             Self::Other(msg) => write!(f, "{}", msg),
         }
     }

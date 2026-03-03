@@ -127,4 +127,11 @@ pub trait ImStreamAdapter: ImAdapter {
         mime_type: &str,
         caption: Option<&str>,
     ) -> impl std::future::Future<Output = AdapterResult<Option<String>>> + Send;
+
+    /// Whether this adapter uses draft streaming (affects finalize behavior).
+    /// When true, finalize_block will delete draft + send_message instead of edit_message.
+    fn use_draft_streaming(&self) -> bool { false }
+
+    /// Preferred throttle interval in ms for draft edits. Default 1000ms.
+    fn preferred_throttle_ms(&self) -> u64 { 1000 }
 }
