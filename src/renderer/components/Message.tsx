@@ -1,5 +1,5 @@
 import { Fragment, memo, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Copy, Check, RotateCcw } from 'lucide-react';
+import { Copy, Check, Undo2, RotateCcw } from 'lucide-react';
 
 import AttachmentPreviewList from '@/components/AttachmentPreviewList';
 import BlockGroup from '@/components/BlockGroup';
@@ -99,7 +99,7 @@ function extractAssistantText(content: MessageType['content']): string {
 
 /**
  * Action bar for assistant messages: copy + retry.
- * Shown on hover, hidden during streaming.
+ * Always visible (not hover), left-aligned icon buttons.
  */
 function AssistantActions({ message, onRetry }: {
   message: MessageType;
@@ -115,28 +115,25 @@ function AssistantActions({ message, onRetry }: {
   const text = extractAssistantText(message.content);
 
   return (
-    <div className="flex justify-end gap-2 px-4 pt-1 opacity-0 transition-opacity group-hover/assistant:opacity-100">
+    <div className="flex items-center gap-0.5 px-4 pt-1">
       <button type="button"
+        title={copied ? '已复制' : '复制'}
         onClick={() => {
           navigator.clipboard.writeText(text).catch(() => {});
           setCopied(true);
           if (timerRef.current) clearTimeout(timerRef.current);
           timerRef.current = setTimeout(() => setCopied(false), 1500);
         }}
-        className="flex items-center gap-0.5 text-[11px] text-[var(--ink-muted)] hover:text-[var(--ink)] transition-colors">
-        {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
-        <span>{copied ? '已复制' : '复制'}</span>
+        className="rounded-lg p-1 text-[var(--ink-muted)] transition-all hover:bg-[var(--paper-contrast)] hover:text-[var(--ink)]">
+        {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
       </button>
       {onRetry && (
-        <>
-          <span className="text-[11px] text-[var(--ink-muted)]">·</span>
-          <button type="button"
-            onClick={() => onRetry(message.id)}
-            className="flex items-center gap-0.5 text-[11px] text-[var(--ink-muted)] hover:text-[var(--ink)] transition-colors">
-            <RotateCcw className="size-3" />
-            <span>重试</span>
-          </button>
-        </>
+        <button type="button"
+          title="重试"
+          onClick={() => onRetry(message.id)}
+          className="rounded-lg p-1 text-[var(--ink-muted)] transition-all hover:bg-[var(--paper-contrast)] hover:text-[var(--ink)]">
+          <RotateCcw className="size-3.5" />
+        </button>
       )}
     </div>
   );
@@ -224,28 +221,27 @@ const Message = memo(function Message({ message, isLoading = false, isStreaming,
               </div>
             )}
           </article>
-          {/* 操作栏：时间 · 回溯 · 复制，hover 淡入 */}
-          <div className="mr-2 mt-1 flex items-center gap-1 text-[11px] text-[var(--ink-muted)] opacity-0 transition-opacity group-hover/user:opacity-100">
-            <span>{formatTimestamp(message.timestamp)}</span>
+          {/* 操作栏：时间 + 图标按钮，hover 淡入 */}
+          <div className="mr-2 mt-1 flex items-center gap-0.5 opacity-0 transition-opacity group-hover/user:opacity-100">
+            <span className="text-[11px] text-[var(--ink-muted)] mr-1">{formatTimestamp(message.timestamp)}</span>
             {!isStreaming && onRewind && (
-              <>
-                <span>·</span>
-                <button type="button" onClick={() => onRewind(message.id)}
-                  className="hover:text-[var(--ink)] transition-colors">
-                  回溯
-                </button>
-              </>
+              <button type="button"
+                title="时间回溯"
+                onClick={() => onRewind(message.id)}
+                className="rounded-lg p-1 text-[var(--ink-muted)] transition-all hover:bg-[var(--paper-contrast)] hover:text-[var(--ink)]">
+                <Undo2 className="size-3.5" />
+              </button>
             )}
-            <span>·</span>
             <button type="button"
+              title={copied ? '已复制' : '复制'}
               onClick={() => {
                 navigator.clipboard.writeText(userContent).catch(() => {});
                 setCopied(true);
                 if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
                 copiedTimerRef.current = setTimeout(() => setCopied(false), 1500);
               }}
-              className="hover:text-[var(--ink)] transition-colors">
-              {copied ? '已复制' : '复制'}
+              className="rounded-lg p-1 text-[var(--ink-muted)] transition-all hover:bg-[var(--paper-contrast)] hover:text-[var(--ink)]">
+              {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
             </button>
           </div>
         </div>
@@ -256,7 +252,7 @@ const Message = memo(function Message({ message, isLoading = false, isStreaming,
   // Assistant message
   if (typeof message.content === 'string') {
     return (
-      <div className="group/assistant flex justify-start w-full px-4 py-2 select-none">
+      <div className="flex justify-start w-full px-4 py-2 select-none">
         <div className="w-full max-w-none">
           <div className="text-[var(--ink)] select-text">
             <Markdown>{message.content}</Markdown>
@@ -332,7 +328,7 @@ const Message = memo(function Message({ message, isLoading = false, isStreaming,
     : -1;
 
   return (
-    <div className="group/assistant flex justify-start select-none">
+    <div className="flex justify-start select-none">
       <div className="w-full">
         <article className="w-full px-3 py-2">
           <div className="space-y-3">
