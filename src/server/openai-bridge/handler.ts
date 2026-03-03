@@ -135,6 +135,9 @@ export function createBridgeHandler(config: BridgeConfig): (request: Request) =>
       const errBody = await upstreamResp.text();
       log(`[bridge] Upstream error ${upstreamResp.status}: ${errBody.slice(0, 300)}`);
       const { status, body } = translateError(upstreamResp.status, errBody);
+      if (status !== upstreamResp.status) {
+        log(`[bridge] Remapped ${upstreamResp.status} → ${status} (${body.error.type})`);
+      }
       return new Response(JSON.stringify(body), {
         status,
         headers: { 'Content-Type': 'application/json' },

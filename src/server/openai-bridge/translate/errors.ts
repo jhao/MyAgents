@@ -58,9 +58,38 @@ function extractErrorMessage(body: string, status: number): string {
   }
 }
 
+/** Detect non-retryable 429 errors (quota exhausted vs temporary rate limit).
+ *  Claude Agent SDK retries 429/rate_limit_error indefinitely with backoff,
+ *  which is correct for temporary rate limits but wrong for permanent quota errors.
+ *  We remap these to 402 so the SDK surfaces the error immediately. */
+function isQuotaExhausted(message: string): boolean {
+  const lower = message.toLowerCase();
+  return lower.includes('exceeded your current quota')
+    || lower.includes('quota exceeded')
+    || lower.includes('insufficient_quota')
+    || lower.includes('payment required')
+    || lower.includes('billing_not_active')
+    || lower.includes('billing hard limit');
+}
+
 /** Translate an upstream error to Anthropic error format */
 export function translateError(status: number, body: string): { status: number; body: AnthropicErrorResponse } {
   const message = extractErrorMessage(body, status);
+
+  // Non-retryable quota errors: remap 429 → 402 so SDK won't retry infinitely.
+  // The SDK treats 429 as transient and retries, but quota exhaustion is permanent.
+  if (status === 429 && isQuotaExhausted(message)) {
+    return {
+      status: 402,
+      body: {
+        type: 'error',
+        error: {
+          type: 'invalid_request_error',
+          message,
+        },
+      },
+    };
+  }
 
   // Map OpenAI status codes to Anthropic equivalents
   const anthropicStatus = status === 402 ? 400 : status;
