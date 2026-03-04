@@ -349,6 +349,12 @@ Write-Host ""
 # ========================================
 Write-Host "[6/7] 上传构建产物到 R2..." -ForegroundColor Blue
 
+# 外部命令 (rclone/gh) 的 stderr 进度输出在 $ErrorActionPreference="Stop" 下
+# 会被 PowerShell 当作终止性错误，导致脚本意外崩溃。
+# 在外部命令执行区域统一放宽为 Continue，通过 $LASTEXITCODE 手动判断成败。
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+
 $uploadSuccess = 0
 $uploadFailed = 0
 
@@ -493,8 +499,12 @@ try {
     & $ghScript
     Write-Host "  [OK] GitHub Release 上传完成" -ForegroundColor Green
 } catch {
-    Write-Host "  [!] GitHub Release 上传失败，可稍后运行 .\upload_github_release_win.ps1 重试" -ForegroundColor Yellow
+    Write-Host "  [!] GitHub Release 上传失败: $_" -ForegroundColor Yellow
+    Write-Host "  [!] 可稍后运行 .\upload_github_release_win.ps1 重试" -ForegroundColor Yellow
 }
+
+# 恢复严格错误处理
+$ErrorActionPreference = $prevEAP
 
 Write-Host ""
 

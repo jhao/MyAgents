@@ -24,7 +24,7 @@ $ghCmd = Get-Command gh -ErrorAction SilentlyContinue
 if (-not $ghCmd) {
     Write-Host "[X] gh CLI 未安装" -ForegroundColor Red
     Write-Host "    安装: winget install --id GitHub.cli" -ForegroundColor Yellow
-    exit 1
+    throw "gh CLI 未安装"
 }
 
 # 查找 NSIS .exe 文件
@@ -34,28 +34,36 @@ $NsisExe = Get-ChildItem -Path $TargetDir -Filter "*.exe" -ErrorAction SilentlyC
 if (-not $NsisExe) {
     Write-Host "[X] 未找到 NSIS 安装包" -ForegroundColor Red
     Write-Host "    请先运行 .\build_windows.ps1 完成构建" -ForegroundColor Yellow
-    exit 1
+    throw "未找到 NSIS 安装包"
 }
 
 Write-Host "  [OK] $($NsisExe.Name)" -ForegroundColor Green
 Write-Host ""
 
-# 检查 Release 是否存在
+# 检查 Release 是否存在 (临时放宽 ErrorAction，gh stderr 输出不应触发终止)
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 $releaseCheck = & gh release view "v$Version" 2>&1
-if ($LASTEXITCODE -ne 0) {
+$ghExitCode = $LASTEXITCODE
+$ErrorActionPreference = $prevEAP
+if ($ghExitCode -ne 0) {
     Write-Host "[X] GitHub Release v$Version 不存在" -ForegroundColor Red
     Write-Host "    请先通过 merge-release 流程创建 Release" -ForegroundColor Yellow
-    exit 1
+    throw "GitHub Release v$Version 不存在"
 }
 
-# 上传
+# 上传 (临时放宽 ErrorAction，gh 进度输出走 stderr)
 Write-Host "上传到 GitHub Release v$Version..." -ForegroundColor Cyan
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 & gh release upload "v$Version" $NsisExe.FullName --clobber
-if ($LASTEXITCODE -eq 0) {
+$ghExitCode = $LASTEXITCODE
+$ErrorActionPreference = $prevEAP
+if ($ghExitCode -eq 0) {
     Write-Host ""
     Write-Host "[OK] GitHub Release 上传完成" -ForegroundColor Green
     Write-Host "  - $($NsisExe.Name)" -ForegroundColor White
 } else {
     Write-Host "[X] 上传失败" -ForegroundColor Red
-    exit 1
+    throw "GitHub Release 上传失败"
 }
