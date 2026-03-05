@@ -48,32 +48,30 @@ function SessionTitleEditor({ title, onRename }: { title: string; onRename: (new
     }
   };
 
-  const sharedClass = "max-w-[360px] text-sm font-medium";
-
-  if (editing) {
-    return (
-      <input
-        ref={inputRef}
-        className={`${sharedClass} w-full rounded border border-[var(--line)] bg-[var(--paper-inset)] px-1.5 py-0.5 text-[var(--ink)] outline-none focus:border-[var(--accent)]`}
-        value={draft}
-        onChange={e => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={e => {
-          if (e.key === 'Enter') inputRef.current?.blur(); // blur triggers onBlur→commit (avoids double-submit)
-          if (e.key === 'Escape') { setDraft(title); setEditing(false); }
-        }}
-      />
-    );
-  }
-
   return (
-    <span
-      className={`${sharedClass} truncate cursor-pointer px-1.5 py-0.5 text-[var(--ink-subtle)] hover:text-[var(--ink)] transition-colors`}
-      onClick={() => setEditing(true)}
-      title="点击重命名"
-    >
-      {title}
-    </span>
+    <div className="min-w-0 w-[360px]">
+      {editing ? (
+        <input
+          ref={inputRef}
+          className="w-full rounded border border-[var(--line)] bg-[var(--paper-inset)] px-1.5 py-0.5 text-sm font-medium text-[var(--ink)] outline-none focus:border-[var(--accent)]"
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={e => {
+            if (e.key === 'Enter') inputRef.current?.blur();
+            if (e.key === 'Escape') { setDraft(title); setEditing(false); }
+          }}
+        />
+      ) : (
+        <span
+          className="block truncate cursor-pointer px-1.5 py-0.5 text-sm font-medium text-[var(--ink-subtle)] hover:text-[var(--ink)] transition-colors"
+          onClick={() => setEditing(true)}
+          title="点击重命名"
+        >
+          {title}
+        </span>
+      )}
+    </div>
   );
 }
 
