@@ -3,6 +3,7 @@ import { BarChart2, Clock, Trash2 } from 'lucide-react';
 
 import { deleteSession, getSessions, type SessionMetadata } from '@/api/sessionClient';
 import { deactivateSession } from '@/api/tauriClient';
+import { CUSTOM_EVENTS } from '../../shared/constants';
 import { getWorkspaceCronTasks } from '@/api/cronTaskClient';
 import type { CronTask } from '@/types/cronTask';
 import { formatTokens } from '@/utils/formatTokens';
@@ -133,6 +134,16 @@ export default function SessionHistoryDropdown({
             setPendingDeleteId(null);
             setDeleteError(null);
         };
+    }, [isOpen, agentDir]);
+
+    // Refetch when session title changes (auto-generated or user rename)
+    useEffect(() => {
+        if (!isOpen || !agentDir) return;
+        const handler = () => {
+            getSessions(agentDir).then(data => setSessions(data)).catch(() => {});
+        };
+        window.addEventListener(CUSTOM_EVENTS.SESSION_TITLE_CHANGED, handler);
+        return () => window.removeEventListener(CUSTOM_EVENTS.SESSION_TITLE_CHANGED, handler);
     }, [isOpen, agentDir]);
 
     // Close on outside click (using stable ref to avoid re-attaching listener)

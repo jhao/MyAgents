@@ -25,6 +25,7 @@ import { getAllCronTasks, getTabCronTask, updateCronTaskTab } from '@/api/cronTa
 import { type CronRecoverySummaryPayload, type CronTaskRecoveredPayload, CRON_EVENTS } from '@/types/cronEvents';
 import { isBrowserDevMode, isTauriEnvironment } from '@/utils/browserMock';
 import { apiGetJson, apiPostJson } from '@/api/apiFetch';
+import { updateSession } from '@/api/sessionClient';
 import { forceFlushLogs, setLogServerUrl, clearLogServerUrl } from '@/utils/frontendLogger';
 import { CUSTOM_EVENTS, createPendingSessionId } from '../shared/constants';
 import { ensureSelfAwarenessWorkspace } from '@/config/configService';
@@ -65,6 +66,8 @@ interface TabContentProps {
   onSwitchSession: (tabId: string, sessionId: string) => Promise<void>;
   onNewSession: (tabId: string) => Promise<boolean>;
   onUpdateGenerating: (tabId: string, isGenerating: boolean) => void;
+  onUpdateTitle: (tabId: string, title: string) => void;
+  onRenameSession: (tabId: string, newTitle: string) => void;
   onUpdateSessionId: (tabId: string, newSessionId: string) => Promise<void>;
   onClearInitialMessage: (tabId: string) => void;
   onClearJoinedExistingSidecar: (tabId: string) => void;
@@ -81,7 +84,7 @@ interface TabContentProps {
 const MemoizedTabContent = memo(function TabContent({
   tab, isActive, isLoading, error,
   onLaunchProject, onBack, onSwitchSession, onNewSession,
-  onUpdateGenerating, onUpdateSessionId, onClearInitialMessage,
+  onUpdateGenerating, onUpdateTitle, onRenameSession, onUpdateSessionId, onClearInitialMessage,
   onClearJoinedExistingSidecar,
   settingsInitialSection, settingsInitialMcpId, onSettingsSectionChange,
   updateReady, updateVersion, updateChecking, updateDownloading,
@@ -119,6 +122,7 @@ const MemoizedTabContent = memo(function TabContent({
           sessionId={tab.sessionId}
           isActive={isActive}
           onGeneratingChange={(isGenerating) => onUpdateGenerating(tab.id, isGenerating)}
+          onTitleChange={(title) => onUpdateTitle(tab.id, title)}
           onSessionIdChange={(newSessionId) => onUpdateSessionId(tab.id, newSessionId)}
         >
           <Chat
@@ -129,6 +133,8 @@ const MemoizedTabContent = memo(function TabContent({
             onInitialMessageConsumed={() => onClearInitialMessage(tab.id)}
             joinedExistingSidecar={tab.joinedExistingSidecar}
             onJoinedExistingSidecarHandled={() => onClearJoinedExistingSidecar(tab.id)}
+            sessionTitle={tab.title}
+            onRenameSession={(newTitle: string) => onRenameSession(tab.id, newTitle)}
           />
         </TabProvider>
       )}
@@ -423,6 +429,11 @@ export default function App() {
     setTabs(prev => prev.map(t =>
       t.id === tabId ? { ...t, isGenerating } : t
     ));
+  }, []);
+
+  // Update tab title (called from TabProvider when auto-title or rename occurs)
+  const updateTabTitle = useCallback((tabId: string, title: string) => {
+    setTabs(prev => prev.map(t => t.id === tabId ? { ...t, title } : t));
   }, []);
 
   // Update tab sessionId when backend creates real session (called from TabProvider)
@@ -852,6 +863,17 @@ export default function App() {
       t.id === tabId ? { ...t, joinedExistingSidecar: undefined } : t
     ));
   }, []);
+
+  // Rename session: update tab title + persist to backend + notify listeners
+  const handleRenameSession = useCallback((tabId: string, newTitle: string) => {
+    updateTabTitle(tabId, newTitle);
+    const tab = tabsRef.current.find(t => t.id === tabId);
+    if (tab?.sessionId) {
+      updateSession(tab.sessionId, { title: newTitle, titleSource: 'user' })
+        .then(() => window.dispatchEvent(new CustomEvent(CUSTOM_EVENTS.SESSION_TITLE_CHANGED)))
+        .catch(err => console.error('[App] Failed to persist renamed title:', err));
+    }
+  }, [updateTabTitle]);
 
   /**
    * Handle session switch from within Chat (history dropdown)
@@ -1437,6 +1459,8 @@ export default function App() {
             onSwitchSession={handleSwitchSession}
             onNewSession={handleNewSession}
             onUpdateGenerating={updateTabGenerating}
+            onUpdateTitle={updateTabTitle}
+            onRenameSession={handleRenameSession}
             onUpdateSessionId={updateTabSessionId}
             onClearInitialMessage={clearInitialMessage}
             onClearJoinedExistingSidecar={clearJoinedExistingSidecar}
