@@ -51,10 +51,9 @@ const DIR_RESET_TIMEOUT = 150;         // ms — reset vertical direction lock
 
 const VELOCITY_SAMPLES = 5;
 const VELOCITY_SAMPLE_MAX_AGE = 100;   // ms — discard samples older than this
-const COMMIT_VELOCITY = 300;           // px/s — snap-decision velocity threshold (on idle timer)
-const PROACTIVE_COMMIT_VELOCITY = 300; // px/s — proactive commit during tracking
-const POSITION_THRESHOLD = 0.35;       // 35% of container width → switch on release
-const PROACTIVE_POSITION_MAX = 0.85;   // 85% → commit regardless of velocity (clearly switching)
+const COMMIT_VELOCITY = 300;           // px/s — velocity threshold for tab switch (both proactive & idle)
+const POSITION_THRESHOLD = 0.25;       // 25% of container width → switch on release
+const PROACTIVE_POSITION_MAX = 0.5;    // 50% → commit regardless of velocity (clearly switching)
 
 const IDLE_SLOW = 500;                 // ms — finger barely moving or paused
 const IDLE_FAST = 200;                 // ms — was recently moving fast → decide quickly after stop
@@ -541,7 +540,7 @@ export function useTabSwipeGesture({
         const oDir: -1 | 1 = state.offsetX > 0 ? 1 : -1;
 
         const fastSwipe = positionPct > POSITION_THRESHOLD
-          && Math.abs(v) > PROACTIVE_COMMIT_VELOCITY
+          && Math.abs(v) > COMMIT_VELOCITY
           && vDir === oDir;
         const nearTarget = positionPct > PROACTIVE_POSITION_MAX;
 
