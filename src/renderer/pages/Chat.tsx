@@ -48,11 +48,13 @@ function SessionTitleEditor({ title, onRename }: { title: string; onRename: (new
     }
   };
 
+  const sharedClass = "max-w-[360px] text-sm font-medium";
+
   if (editing) {
     return (
       <input
         ref={inputRef}
-        className="max-w-[360px] rounded border border-[var(--line)] bg-[var(--paper-inset)] px-1.5 py-0.5 text-sm font-medium text-[var(--ink)] outline-none focus:border-[var(--accent)]"
+        className={`${sharedClass} w-full rounded border border-[var(--line)] bg-[var(--paper-inset)] px-1.5 py-0.5 text-[var(--ink)] outline-none focus:border-[var(--accent)]`}
         value={draft}
         onChange={e => setDraft(e.target.value)}
         onBlur={commit}
@@ -66,7 +68,7 @@ function SessionTitleEditor({ title, onRename }: { title: string; onRename: (new
 
   return (
     <span
-      className="max-w-[360px] truncate cursor-pointer text-sm font-medium text-[var(--ink-subtle)] hover:text-[var(--ink)] transition-colors"
+      className={`${sharedClass} truncate cursor-pointer px-1.5 py-0.5 text-[var(--ink-subtle)] hover:text-[var(--ink)] transition-colors`}
       onClick={() => setEditing(true)}
       title="点击重命名"
     >
