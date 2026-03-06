@@ -2,7 +2,7 @@
 
 import type { BridgeConfig, UpstreamConfig } from './types/bridge';
 import type { AnthropicRequest } from './types/anthropic';
-import type { OpenAIResponse, OpenAIStreamChunk } from './types/openai';
+import type { OpenAIRequest, OpenAIResponse, OpenAIStreamChunk } from './types/openai';
 import type { ResponsesResponse, ResponsesStreamEvent } from './types/openai-responses';
 import { translateRequest } from './translate/request';
 import { translateResponse } from './translate/response';
@@ -46,6 +46,12 @@ export function createBridgeHandler(config: BridgeConfig): (request: Request) =>
   const timeout = config.upstreamTimeout ?? DEFAULT_TIMEOUT;
   const translateReasoning = config.translateReasoning ?? true;
 
+  // Cache tool_call_id → thought_signature across requests.
+  // Gemini thinking models require round-tripping thought_signature on every request
+  // that includes tool calls in history. The Claude Agent SDK strips non-standard fields,
+  // so we must cache them here and re-inject on outgoing requests.
+  const thoughtSignatureCache = new Map<string, string>();
+
   return async (request: Request): Promise<Response> => {
     // 1. Extract API key from request headers
     const apiKey = request.headers.get('x-api-key') || request.headers.get('authorization')?.replace('Bearer ', '') || '';
@@ -75,6 +81,27 @@ export function createBridgeHandler(config: BridgeConfig): (request: Request) =>
     const translatedReq = isResponses
       ? translateRequestToResponses(anthropicReq, { modelOverride: upstream.model, modelMapping: config.modelMapping })
       : translateRequest(anthropicReq, { modelMapping: config.modelMapping, modelOverride: upstream.model });
+
+    // 4a. Re-inject cached thought_signatures into tool_calls (Gemini thinking models)
+    // The Claude Agent SDK strips non-standard fields from tool_use blocks, so
+    // thought_signature is lost between turns. Re-inject from our per-session cache.
+    if (!isResponses && thoughtSignatureCache.size > 0) {
+      const chatReq = translatedReq as OpenAIRequest;
+      let injected = 0;
+      for (const msg of chatReq.messages) {
+        if (msg.role === 'assistant' && 'tool_calls' in msg && msg.tool_calls) {
+          for (const tc of msg.tool_calls) {
+            if (!tc.thought_signature && thoughtSignatureCache.has(tc.id)) {
+              tc.thought_signature = thoughtSignatureCache.get(tc.id)!;
+              injected++;
+            }
+          }
+        }
+      }
+      if (injected > 0) {
+        log(`[bridge] Injected ${injected} cached thought_signature(s) into tool_calls`);
+      }
+    }
 
     // 4b. Cap max_tokens if configured (CLI may send Claude-scale values like 128k)
     const maxOutputTokensCap = upstream.maxOutputTokens ?? config.maxOutputTokens;
@@ -158,11 +185,11 @@ export function createBridgeHandler(config: BridgeConfig): (request: Request) =>
       }
       return isResponses
         ? handleResponsesStreamResponse(upstreamResp, anthropicReq.model, log)
-        : handleStreamResponse(upstreamResp, anthropicReq.model, translateReasoning, log);
+        : handleStreamResponse(upstreamResp, anthropicReq.model, translateReasoning, log, thoughtSignatureCache);
     } else {
       return isResponses
         ? handleResponsesNonStreamResponse(upstreamResp, anthropicReq.model, log)
-        : handleNonStreamResponse(upstreamResp, anthropicReq.model, translateReasoning, log);
+        : handleNonStreamResponse(upstreamResp, anthropicReq.model, translateReasoning, log, thoughtSignatureCache);
     }
   };
 }
@@ -172,6 +199,7 @@ async function handleNonStreamResponse(
   requestModel: string,
   translateReasoning: boolean,
   log: (msg: string) => void,
+  thoughtSignatureCache?: Map<string, string>,
 ): Promise<Response> {
   // Use text() + manual JSON.parse to tolerate non-standard Content-Type
   let openaiResp: OpenAIResponse;
@@ -181,6 +209,11 @@ async function handleNonStreamResponse(
   } catch {
     log('[bridge] Failed to parse upstream JSON response');
     return jsonError(502, 'api_error', 'Invalid upstream response');
+  }
+
+  // Cache thought_signatures from tool calls (Gemini thinking models)
+  if (thoughtSignatureCache) {
+    cacheThoughtSignatures(openaiResp.choices?.[0]?.message?.tool_calls, thoughtSignatureCache);
   }
 
   const anthropicResp = translateResponse(openaiResp, requestModel, translateReasoning);
@@ -195,6 +228,7 @@ function handleStreamResponse(
   requestModel: string,
   translateReasoning: boolean,
   log: (msg: string) => void,
+  thoughtSignatureCache?: Map<string, string>,
 ): Response {
   const translator = new StreamTranslator(requestModel, translateReasoning);
   const sseParser = new SSEParser();
@@ -225,6 +259,18 @@ function handleStreamResponse(
               chunk = JSON.parse(sseEvent.data) as OpenAIStreamChunk;
             } catch {
               continue; // Skip malformed chunks
+            }
+
+            // Cache thought_signatures from streaming tool call chunks (Gemini thinking models)
+            if (thoughtSignatureCache) {
+              const delta = chunk.choices?.[0]?.delta;
+              if (delta?.tool_calls) {
+                for (const tc of delta.tool_calls) {
+                  if (tc.id && tc.thought_signature) {
+                    thoughtSignatureCache.set(tc.id, tc.thought_signature);
+                  }
+                }
+              }
             }
 
             const anthropicEvents = translator.feed(chunk);
@@ -356,4 +402,17 @@ function jsonError(status: number, type: string, message: string): Response {
     JSON.stringify({ type: 'error', error: { type, message } }),
     { status, headers: { 'Content-Type': 'application/json' } },
   );
+}
+
+/** Extract and cache thought_signatures from tool calls (non-stream response) */
+function cacheThoughtSignatures(
+  toolCalls: { id: string; thought_signature?: string }[] | undefined,
+  cache: Map<string, string>,
+): void {
+  if (!toolCalls) return;
+  for (const tc of toolCalls) {
+    if (tc.id && tc.thought_signature) {
+      cache.set(tc.id, tc.thought_signature);
+    }
+  }
 }
