@@ -867,6 +867,13 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
     };
 
     void syncConfigOnTabActivate();
+
+    // 4. Reload agents & skills/commands (user may have edited in Settings)
+    loadAndSyncAgents();
+    loadSkillsAndCommands();
+
+    // 5. Refresh file tree
+    setWorkspaceRefreshTrigger(prev => prev + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- providers.length is only used for debug logging
   }, [isActive, refreshProviderData, currentProject?.mcpEnabledServers, apiPost]);
 
@@ -1508,6 +1515,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
             onInsertSlashCommand={handleInsertSlashCommand}
             onOpenSettings={handleOpenSettings}
             onSyncSkillToGlobal={handleSyncSkillToGlobal}
+            onRefreshAll={triggerWorkspaceRefresh}
           />
         </div>
       )}

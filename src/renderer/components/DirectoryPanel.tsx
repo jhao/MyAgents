@@ -65,6 +65,8 @@ interface DirectoryPanelProps {
   onOpenConfig?: () => void;
   /** External trigger to refresh (incremented when file-modifying tools complete) */
   refreshTrigger?: number;
+  /** Trigger full refresh (file tree + capabilities) — called from context menu */
+  onRefreshAll?: () => void;
   /** Whether Tauri drag is active over this panel */
   isTauriDragActive?: boolean;
   /** Called when user clicks "引用" to insert @path reference into chat input */
@@ -122,6 +124,7 @@ const DirectoryPanel = memo(forwardRef<DirectoryPanelHandle, DirectoryPanelProps
   onCollapse,
   onOpenConfig,
   refreshTrigger,
+  onRefreshAll,
   isTauriDragActive = false,
   onInsertReference,
   enabledAgents,
@@ -867,7 +870,7 @@ const DirectoryPanel = memo(forwardRef<DirectoryPanelHandle, DirectoryPanelProps
         {
           label: '刷新',
           icon: <RefreshCw className="h-4 w-4" />,
-          onClick: refresh
+          onClick: () => { refresh(); onRefreshAll?.(); }
         }
       ];
     }
@@ -920,7 +923,7 @@ const DirectoryPanel = memo(forwardRef<DirectoryPanelHandle, DirectoryPanelProps
         {
           label: '刷新',
           icon: <RefreshCw className="h-4 w-4" />,
-          onClick: refresh
+          onClick: () => { refresh(); onRefreshAll?.(); }
         }
       ];
     } else {
@@ -1266,6 +1269,7 @@ const DirectoryPanel = memo(forwardRef<DirectoryPanelHandle, DirectoryPanelProps
               onInsertSlashCommand={onInsertSlashCommand}
               onOpenSettings={onOpenSettings}
               onSyncSkillToGlobal={onSyncSkillToGlobal}
+              onRefresh={() => { refresh(); onRefreshAll?.(); }}
               onExpandChange={updateTreeHeight}
             />
           </div>

@@ -10,7 +10,7 @@
  * - Right-click Agent: enable/disable, settings
  * - Right-click Skills/Commands: settings
  */
-import { Bot, ChevronDown, ChevronRight, Sparkles, Terminal } from 'lucide-react';
+import { Bot, ChevronDown, ChevronRight, RefreshCw, Sparkles, Terminal } from 'lucide-react';
 import { memo, useState, useCallback, useEffect, useMemo, useRef } from 'react';
 
 import { CUSTOM_EVENTS } from '../../shared/constants';
@@ -39,6 +39,8 @@ interface AgentCapabilitiesPanelProps {
     onSyncSkillToGlobal?: (folderName: string) => void;
     /** Called when expand/collapse state changes (for sibling layout recalculation) */
     onExpandChange?: (expanded: boolean) => void;
+    /** Trigger full refresh (file tree + capabilities) */
+    onRefresh?: () => void;
 }
 
 /** Tooltip shown on hover — width matches the sidebar with small inset */
@@ -107,6 +109,7 @@ export default memo(function AgentCapabilitiesPanel({
     globalSkillFolderNames,
     onSyncSkillToGlobal,
     onExpandChange,
+    onRefresh,
 }: AgentCapabilitiesPanelProps) {
     const [isExpanded, setIsExpanded] = useState(true); // Default expanded
     const toast = useToast();
@@ -191,9 +194,14 @@ export default memo(function AgentCapabilitiesPanel({
                 label: '设置',
                 onClick: () => openSettingsForScope(scope, 'agents'),
             },
+            {
+                label: '刷新',
+                icon: <RefreshCw className="h-3.5 w-3.5" />,
+                onClick: () => onRefresh?.(),
+            },
         ];
         setCtxMenu({ x: e.clientX, y: e.clientY, items });
-    }, [openSettingsForScope]);
+    }, [openSettingsForScope, onRefresh]);
 
     const handleSkillCommandContextMenu = useCallback((e: React.MouseEvent, scope?: 'user' | 'project', folderName?: string) => {
         e.preventDefault();
@@ -202,6 +210,11 @@ export default memo(function AgentCapabilitiesPanel({
             {
                 label: '设置',
                 onClick: () => openSettingsForScope(scope, 'skills'),
+            },
+            {
+                label: '刷新',
+                icon: <RefreshCw className="h-3.5 w-3.5" />,
+                onClick: () => onRefresh?.(),
             },
         ];
         // Project skills can be synced to global (hide if already exists globally)
@@ -215,7 +228,7 @@ export default memo(function AgentCapabilitiesPanel({
             });
         }
         setCtxMenu({ x: e.clientX, y: e.clientY, items });
-    }, [openSettingsForScope]);
+    }, [openSettingsForScope, onRefresh]);
 
     // Empty state
     if (totalCount === 0) {
