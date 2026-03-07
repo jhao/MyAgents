@@ -183,7 +183,14 @@ export async function ensureBundledWorkspace(): Promise<boolean> {
         const result = await invoke<{ path: string; is_new: boolean }>('cmd_initialize_bundled_workspace');
 
         if (result.is_new) {
-            await addProject(result.path);
+            const project = await addProject(result.path);
+            // Set Mino icon and display name for the bundled workspace
+            const { patchProject } = await import('./projectService');
+            try {
+                await patchProject(project.id, { icon: 'lightning', displayName: 'Mino' });
+            } catch (e) {
+                console.warn('[configService] Failed to set bundled workspace icon:', e);
+            }
             await withConfigLock(async () => {
                 const config = await loadAppConfig();
                 if (!config.defaultWorkspacePath) {
@@ -198,7 +205,13 @@ export async function ensureBundledWorkspace(): Promise<boolean> {
         const normalizedResult = result.path.replace(/\\/g, '/');
         const found = projects.some(p => p.path.replace(/\\/g, '/') === normalizedResult);
         if (!found) {
-            await addProject(result.path);
+            const project = await addProject(result.path);
+            const { patchProject } = await import('./projectService');
+            try {
+                await patchProject(project.id, { icon: 'lightning', displayName: 'Mino' });
+            } catch (e) {
+                console.warn('[configService] Failed to set recovered workspace icon:', e);
+            }
             console.log('[configService] Bundled workspace recovered into projects:', result.path);
             return true;
         }

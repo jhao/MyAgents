@@ -470,6 +470,41 @@ pub fn cmd_remove_bot_workspace(workspace_path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Command: Remove a template directory from ~/.myagents/templates/.
+/// Safety: only allows deleting directories under ~/.myagents/templates/.
+#[tauri::command]
+pub fn cmd_remove_template_folder(template_path: String) -> Result<(), String> {
+    let home_dir = dirs::home_dir().ok_or("Failed to get home dir")?;
+    let templates_dir = home_dir.join(".myagents").join("templates");
+
+    if !templates_dir.exists() {
+        return Err("Templates directory does not exist".to_string());
+    }
+
+    let target = PathBuf::from(&template_path);
+
+    // If the folder no longer exists, treat as success (already cleaned up)
+    if !target.exists() {
+        ulog_info!("[template] Template folder already removed: {:?}", target);
+        return Ok(());
+    }
+
+    let canon_templates = templates_dir.canonicalize()
+        .map_err(|e| format!("Failed to resolve templates dir: {}", e))?;
+    let canon_target = target.canonicalize()
+        .map_err(|e| format!("Failed to resolve template path: {}", e))?;
+
+    if !canon_target.starts_with(&canon_templates) || canon_target == canon_templates {
+        return Err("Refusing to delete: path is not inside ~/.myagents/templates/".to_string());
+    }
+
+    fs::remove_dir_all(&canon_target)
+        .map_err(|e| format!("Failed to remove template directory: {}", e))?;
+
+    ulog_info!("[template] Removed template folder: {:?}", canon_target);
+    Ok(())
+}
+
 /// Sanitize a workspace name for use as a directory name.
 /// Keeps alphanumeric, CJK characters, hyphens, and underscores.
 fn sanitize_workspace_name(name: &str) -> String {
@@ -544,6 +579,146 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+// ============= Workspace Template Commands =============
+
+/// Command: Create a workspace from a user template (copy source dir to dest dir).
+/// Reuses copy_dir_recursive which skips .git and node_modules.
+/// Safety: source_path must be under ~/.myagents/templates/.
+/// The dest_path parent must exist; the dest_path itself must NOT exist.
+#[tauri::command]
+pub fn cmd_create_workspace_from_template(
+    source_path: String,
+    dest_path: String,
+) -> Result<(), String> {
+    let src = PathBuf::from(&source_path);
+    let dst = PathBuf::from(&dest_path);
+
+    if !src.exists() {
+        return Err(format!("Template source not found: {}", source_path));
+    }
+
+    // Validate source is under ~/.myagents/templates/
+    let home_dir = dirs::home_dir().ok_or("Failed to get home dir")?;
+    let templates_dir = home_dir.join(".myagents").join("templates");
+    if templates_dir.exists() {
+        let canon_templates = templates_dir.canonicalize()
+            .map_err(|e| format!("Failed to resolve templates dir: {}", e))?;
+        let canon_src = src.canonicalize()
+            .map_err(|e| format!("Failed to resolve source path: {}", e))?;
+        if !canon_src.starts_with(&canon_templates) {
+            return Err("Source path must be inside ~/.myagents/templates/".to_string());
+        }
+    } else {
+        return Err("Templates directory does not exist".to_string());
+    }
+
+    if dst.exists() {
+        return Err(format!("Destination already exists: {}", dest_path));
+    }
+    // Ensure parent directory exists
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create parent dir: {}", e))?;
+    }
+
+    ulog_info!("[template] Copying template from {:?} to {:?}", src, dst);
+    copy_dir_recursive(&src, &dst)
+        .map_err(|e| format!("Failed to copy template: {}", e))?;
+
+    Ok(())
+}
+
+/// Command: Create a workspace from a bundled (preset) template.
+/// Copies from app resources/<template_id> to dest_path.
+/// Falls back to local copy at ~/.myagents/projects/<template_id> if bundled is incomplete.
+/// Safety: template_id is sanitized to prevent path traversal.
+#[tauri::command]
+pub fn cmd_create_workspace_from_bundled_template<R: Runtime>(
+    app_handle: AppHandle<R>,
+    template_id: String,
+    dest_path: String,
+) -> Result<(), String> {
+    // Sanitize template_id: reject path separators and traversal components
+    if template_id.contains('/') || template_id.contains('\\') || template_id.contains("..") || template_id.is_empty() {
+        return Err("Invalid template ID".to_string());
+    }
+
+    let dst = PathBuf::from(&dest_path);
+    if dst.exists() {
+        return Err(format!("Destination already exists: {}", dest_path));
+    }
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create parent dir: {}", e))?;
+    }
+
+    // Primary: copy from bundled resources
+    let resource_dir = app_handle
+        .path()
+        .resource_dir()
+        .map_err(|e| format!("Failed to get resource dir: {}", e))?;
+    let template_src = resource_dir.join(&template_id);
+
+    if template_src.exists() && template_src.join("CLAUDE.md").exists() {
+        ulog_info!("[template] Copying bundled template '{}' from {:?} to {:?}", template_id, template_src, dst);
+        copy_dir_recursive(&template_src, &dst)
+            .map_err(|e| format!("Failed to copy bundled template: {}", e))?;
+        return Ok(());
+    }
+
+    // Fallback: copy from local projects/<template_id>
+    let home_dir = dirs::home_dir().ok_or("Failed to get home dir")?;
+    let local_src = home_dir.join(".myagents").join("projects").join(&template_id);
+    if local_src.exists() && local_src.join("CLAUDE.md").exists() {
+        ulog_warn!("[template] Bundled template '{}' incomplete, falling back to local {:?}", template_id, local_src);
+        copy_dir_recursive(&local_src, &dst)
+            .map_err(|e| format!("Failed to copy from local template: {}", e))?;
+        return Ok(());
+    }
+
+    Err(format!("Template '{}' not found in bundled resources or local copies", template_id))
+}
+
+/// Command: Copy a local folder into the templates library (~/.myagents/templates/<name>/).
+/// Returns the destination path.
+#[tauri::command]
+pub fn cmd_copy_folder_to_templates(
+    source_path: String,
+    template_name: String,
+) -> Result<String, String> {
+    let src = PathBuf::from(&source_path);
+    if !src.exists() || !src.is_dir() {
+        return Err(format!("Source folder not found: {}", source_path));
+    }
+
+    let home_dir = dirs::home_dir().ok_or("Failed to get home dir")?;
+    let templates_dir = home_dir.join(".myagents").join("templates");
+    fs::create_dir_all(&templates_dir)
+        .map_err(|e| format!("Failed to create templates dir: {}", e))?;
+
+    // Sanitize name and find available path
+    let sanitized = sanitize_workspace_name(&template_name);
+    if sanitized.is_empty() {
+        return Err("Template name is empty after sanitization".to_string());
+    }
+    let dest = find_available_workspace_path(&templates_dir, &sanitized);
+
+    // Prevent overlapping source/destination (would cause infinite recursion)
+    let canon_src = src.canonicalize()
+        .map_err(|e| format!("Failed to resolve source: {}", e))?;
+    let canon_templates = templates_dir.canonicalize()
+        .map_err(|e| format!("Failed to resolve templates dir: {}", e))?;
+    if canon_src.starts_with(&canon_templates) {
+        return Err("Source folder is already inside the templates directory".to_string());
+    }
+
+    ulog_info!("[template] Copying folder {:?} to template library {:?}", src, dest);
+    copy_dir_recursive(&src, &dest)
+        .map_err(|e| format!("Failed to copy to template library: {}", e))?;
+
+    Ok(dest.to_string_lossy().to_string())
 }
 
 // ============= Admin Agent Sync =============

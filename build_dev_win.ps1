@@ -127,6 +127,19 @@ if (-not (Test-Path $resourcesDir)) {
 }
 "// dev placeholder" | Out-File -FilePath (Join-Path $PROJECT_DIR "src-tauri/resources/server-dist.js") -Encoding UTF8
 
+# VC++ Runtime DLL 占位符（满足 tauri.windows.conf.json 资源校验）
+foreach ($dll in @("vcruntime140.dll", "vcruntime140_1.dll")) {
+    $dllPath = Join-Path $PROJECT_DIR "src-tauri/resources/$dll"
+    if (-not (Test-Path $dllPath)) {
+        $systemDll = "$env:SystemRoot\System32\$dll"
+        if (Test-Path $systemDll) {
+            Copy-Item $systemDll $dllPath -Force
+        } else {
+            "placeholder" | Out-File -FilePath $dllPath -Encoding UTF8
+        }
+    }
+}
+
 # agent-browser-cli 占位符目录（满足 tauri build 资源校验）
 $agentBrowserPlaceholder = Join-Path $PROJECT_DIR "src-tauri/resources/agent-browser-cli"
 if (-not (Test-Path $agentBrowserPlaceholder)) {
@@ -184,7 +197,7 @@ Write-ColorOutput "这可能需要几分钟..." "Yellow"
 
 # 使用 --target 指定架构，确保构建正确的版本
 try {
-    & bun run tauri:build -- --debug --bundles nsis --target x86_64-pc-windows-msvc
+    & bun run tauri:build -- --debug --bundles nsis --target x86_64-pc-windows-msvc --config src-tauri/tauri.windows.conf.json
     if ($LASTEXITCODE -ne 0 -and $env:TAURI_SIGNING_PRIVATE_KEY) {
         throw "Tauri build failed"
     }

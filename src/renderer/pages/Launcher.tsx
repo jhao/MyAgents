@@ -4,10 +4,11 @@
  * Responsive: stacks vertically below 768px
  */
 
-import { FolderOpen, Loader2, Plus } from 'lucide-react';
+import { FolderPlus, LayoutTemplate, Loader2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 
+import { track } from '@/analytics';
 import { type ImageAttachment } from '@/components/SimpleChatInput';
 import { useToast } from '@/components/Toast';
 import { UnifiedLogsPanel } from '@/components/UnifiedLogsPanel';
@@ -15,7 +16,7 @@ import PathInputDialog from '@/components/PathInputDialog';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import TaskCenterOverlay from '@/components/TaskCenterOverlay';
 import CronTaskDetailPanel from '@/components/CronTaskDetailPanel';
-import { BrandSection, RecentTasks, WorkspaceCard } from '@/components/launcher';
+import { AddWorkspaceMenu, BrandSection, RecentTasks, TemplateLibraryDialog, WorkspaceCard, WorkspaceEditDialog } from '@/components/launcher';
 import { useConfig } from '@/hooks/useConfig';
 import { type Project, type Provider, type PermissionMode, type McpServerDefinition } from '@/config/types';
 import { CUSTOM_EVENTS } from '../../shared/constants';
@@ -65,6 +66,8 @@ export default function Launcher({ onLaunchProject, isStarting, startError: _sta
     const [projectToRemove, setProjectToRemove] = useState<Project | null>(null);
     const [showOverlay, setShowOverlay] = useState(false);
     const [selectedCronTask, setSelectedCronTask] = useState<CronTask | null>(null);
+    const [showTemplateDialog, setShowTemplateDialog] = useState(false);
+    const [editingProject, setEditingProject] = useState<Project | null>(null);
 
     // ===== Launcher-specific state for BrandSection =====
 
@@ -274,7 +277,7 @@ export default function Launcher({ onLaunchProject, isStarting, startError: _sta
         handleLaunch(project, session.id);
     }, [handleLaunch]);
 
-    const handleOpenOverlay = useCallback(() => setShowOverlay(true), []);
+    const handleOpenOverlay = useCallback(() => { track('task_center_open', {}); setShowOverlay(true); }, []);
     const handleCloseOverlay = useCallback(() => setShowOverlay(false), []);
     const handleOpenCronDetail = useCallback((task: CronTask) => setSelectedCronTask(task), []);
     const handleCloseCronDetail = useCallback(() => setSelectedCronTask(null), []);
@@ -403,6 +406,29 @@ export default function Launcher({ onLaunchProject, isStarting, startError: _sta
         }
     };
 
+    const handleCreateFromTemplate = useCallback(async (path: string, icon?: string, displayName?: string) => {
+        const project = await addProject(path);
+        track('workspace_create', { source: icon ? 'template' : 'blank' });
+        const updates: { icon?: string; displayName?: string } = {};
+        if (icon) updates.icon = icon;
+        if (displayName) updates.displayName = displayName;
+        if (Object.keys(updates).length > 0) {
+            try {
+                await patchProject(project.id, updates);
+            } catch (err) {
+                console.warn('[Launcher] Failed to patch template metadata, workspace created without icon/name:', err);
+            }
+        }
+    }, [addProject, patchProject]);
+
+    const handleEditProject = useCallback(async (projectId: string, updates: { displayName?: string; icon?: string }) => {
+        await patchProject(projectId, updates);
+    }, [patchProject]);
+
+    const handleOpenTemplateDialog = useCallback(() => setShowTemplateDialog(true), []);
+    const handleCloseTemplateDialog = useCallback(() => setShowTemplateDialog(false), []);
+    const handleCloseEditDialog = useCallback(() => setEditingProject(null), []);
+
     return (
         <div className="flex h-full flex-col overflow-hidden bg-[var(--paper)] text-[var(--ink)]">
             {/* Path Input Dialog (browser dev mode) */}
@@ -494,13 +520,10 @@ export default function Launcher({ onLaunchProject, isStarting, startError: _sta
                                 </button>
                             )}
                             {visibleProjects.length > 0 && (
-                                <button
-                                    onClick={handleAddProject}
-                                    className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-[var(--ink-muted)] transition-colors hover:bg-[var(--hover-bg)] hover:text-[var(--ink)]"
-                                >
-                                    <Plus className="h-3.5 w-3.5" />
-                                    添加
-                                </button>
+                                <AddWorkspaceMenu
+                                    onAddFolder={handleAddProject}
+                                    onCreateFromTemplate={handleOpenTemplateDialog}
+                                />
                             )}
                         </div>
                     </div>
@@ -514,22 +537,28 @@ export default function Launcher({ onLaunchProject, isStarting, startError: _sta
                             </div>
                         ) : visibleProjects.length === 0 ? (
                             <div className="flex flex-col items-center justify-center py-16 text-center">
-                                <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--paper-inset)]">
-                                    <FolderOpen className="h-6 w-6 text-[var(--ink-muted)]/50" />
-                                </div>
                                 <h3 className="mb-1.5 text-[14px] font-medium text-[var(--ink)]">
                                     还没有工作区
                                 </h3>
-                                <p className="mb-5 max-w-[200px] text-[13px] leading-relaxed text-[var(--ink-muted)]/60">
-                                    添加一个工作目录开始使用 Agent
+                                <p className="mb-6 max-w-[220px] text-[13px] leading-relaxed text-[var(--ink-muted)]/60">
+                                    添加本地项目文件夹，或从模板快速创建
                                 </p>
-                                <button
-                                    onClick={handleAddProject}
-                                    className="flex items-center gap-1.5 rounded-full bg-[var(--button-primary-bg)] px-5 py-2.5 text-[13px] font-medium text-[var(--button-primary-text)] transition-all hover:bg-[var(--button-primary-bg-hover)] hover:shadow-sm"
-                                >
-                                    <Plus className="h-3.5 w-3.5" />
-                                    添加工作区
-                                </button>
+                                <div className="flex items-center gap-3">
+                                    <button
+                                        onClick={handleAddProject}
+                                        className="flex items-center gap-1.5 rounded-full bg-[var(--button-secondary-bg)] px-4 py-2.5 text-[13px] font-medium text-[var(--button-secondary-text)] transition-all hover:bg-[var(--button-secondary-bg-hover)] hover:shadow-sm"
+                                    >
+                                        <FolderPlus className="h-3.5 w-3.5" />
+                                        添加文件夹
+                                    </button>
+                                    <button
+                                        onClick={handleOpenTemplateDialog}
+                                        className="flex items-center gap-1.5 rounded-full bg-[var(--button-primary-bg)] px-4 py-2.5 text-[13px] font-medium text-[var(--button-primary-text)] transition-all hover:bg-[var(--button-primary-bg-hover)] hover:shadow-sm"
+                                    >
+                                        <LayoutTemplate className="h-3.5 w-3.5" />
+                                        从模板创建
+                                    </button>
+                                </div>
                             </div>
                         ) : (
                             <div className="grid grid-cols-2 gap-3">
@@ -539,6 +568,7 @@ export default function Launcher({ onLaunchProject, isStarting, startError: _sta
                                         project={project}
                                         onLaunch={handleLaunch}
                                         onRemove={handleRemoveProject}
+                                        onEdit={setEditingProject}
                                         isLoading={launchingProjectId === project.id && isStarting}
                                     />
                                 ))}
@@ -568,6 +598,24 @@ export default function Launcher({ onLaunchProject, isStarting, startError: _sta
                     onDelete={handleCronDelete}
                     onResume={handleCronResume}
                     onStop={handleCronStop}
+                />
+            )}
+
+            {/* Template Library Dialog */}
+            {showTemplateDialog && (
+                <TemplateLibraryDialog
+                    onCreateWorkspace={handleCreateFromTemplate}
+                    onClose={handleCloseTemplateDialog}
+                />
+            )}
+
+            {/* Workspace Edit Dialog */}
+            {editingProject && (
+                <WorkspaceEditDialog
+                    key={editingProject.id}
+                    project={editingProject}
+                    onSave={handleEditProject}
+                    onClose={handleCloseEditDialog}
                 />
             )}
         </div>

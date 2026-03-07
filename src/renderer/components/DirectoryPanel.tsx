@@ -36,6 +36,7 @@ import ConfirmDialog from './ConfirmDialog';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import RenameDialog from './RenameDialog';
 import AgentCapabilitiesPanel from './AgentCapabilitiesPanel';
+import WorkspaceIcon from './launcher/WorkspaceIcon';
 
 // Lazy load FilePreviewModal - it includes heavy SyntaxHighlighter
 const FilePreviewModal = lazy(() => import('./FilePreviewModal'));
@@ -51,6 +52,10 @@ export interface DirectoryPanelHandle {
 
 interface DirectoryPanelProps {
   agentDir: string;
+  /** Workspace icon ID (Phosphor) from project config */
+  projectIcon?: string;
+  /** Custom display name from project config */
+  projectDisplayName?: string;
   provider?: Provider | null;
   providers?: Provider[];
   onProviderChange?: (providerId: string) => void;
@@ -60,6 +65,8 @@ interface DirectoryPanelProps {
   onOpenConfig?: () => void;
   /** External trigger to refresh (incremented when file-modifying tools complete) */
   refreshTrigger?: number;
+  /** Trigger full refresh (file tree + capabilities) — called from context menu */
+  onRefreshAll?: () => void;
   /** Whether Tauri drag is active over this panel */
   isTauriDragActive?: boolean;
   /** Called when user clicks "引用" to insert @path reference into chat input */
@@ -109,12 +116,15 @@ function getFolderName(path: string): string {
 
 const DirectoryPanel = memo(forwardRef<DirectoryPanelHandle, DirectoryPanelProps>(function DirectoryPanel({
   agentDir,
+  projectIcon,
+  projectDisplayName,
   provider: _provider,
   providers: _providers = [],
   onProviderChange: _onProviderChange,
   onCollapse,
   onOpenConfig,
   refreshTrigger,
+  onRefreshAll,
   isTauriDragActive = false,
   onInsertReference,
   enabledAgents,
@@ -860,7 +870,7 @@ const DirectoryPanel = memo(forwardRef<DirectoryPanelHandle, DirectoryPanelProps
         {
           label: '刷新',
           icon: <RefreshCw className="h-4 w-4" />,
-          onClick: refresh
+          onClick: () => { refresh(); onRefreshAll?.(); }
         }
       ];
     }
@@ -913,7 +923,7 @@ const DirectoryPanel = memo(forwardRef<DirectoryPanelHandle, DirectoryPanelProps
         {
           label: '刷新',
           icon: <RefreshCw className="h-4 w-4" />,
-          onClick: refresh
+          onClick: () => { refresh(); onRefreshAll?.(); }
         }
       ];
     } else {
@@ -1036,26 +1046,30 @@ const DirectoryPanel = memo(forwardRef<DirectoryPanelHandle, DirectoryPanelProps
           {/* Inset divider: header → folder info */}
           <div className="mx-4 border-b border-[var(--line-subtle)]" />
 
-          {/* Folder header with name, path, stats - two row layout */}
-          <div className="px-4 pb-2 pt-3">
-            {/* First row: folder icon, name, git branch, and stats */}
-            <div className="flex items-center gap-2">
-              <FolderOpen className="h-4 w-4 flex-shrink-0 text-[var(--accent-warm)]" />
-              <span className="truncate text-sm font-semibold text-[var(--ink)]">{folderName}</span>
-              {gitBranch && (
-                <span className="flex items-center gap-1 rounded bg-[var(--paper-elevated)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--ink-muted)]">
-                  <GitBranch className="h-3 w-3" />
-                  {gitBranch}
-                </span>
-              )}
-              {directoryInfo && (
-                <span className="ml-auto flex-shrink-0 text-[11px] text-[var(--ink-muted)]">
-                  {directoryInfo.summary.totalFiles} 文件 · {directoryInfo.summary.totalDirs} 文件夹
-                </span>
-              )}
+          {/* Folder header — icon left, two-row text right (matches Launcher card layout) */}
+          <div className="flex items-center gap-3 px-4 pb-2 pt-3">
+            <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center">
+              <WorkspaceIcon icon={projectIcon} size={28} />
+            </span>
+            <div className="min-w-0 flex-1">
+              {/* First row: name, git branch, stats */}
+              <div className="flex items-center gap-2">
+                <span className="truncate text-[13px] font-medium text-[var(--ink)]">{projectDisplayName || folderName}</span>
+                {gitBranch && (
+                  <span className="flex items-center gap-0.5 rounded-md bg-[var(--accent-warm-subtle)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--ink-muted)]">
+                    <GitBranch className="h-3 w-3" />
+                    {gitBranch}
+                  </span>
+                )}
+                {directoryInfo && (
+                  <span className="ml-auto flex-shrink-0 text-[11px] text-[var(--ink-muted)]">
+                    {directoryInfo.summary.totalFiles} 文件 · {directoryInfo.summary.totalDirs} 文件夹
+                  </span>
+                )}
+              </div>
+              {/* Second row: path */}
+              <div className="mt-0.5 truncate text-[11px] text-[var(--ink-muted)]">{shortenPathForDisplay(agentDir)}</div>
             </div>
-            {/* Second row: full path (shortened for display) */}
-            <div className="mt-1 truncate pl-6 text-[11px] text-[var(--ink-muted)]">{shortenPathForDisplay(agentDir)}</div>
             {/* Hidden file input for import functionality */}
             <input
               ref={importInputRef}
@@ -1255,6 +1269,7 @@ const DirectoryPanel = memo(forwardRef<DirectoryPanelHandle, DirectoryPanelProps
               onInsertSlashCommand={onInsertSlashCommand}
               onOpenSettings={onOpenSettings}
               onSyncSkillToGlobal={onSyncSkillToGlobal}
+              onRefresh={() => { refresh(); onRefreshAll?.(); }}
               onExpandChange={updateTreeHeight}
             />
           </div>

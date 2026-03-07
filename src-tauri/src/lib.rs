@@ -124,6 +124,11 @@ pub fn run() {
             commands::cmd_initialize_bundled_workspace,
             commands::cmd_create_bot_workspace,
             commands::cmd_remove_bot_workspace,
+            // Workspace template commands
+            commands::cmd_create_workspace_from_template,
+            commands::cmd_create_workspace_from_bundled_template,
+            commands::cmd_copy_folder_to_templates,
+            commands::cmd_remove_template_folder,
             // Admin agent sync
             commands::cmd_sync_admin_agent,
             // Cron task commands

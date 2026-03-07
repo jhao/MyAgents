@@ -22,6 +22,7 @@ import { createSessionMetadata, type SessionMessage, type MessageAttachment, typ
 import { broadcast } from './sse';
 import { initLogger, appendLog, getLogLines as getLogLinesFromLogger } from './AgentLogger';
 import { localTimestamp } from '../shared/logTime';
+import { trackServer } from './analytics';
 
 // Module-level debug mode check (avoids repeated environment variable access)
 const isDebugMode = process.env.DEBUG === '1' || process.env.NODE_ENV === 'development';
@@ -1051,12 +1052,19 @@ function buildSdkMcpServers(): Record<string, SdkMcpServerConfig | typeof cronTo
 
       result[server.id] = mcpConfig;
     } else if ((server.type === 'sse' || server.type === 'http') && server.url) {
+      // Substitute {{ENV_VAR}} placeholders in URL with values from server.env
+      let resolvedUrl = server.url;
+      if (server.env) {
+        resolvedUrl = resolvedUrl.replace(/\{\{(\w+)\}\}/g, (_, key) => server.env?.[key] ?? '');
+      }
       result[server.id] = {
         type: server.type,
-        url: server.url,
+        url: resolvedUrl,
         headers: server.headers,
       };
-      console.log(`[agent] MCP ${server.id}: ${server.type} → ${server.url}`);
+      // Log URL with API key masked for security
+      const maskedUrl = resolvedUrl.replace(/([?&]\w*[Kk]ey=)[^&]+/g, '$1***');
+      console.log(`[agent] MCP ${server.id}: ${server.type} → ${maskedUrl}`);
     } else if (server.type === 'sse' || server.type === 'http') {
       console.warn(`[agent] MCP ${server.id}: Missing url for ${server.type} server, skipping`);
     }
@@ -4688,6 +4696,18 @@ async function startStreamingSession(preWarm = false): Promise<void> {
           tool_count: currentTurnToolCount,
           duration_ms: durationMs,
         });
+
+        // Server-side unified analytics: covers all sources (desktop/cron/im)
+        trackServer('ai_turn_complete', {
+          source: currentScenario.type,
+          platform: currentScenario.type === 'im' ? currentScenario.platform : null,
+          model: currentTurnUsage.model ?? null,
+          input_tokens: currentTurnUsage.inputTokens,
+          output_tokens: currentTurnUsage.outputTokens,
+          tool_count: currentTurnToolCount,
+          duration_ms: durationMs,
+        });
+
         handleMessageComplete();
         signalTurnComplete();  // 解锁 generator 进入下一轮
 

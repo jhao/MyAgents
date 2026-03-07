@@ -1,28 +1,21 @@
 /**
  * WorkspaceCard - Compact clickable project card for the launcher
- * Single-click to launch, right-click context menu for remove
+ * Single-click to launch, right-click context menu for edit/remove
  */
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { FolderOpen, Loader2, Trash2 } from 'lucide-react';
+import { Loader2, Trash2, Pencil } from 'lucide-react';
 
 import type { Project } from '@/config/types';
+import { getFolderName } from '@/types/tab';
 import { shortenPathForDisplay } from '@/utils/pathDetection';
-
-/**
- * Extract folder name from path (cross-platform, handles both / and \)
- */
-function getFolderName(path: string): string {
-    if (!path) return 'Workspace';
-    const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '');
-    const parts = normalized.split('/');
-    return parts[parts.length - 1] || 'Workspace';
-}
+import WorkspaceIcon from './WorkspaceIcon';
 
 interface WorkspaceCardProps {
     project: Project;
     onLaunch: (project: Project) => void;
     onRemove: (project: Project) => void;
+    onEdit: (project: Project) => void;
     isLoading?: boolean;
 }
 
@@ -30,6 +23,7 @@ export default memo(function WorkspaceCard({
     project,
     onLaunch,
     onRemove,
+    onEdit,
     isLoading,
 }: WorkspaceCardProps) {
     // Context menu state
@@ -39,8 +33,8 @@ export default memo(function WorkspaceCard({
     const handleContextMenu = useCallback((e: React.MouseEvent) => {
         e.preventDefault();
         // Clamp position so the menu stays within the viewport
-        const menuWidth = 120;
-        const menuHeight = 36;
+        const menuWidth = 140;
+        const menuHeight = 76;
         const x = Math.min(e.clientX, window.innerWidth - menuWidth);
         const y = Math.min(e.clientY, window.innerHeight - menuHeight);
         setContextMenu({ x, y });
@@ -65,6 +59,8 @@ export default memo(function WorkspaceCard({
         };
     }, [contextMenu]);
 
+    const displayName = project.displayName || getFolderName(project.path);
+
     return (
         <>
             <button
@@ -72,25 +68,25 @@ export default memo(function WorkspaceCard({
                 onClick={() => !isLoading && onLaunch(project)}
                 onContextMenu={handleContextMenu}
                 disabled={isLoading}
-                className={`group flex w-full items-center gap-3 rounded-[14px] border border-[var(--line)] bg-[var(--paper-elevated)] p-3.5 text-left shadow-xs transition-all duration-150 ease-out hover:border-[var(--line-strong)] hover:shadow-sm hover:-translate-y-[1px] active:scale-[0.97] ${
+                className={`group flex w-full items-center gap-3 rounded-xl bg-[var(--paper-elevated)] px-4 py-3 text-left transition-all duration-150 ease-out hover:bg-[var(--hover-bg)] active:scale-[0.98] ${
                     isLoading ? 'pointer-events-none opacity-60' : 'cursor-pointer'
                 }`}
             >
-                {/* Folder icon — no container bg, just the icon */}
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center">
+                {/* Icon */}
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center">
                     {isLoading ? (
                         <Loader2 className="h-5 w-5 animate-spin text-[var(--ink-subtle)]" />
                     ) : (
-                        <FolderOpen className="h-5 w-5 text-[var(--ink-subtle)] transition-colors group-hover:text-[var(--accent-warm)]" />
+                        <WorkspaceIcon icon={project.icon} size={28} />
                     )}
                 </div>
 
                 {/* Text */}
                 <div className="min-w-0 flex-1">
-                    <h3 className="truncate text-[13px] font-medium text-[var(--ink)] transition-colors group-hover:text-[var(--accent-warm)]">
-                        {getFolderName(project.path)}
+                    <h3 className="truncate text-[13px] font-medium text-[var(--ink)]">
+                        {displayName}
                     </h3>
-                    <p className="mt-0.5 truncate text-[11px] font-light text-[var(--ink-muted)]/60">
+                    <p className="mt-0.5 truncate text-[11px] text-[var(--ink-muted)]">
                         {shortenPathForDisplay(project.path)}
                     </p>
                 </div>
@@ -100,7 +96,7 @@ export default memo(function WorkspaceCard({
             {contextMenu && (
                 <div
                     ref={menuRef}
-                    className="fixed z-50 rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] py-1 shadow-lg"
+                    className="fixed z-50 rounded-[10px] border border-[var(--line)] bg-[var(--paper-elevated)] py-1 shadow-md"
                     style={{ left: contextMenu.x, top: contextMenu.y }}
                     role="menu"
                     aria-label="工作区操作菜单"
@@ -110,9 +106,21 @@ export default memo(function WorkspaceCard({
                         role="menuitem"
                         onClick={() => {
                             setContextMenu(null);
+                            onEdit(project);
+                        }}
+                        className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] text-[var(--ink)] transition-colors hover:bg-[var(--hover-bg)]"
+                    >
+                        <Pencil className="h-3.5 w-3.5 text-[var(--ink-muted)]" />
+                        编辑
+                    </button>
+                    <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                            setContextMenu(null);
                             onRemove(project);
                         }}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-[var(--error)] transition-colors hover:bg-[var(--paper-inset)]"
+                        className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] text-[var(--error)] transition-colors hover:bg-[var(--hover-bg)]"
                     >
                         <Trash2 className="h-3.5 w-3.5" />
                         移除

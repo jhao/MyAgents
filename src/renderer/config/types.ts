@@ -160,7 +160,38 @@ export interface Project {
   mcpEnabledServers?: string[];
   /** Internal projects (e.g. ~/.myagents diagnostic workspace) hidden from Launcher */
   internal?: boolean;
+  /** Custom emoji icon for display, defaults to FolderOpen if absent */
+  icon?: string;
+  /** Custom display name, defaults to folder name extracted from path */
+  displayName?: string;
 }
+
+// ===== Workspace Template Types =====
+
+/**
+ * Workspace template definition
+ */
+export interface WorkspaceTemplate {
+  id: string;           // kebab-case unique ID
+  name: string;         // Display name
+  description: string;  // Description (can be empty)
+  icon?: string;        // Phosphor icon ID (e.g. "sparkle") or emoji fallback; defaults to cube icon if absent
+  isBuiltin: boolean;   // true = preset template bundled with app
+  path?: string;        // User template: absolute path under ~/.myagents/templates/
+}
+
+/**
+ * Preset workspace templates bundled with the app
+ */
+export const PRESET_TEMPLATES: WorkspaceTemplate[] = [
+  {
+    id: 'mino',
+    name: 'Mino',
+    description: '能记忆、会进化的 AI Agent。从 minimal 开始，长成你想要的样子。',
+    icon: 'lightning',
+    isBuiltin: true,
+  },
+];
 
 /**
  * Provider verification status (with expiry support)
@@ -604,6 +635,8 @@ export interface McpServerDefinition {
   isBuiltin: boolean;      // Is a preset MCP
   isFree?: boolean;        // No API key / paid service required
   requiresConfig?: string[];  // Required config fields (e.g., API keys)
+  websiteUrl?: string;     // Website for API key registration
+  configHint?: string;     // Help text shown in settings dialog (e.g., "去官网注册获取 API Key")
 }
 
 /**
@@ -644,12 +677,23 @@ export const PRESET_MCP_SERVERS: McpServerDefinition[] = [
   {
     id: 'ddg-search',
     name: 'DuckDuckGo 搜索引擎',
-    description: '全网搜索，免费快速',
+    description: '无需 API Key。受 DuckDuckGo 频率限制（≤1次/秒，≤15000次/月），高频使用可能返回 400 错误',
     type: 'stdio',
     command: 'uvx',
     args: ['duckduckgo-mcp-server'],
     isBuiltin: true,
     isFree: true,
+  },
+  {
+    id: 'tavily-search',
+    name: 'Tavily 搜索引擎',
+    description: '专为 AI 优化的全网搜索，返回结构化结果。免费 1000 次/月，无需信用卡',
+    type: 'http',
+    url: 'https://mcp.tavily.com/mcp/?tavilyApiKey={{TAVILY_API_KEY}}',
+    isBuiltin: true,
+    requiresConfig: ['TAVILY_API_KEY'],
+    websiteUrl: 'https://app.tavily.com/home',
+    configHint: '免费注册即可获取 API Key（1000 次/月，无需信用卡）',
   },
   {
     id: 'gemini-image',
@@ -660,6 +704,8 @@ export const PRESET_MCP_SERVERS: McpServerDefinition[] = [
     args: [],
     isBuiltin: true,
     requiresConfig: ['GEMINI_API_KEY'],
+    websiteUrl: 'https://aistudio.google.com/apikey',
+    configHint: '在 Google AI Studio 一键创建 API Key',
   },
   {
     id: 'edge-tts',

@@ -833,11 +833,17 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
 
         const extraArgs = savedArgs ?? [];
 
+        // Pre-populate required config fields so they show in the dialog
+        const env: Record<string, string> = { ...savedEnv };
+        for (const key of server.requiresConfig ?? []) {
+            if (!(key in env)) env[key] = '';
+        }
+
         setBuiltinMcpSettings({
             server,
             extraArgs,
             newArg: '',
-            env: { ...savedEnv },
+            env,
             newEnvKey: '',
         });
     };
@@ -2086,7 +2092,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                             <div className="min-w-0 flex-1">
                                                 <div className="flex items-center gap-2">
                                                     <Globe className="h-4 w-4 shrink-0 text-[var(--accent-warm)]/70" />
-                                                    <h3 className="truncate font-semibold text-[var(--ink)]">{server.name}</h3>
+                                                    <h3 className="truncate font-semibold text-[var(--ink)]" title={server.name}>{server.name}</h3>
                                                     {server.isBuiltin && (
                                                         <span className="shrink-0 rounded-full border border-[var(--info)]/20 bg-[var(--info-bg)] px-2 py-0.5 text-[10px] font-medium text-[var(--info)]">
                                                             预设
@@ -2103,7 +2109,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                                     )}
                                                 </div>
                                                 {server.description && (
-                                                    <p className="mt-1 truncate text-xs text-[var(--ink-muted)]">
+                                                    <p className="mt-1 truncate text-xs text-[var(--ink-muted)]" title={server.description}>
                                                         {server.description}
                                                     </p>
                                                 )}
@@ -2113,7 +2119,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                                     </p>
                                                 )}
                                                 {server.command !== '__builtin__' && (
-                                                    <p className="mt-2 truncate font-mono text-[10px] text-[var(--ink-muted)]">
+                                                    <p className="mt-2 truncate font-mono text-[10px] text-[var(--ink-muted)]" title={`${server.command} ${server.args?.join(' ') ?? ''}`}>
                                                         {server.command} {server.args?.join(' ')}
                                                     </p>
                                                 )}
@@ -2760,24 +2766,33 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                     <div className="mx-4 w-full max-w-lg rounded-2xl bg-[var(--paper-elevated)] shadow-xl max-h-[85vh] flex flex-col">
                         {/* Header */}
                         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--line)]">
-                            <h2 className="text-lg font-semibold text-[var(--ink)]">{builtinMcpSettings.server.name} 设置</h2>
-                            <button onClick={() => setBuiltinMcpSettings(null)} className="rounded-lg p-1 text-[var(--ink-muted)] hover:bg-[var(--paper-inset)]">
+                            <div className="min-w-0 flex-1">
+                                <h2 className="text-lg font-semibold text-[var(--ink)]">{builtinMcpSettings.server.name} 设置</h2>
+                                {builtinMcpSettings.server.description && (
+                                    <p className="mt-0.5 text-xs text-[var(--ink-muted)]">{builtinMcpSettings.server.description}</p>
+                                )}
+                            </div>
+                            <button onClick={() => setBuiltinMcpSettings(null)} className="shrink-0 rounded-lg p-1 text-[var(--ink-muted)] hover:bg-[var(--paper-inset)]">
                                 <X className="h-5 w-5" />
                             </button>
                         </div>
 
                         {/* Content */}
                         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
-                            {/* Preset command (read-only) */}
+                            {/* Preset command/URL (read-only) */}
                             <div>
-                                <label className="block text-sm font-medium text-[var(--ink)] mb-1">预设命令</label>
+                                <label className="block text-sm font-medium text-[var(--ink)] mb-1">
+                                    {builtinMcpSettings.server.type === 'stdio' ? '预设命令' : '服务地址'}
+                                </label>
                                 <div className="rounded-lg bg-[var(--paper-inset)] px-3 py-2 font-mono text-xs text-[var(--ink-muted)]">
-                                    {builtinMcpSettings.server.command} {(getPresetMcpServer(builtinMcpSettings.server.id)?.args ?? []).join(' ')}
+                                    {builtinMcpSettings.server.type === 'stdio'
+                                        ? `${builtinMcpSettings.server.command} ${(getPresetMcpServer(builtinMcpSettings.server.id)?.args ?? []).join(' ')}`
+                                        : (builtinMcpSettings.server.url?.replace(/\{\{\w+\}\}/g, '***') ?? '')}
                                 </div>
                             </div>
 
-                            {/* Extra Args */}
-                            <div>
+                            {/* Extra Args (stdio only) */}
+                            {builtinMcpSettings.server.type === 'stdio' && <div>
                                 <label className="block text-sm font-medium text-[var(--ink)] mb-1">额外参数</label>
                                 <p className="text-xs text-[var(--ink-muted)] mb-2">以下参数将追加到预设命令之后</p>
                                 <div className="space-y-2">
@@ -2831,7 +2846,23 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                         </button>
                                     </div>
                                 </div>
-                            </div>
+                            </div>}
+
+                            {/* Config hint + website link */}
+                            {(builtinMcpSettings.server.configHint || builtinMcpSettings.server.websiteUrl) && (
+                                <div className="flex items-center gap-2 rounded-lg bg-[var(--accent-bg)] px-3 py-2 text-xs text-[var(--ink-secondary)]">
+                                    <Globe className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]" />
+                                    <span>{builtinMcpSettings.server.configHint}</span>
+                                    {builtinMcpSettings.server.websiteUrl && (
+                                        <ExternalLink
+                                            href={builtinMcpSettings.server.websiteUrl}
+                                            className="ml-auto shrink-0 font-medium text-[var(--accent)] hover:underline"
+                                        >
+                                            去注册
+                                        </ExternalLink>
+                                    )}
+                                </div>
+                            )}
 
                             {/* Environment Variables */}
                             <div>
@@ -2918,8 +2949,13 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                     <div className="mx-4 w-full max-w-lg rounded-2xl bg-[var(--paper-elevated)] shadow-xl max-h-[85vh] flex flex-col">
                         {/* Header */}
                         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--line)]">
-                            <h2 className="text-lg font-semibold text-[var(--ink)]">Gemini 图片生成 设置</h2>
-                            <button onClick={() => setGeminiImageSettings(null)} className="rounded-lg p-1 text-[var(--ink-muted)] hover:bg-[var(--paper-inset)]">
+                            <div className="min-w-0 flex-1">
+                                <h2 className="text-lg font-semibold text-[var(--ink)]">Gemini 图片生成 设置</h2>
+                                {getPresetMcpServer('gemini-image')?.description && (
+                                    <p className="mt-0.5 text-xs text-[var(--ink-muted)]">{getPresetMcpServer('gemini-image')?.description}</p>
+                                )}
+                            </div>
+                            <button onClick={() => setGeminiImageSettings(null)} className="shrink-0 rounded-lg p-1 text-[var(--ink-muted)] hover:bg-[var(--paper-inset)]">
                                 <X className="h-5 w-5" />
                             </button>
                         </div>
@@ -3127,8 +3163,13 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                     <div className="mx-4 w-full max-w-lg rounded-2xl bg-[var(--paper-elevated)] shadow-xl max-h-[85vh] flex flex-col">
                         {/* Header */}
                         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--line)]">
-                            <h2 className="text-lg font-semibold text-[var(--ink)]">Playwright 浏览器设置</h2>
-                            <button onClick={() => setPlaywrightSettings(null)} className="rounded-lg p-1 text-[var(--ink-muted)] hover:bg-[var(--paper-inset)]">
+                            <div className="min-w-0 flex-1">
+                                <h2 className="text-lg font-semibold text-[var(--ink)]">Playwright 浏览器设置</h2>
+                                {getPresetMcpServer('playwright')?.description && (
+                                    <p className="mt-0.5 text-xs text-[var(--ink-muted)]">{getPresetMcpServer('playwright')?.description}</p>
+                                )}
+                            </div>
+                            <button onClick={() => setPlaywrightSettings(null)} className="shrink-0 rounded-lg p-1 text-[var(--ink-muted)] hover:bg-[var(--paper-inset)]">
                                 <X className="h-5 w-5" />
                             </button>
                         </div>
@@ -3318,8 +3359,13 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                     <div className="mx-4 w-full max-w-lg rounded-2xl bg-[var(--paper-elevated)] shadow-xl max-h-[85vh] flex flex-col">
                         {/* Header */}
                         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--line)]">
-                            <h2 className="text-lg font-semibold text-[var(--ink)]">Edge TTS 语音合成 设置</h2>
-                            <button onClick={() => setEdgeTtsSettings(null)} className="rounded-lg p-1 text-[var(--ink-muted)] hover:bg-[var(--paper-inset)]">
+                            <div className="min-w-0 flex-1">
+                                <h2 className="text-lg font-semibold text-[var(--ink)]">Edge TTS 语音合成 设置</h2>
+                                {getPresetMcpServer('edge-tts')?.description && (
+                                    <p className="mt-0.5 text-xs text-[var(--ink-muted)]">{getPresetMcpServer('edge-tts')?.description}</p>
+                                )}
+                            </div>
+                            <button onClick={() => setEdgeTtsSettings(null)} className="shrink-0 rounded-lg p-1 text-[var(--ink-muted)] hover:bg-[var(--paper-inset)]">
                                 <X className="h-5 w-5" />
                             </button>
                         </div>

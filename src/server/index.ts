@@ -5931,14 +5931,23 @@ async function main() {
             }
 
             writeFileSync(agentPath, content, 'utf-8');
-            if (payload.meta) writeAgentMeta(agentFolderDir, { ...payload.meta, updatedAt: new Date().toISOString() });
+            // Update _meta.json displayName to match the new name (scanAgents uses displayName as priority)
+            const existingMeta = readAgentMeta(agentFolderDir);
+            const updatedMeta = { ...existingMeta, ...payload.meta, displayName: payload.frontmatter.name || newFolderName, updatedAt: new Date().toISOString() };
+            writeAgentMeta(agentFolderDir, updatedMeta);
             return jsonResponse({ success: true, path: agentPath, folderName: currentFolderName });
           }
 
           // No rename, just update content
           const content = serializeAgentContent(payload.frontmatter, payload.body);
           writeFileSync(agentPath, content, 'utf-8');
-          if (payload.meta) writeAgentMeta(agentFolderDir, { ...payload.meta, updatedAt: new Date().toISOString() });
+          // Always sync _meta.json displayName with frontmatter name
+          const existingMeta = readAgentMeta(agentFolderDir);
+          if (payload.meta || (payload.frontmatter.name && payload.frontmatter.name !== existingMeta?.displayName)) {
+            const updatedMeta = { ...existingMeta, ...payload.meta, updatedAt: new Date().toISOString() };
+            if (payload.frontmatter.name) updatedMeta.displayName = payload.frontmatter.name;
+            writeAgentMeta(agentFolderDir, updatedMeta);
+          }
           return jsonResponse({ success: true, path: agentPath, folderName: currentFolderName });
         } catch (error) {
           console.error('[api/agent] Error:', error);

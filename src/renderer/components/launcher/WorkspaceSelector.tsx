@@ -3,12 +3,13 @@
  * Opens upward with default/recent workspace groups
  */
 
-import { ChevronUp, FolderOpen, Plus, Star } from 'lucide-react';
+import { ChevronUp, Plus } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { type Project } from '@/config/types';
 import { getFolderName } from '@/types/tab';
 import { shortenPathForDisplay } from '@/utils/pathDetection';
+import WorkspaceIcon from './WorkspaceIcon';
 
 interface WorkspaceSelectorProps {
     projects: Project[];
@@ -80,9 +81,9 @@ export default function WorkspaceSelector({
                 onClick={() => setIsOpen(!isOpen)}
                 className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-[13px] font-medium text-[var(--ink-muted)] transition-colors hover:bg-[var(--hover-bg)] hover:text-[var(--ink)]"
             >
-                <FolderOpen className="h-3.5 w-3.5 shrink-0" />
+                <WorkspaceIcon icon={selectedProject?.icon} size={16} />
                 <span className="max-w-[120px] truncate">
-                    {selectedProject ? getFolderName(selectedProject.path) : '选择工作区'}
+                    {selectedProject ? (selectedProject.displayName || getFolderName(selectedProject.path)) : '选择工作区'}
                 </span>
                 <ChevronUp className={`h-3 w-3 shrink-0 transition-transform ${isOpen ? '' : 'rotate-180'}`} />
             </button>
@@ -104,9 +105,9 @@ export default function WorkspaceSelector({
                                         : 'text-[var(--ink)] hover:bg-[var(--hover-bg)]'
                                 }`}
                             >
-                                <Star className="h-3.5 w-3.5 shrink-0" />
+                                <WorkspaceIcon icon={defaultProject.icon} size={16} />
                                 <div className="min-w-0 flex-1">
-                                    <div className="truncate font-medium">{getFolderName(defaultProject.path)}</div>
+                                    <div className="truncate font-medium">{defaultProject.displayName || getFolderName(defaultProject.path)}</div>
                                     <div className="truncate text-[11px] text-[var(--ink-muted)]">
                                         {shortenPathForDisplay(defaultProject.path)}
                                     </div>
@@ -131,9 +132,9 @@ export default function WorkspaceSelector({
                                             : 'text-[var(--ink)] hover:bg-[var(--hover-bg)]'
                                     }`}
                                 >
-                                    <FolderOpen className="h-3.5 w-3.5 shrink-0 text-[var(--ink-muted)]" />
+                                    <WorkspaceIcon icon={project.icon} size={16} />
                                     <div className="min-w-0 flex-1">
-                                        <div className="truncate font-medium">{getFolderName(project.path)}</div>
+                                        <div className="truncate font-medium">{project.displayName || getFolderName(project.path)}</div>
                                         <div className="truncate text-[11px] text-[var(--ink-muted)]">
                                             {shortenPathForDisplay(project.path)}
                                         </div>

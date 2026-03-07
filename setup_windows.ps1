@@ -104,6 +104,40 @@ try {
         Write-Host "OK - Git installer ready" -ForegroundColor Green
     }
 
+    function Get-VCRuntime {
+        $ResourcesDir = Join-Path $ProjectDir "src-tauri\resources"
+        if (-not (Test-Path $ResourcesDir)) {
+            New-Item -ItemType Directory -Path $ResourcesDir -Force | Out-Null
+        }
+
+        Write-Host "提取 VC++ Runtime DLL (app-local deployment)..." -ForegroundColor Blue
+
+        # Bun on Windows requires VCRUNTIME140.dll
+        # App-local deployment: copy DLL alongside bun.exe so users don't need VC++ Redistributable installed
+        $dlls = @("vcruntime140.dll", "vcruntime140_1.dll")
+        foreach ($dll in $dlls) {
+            $destFile = Join-Path $ResourcesDir $dll
+            $systemFile = Join-Path $env:SystemRoot "System32\$dll"
+
+            if (-not (Test-Path $destFile)) {
+                if (Test-Path $systemFile) {
+                    Copy-Item -Path $systemFile -Destination $destFile -Force
+                    Write-Host "  OK - $dll" -ForegroundColor Green
+                } else {
+                    # vcruntime140_1.dll may not exist on older MSVC versions, only warn
+                    if ($dll -eq "vcruntime140.dll") {
+                        throw "$dll not found in $env:SystemRoot\System32. Please install Visual C++ Build Tools."
+                    } else {
+                        Write-Host "  SKIP - $dll (not found, optional)" -ForegroundColor Yellow
+                    }
+                }
+            } else {
+                Write-Host "  OK - $dll (already exists)" -ForegroundColor Green
+            }
+        }
+        Write-Host "OK - VC++ Runtime ready" -ForegroundColor Green
+    }
+
     function Test-MSVC {
         Write-Host "  检查 MSVC Build Tools... " -NoNewline
 
@@ -129,7 +163,7 @@ try {
     }
 
     # Main
-    Write-Host "Step 1/7: 检查依赖" -ForegroundColor Blue
+    Write-Host "Step 1/8: 检查依赖" -ForegroundColor Blue
     $Missing = $false
 
     if (-not (Test-Dependency "Node.js" "node --version" "https://nodejs.org")) { $Missing = $true }
@@ -146,13 +180,16 @@ try {
         exit 1
     }
 
-    Write-Host "`nStep 2/7: 下载 Bun 运行时" -ForegroundColor Blue
+    Write-Host "`nStep 2/8: 下载 Bun 运行时" -ForegroundColor Blue
     Get-BunBinary
 
-    Write-Host "`nStep 3/7: 下载 Git 安装包 (用于 NSIS 打包)" -ForegroundColor Blue
+    Write-Host "`nStep 3/8: 下载 Git 安装包 (用于 NSIS 打包)" -ForegroundColor Blue
     Get-GitInstaller
 
-    Write-Host "`nStep 4/7: 安装前端依赖" -ForegroundColor Blue
+    Write-Host "`nStep 4/8: 提取 VC++ Runtime DLL" -ForegroundColor Blue
+    Get-VCRuntime
+
+    Write-Host "`nStep 5/8: 安装前端依赖" -ForegroundColor Blue
     & bun install
     if ($LASTEXITCODE -ne 0) {
         Write-Host "前端依赖安装失败" -ForegroundColor Red
@@ -162,7 +199,7 @@ try {
     }
     Write-Host "OK - 前端依赖安装完成" -ForegroundColor Green
 
-    Write-Host "`nStep 5/7: 下载 Rust 依赖" -ForegroundColor Blue
+    Write-Host "`nStep 6/8: 下载 Rust 依赖" -ForegroundColor Blue
     Write-Host "  正在下载 Rust 依赖包，请稍候..." -ForegroundColor Cyan
     Push-Location (Join-Path $ProjectDir "src-tauri")
     & cargo fetch
@@ -178,7 +215,7 @@ try {
 
     # 准备默认工作区 (mino) — 每次拉取最新版本
     # .git 不保留：避免 Tauri 资源打包权限问题 + rerun-if-changed 性能问题
-    Write-Host "`nStep 6/7: 准备默认工作区 (mino)" -ForegroundColor Blue
+    Write-Host "`nStep 7/8: 准备默认工作区 (mino)" -ForegroundColor Blue
     $MinoDir = Join-Path $ProjectDir "mino"
     if (Test-Path $MinoDir) {
         Remove-Item -Recurse -Force $MinoDir
@@ -197,7 +234,7 @@ try {
     }
     Write-Host "OK - mino 默认工作区已就绪" -ForegroundColor Green
 
-    Write-Host "`nStep 7/7: 初始化完成!" -ForegroundColor Blue
+    Write-Host "`nStep 8/8: 初始化完成!" -ForegroundColor Blue
     Write-Host "`n=========================================" -ForegroundColor Green
     Write-Host "  开发环境准备就绪!" -ForegroundColor Green
     Write-Host "=========================================`n" -ForegroundColor Green

@@ -44,6 +44,7 @@ function SessionTitleEditor({ title, onRename }: { title: string; onRename: (new
     const trimmed = draft.trim();
     setEditing(false);
     if (trimmed && trimmed !== title) {
+      track('session_title_edit', {});
       onRename(trimmed);
     }
   };
@@ -867,6 +868,13 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
     };
 
     void syncConfigOnTabActivate();
+
+    // 4. Reload agents & skills/commands (user may have edited in Settings)
+    loadAndSyncAgents();
+    loadSkillsAndCommands();
+
+    // 5. Refresh file tree
+    setWorkspaceRefreshTrigger(prev => prev + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- providers.length is only used for debug logging
   }, [isActive, refreshProviderData, currentProject?.mcpEnabledServers, apiPost]);
 
@@ -1154,6 +1162,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
     }
 
     // 2. 显示固定 loading 文案（后端 rewindPromise 会阻塞 enqueueUserMessage 防止竞态）
+    track('session_rewind', {});
     setIsLoading(true);
     setRewindStatus('rewinding');
     apiPost('/chat/rewind', { userMessageId: messageId })
@@ -1209,6 +1218,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
           return;
         }
         // Rewind succeeded → auto-resend the original message
+        track('message_retry', {});
         resendFired = true;
         const imageAttachments = attachments?.filter(a =>
           a.isImage || a.mimeType?.startsWith('image/')
@@ -1491,6 +1501,8 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
           <DirectoryPanel
             ref={directoryPanelRef}
             agentDir={agentDir}
+            projectIcon={currentProject?.icon}
+            projectDisplayName={currentProject?.displayName}
             provider={currentProvider}
             providers={providers}
             onProviderChange={handleProviderChange}
@@ -1506,6 +1518,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
             onInsertSlashCommand={handleInsertSlashCommand}
             onOpenSettings={handleOpenSettings}
             onSyncSkillToGlobal={handleSyncSkillToGlobal}
+            onRefreshAll={triggerWorkspaceRefresh}
           />
         </div>
       )}

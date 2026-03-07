@@ -725,7 +725,7 @@ export default function App() {
                   agentDir: project.path,
                   sessionId: sessionId,
                   view: 'chat',
-                  title: getFolderName(project.path),
+                  title: project.displayName || getFolderName(project.path),
                   joinedExistingSidecar: !result.isNew,
                 }
                 : t
@@ -811,7 +811,7 @@ export default function App() {
               agentDir: project.path,
               sessionId: effectiveSessionId,
               view: 'chat',
-              title: getFolderName(project.path),
+              title: project.displayName || getFolderName(project.path),
               // Only set initialMessage when explicitly provided (from Launcher send).
               // Omitting undefined prevents overwriting a prior initialMessage in race conditions.
               ...(initialMessage ? { initialMessage } : {}),
@@ -839,7 +839,7 @@ export default function App() {
                 ...t,
                 agentDir: project.path,
                 view: 'chat',
-                title: getFolderName(project.path),
+                title: project.displayName || getFolderName(project.path),
               }
               : t
           )
@@ -970,7 +970,7 @@ export default function App() {
                 agentDir: currentTabForScenario3.agentDir,
                 sessionId,
                 view: 'chat',
-                title: getFolderName(currentTabForScenario3.agentDir ?? ''),
+                title: currentTabForScenario3.title || getFolderName(currentTabForScenario3.agentDir ?? ''),
                 joinedExistingSidecar: !result.isNew,
               }
               : t
