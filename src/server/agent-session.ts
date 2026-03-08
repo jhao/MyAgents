@@ -1795,6 +1795,18 @@ function resetAbortFlag(): void {
 }
 
 export function resolveClaudeCodeCli(): string {
+  // Check bundled path FIRST to avoid bun's auto-install behavior.
+  // In production builds, require.resolve() can't find the SDK in node_modules
+  // (it doesn't exist in the app bundle). Bun then attempts to auto-install
+  // the package from npm, which blocks the event loop for 10+ minutes.
+  // By checking the bundled path first, we skip the costly require.resolve entirely.
+  const bundledPath = join(process.cwd(), 'claude-agent-sdk', 'cli.js');
+  if (existsSync(bundledPath)) {
+    console.log(`[resolveClaudeCodeCli] Using bundled SDK at: ${bundledPath}`);
+    return bundledPath;
+  }
+
+  // Development: resolve from node_modules
   try {
     const cliPath = requireModule.resolve('@anthropic-ai/claude-agent-sdk/cli.js');
     if (cliPath.includes('app.asar')) {
@@ -1805,14 +1817,6 @@ export function resolveClaudeCodeCli(): string {
     }
     return cliPath;
   } catch (error) {
-    // Fallback for bundled environment (Production)
-    // We copy claude-agent-sdk to src-tauri/resources/claude-agent-sdk during build
-    // process.cwd() is set to resources directory by sidecar.rs
-    const bundledPath = join(process.cwd(), 'claude-agent-sdk', 'cli.js');
-    if (existsSync(bundledPath)) {
-      console.log(`[resolveClaudeCodeCli] Using bundled SDK at: ${bundledPath}`);
-      return bundledPath;
-    }
     console.error(`[resolveClaudeCodeCli] Failed to resolve SDK. Bundled path not found: ${bundledPath}`);
     throw error;
   }
