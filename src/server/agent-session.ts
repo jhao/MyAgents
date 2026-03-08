@@ -1795,16 +1795,19 @@ function resetAbortFlag(): void {
 }
 
 export function resolveClaudeCodeCli(): string {
+  const t0 = Date.now();
   // Check bundled path FIRST to avoid bun's auto-install behavior.
   // In production builds, require.resolve() can't find the SDK in node_modules
   // (it doesn't exist in the app bundle). Bun then attempts to auto-install
   // the package from npm, which blocks the event loop for 10+ minutes.
   // By checking the bundled path first, we skip the costly require.resolve entirely.
-  const bundledPath = join(process.cwd(), 'claude-agent-sdk', 'cli.js');
+  const cwd = process.cwd();
+  const bundledPath = join(cwd, 'claude-agent-sdk', 'cli.js');
   if (existsSync(bundledPath)) {
-    console.log(`[resolveClaudeCodeCli] Using bundled SDK at: ${bundledPath}`);
+    console.log(`[sdk] CLI resolved via bundled path in ${Date.now() - t0}ms: ${bundledPath}`);
     return bundledPath;
   }
+  console.warn(`[sdk] Bundled SDK not found at ${bundledPath} (cwd=${cwd}), falling back to require.resolve`);
 
   // Development: resolve from node_modules
   try {
@@ -1812,12 +1815,14 @@ export function resolveClaudeCodeCli(): string {
     if (cliPath.includes('app.asar')) {
       const unpackedPath = cliPath.replace('app.asar', 'app.asar.unpacked');
       if (existsSync(unpackedPath)) {
+        console.log(`[sdk] CLI resolved via asar.unpacked in ${Date.now() - t0}ms: ${unpackedPath}`);
         return unpackedPath;
       }
     }
+    console.log(`[sdk] CLI resolved via require.resolve in ${Date.now() - t0}ms: ${cliPath}`);
     return cliPath;
   } catch (error) {
-    console.error(`[resolveClaudeCodeCli] Failed to resolve SDK. Bundled path not found: ${bundledPath}`);
+    console.error(`[sdk] CLI resolve FAILED in ${Date.now() - t0}ms. Bundled: ${bundledPath}, cwd: ${cwd}`, error);
     throw error;
   }
 }
