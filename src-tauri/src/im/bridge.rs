@@ -4,6 +4,9 @@
 // The Bridge is an independent Bun process that loads the plugin and communicates
 // with Rust via HTTP endpoints.
 
+#[cfg(not(debug_assertions))]
+use tauri::Manager;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -432,7 +435,7 @@ fn find_bridge_script<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) -> Op
     #[cfg(not(debug_assertions))]
     {
         if let Ok(resource_dir) = app_handle.path().resource_dir() {
-            let bundled = resource_dir.join("plugin-bridge-dist.js");
+            let bundled: PathBuf = resource_dir.join("plugin-bridge-dist.js");
             if bundled.exists() {
                 ulog_info!("[bridge] Using bundled bridge script: {:?}", bundled);
                 return Some(bundled);
@@ -694,7 +697,7 @@ fn find_sdk_shim_dir<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) -> Opt
     #[cfg(not(debug_assertions))]
     {
         if let Ok(resource_dir) = app_handle.path().resource_dir() {
-            let bundled = resource_dir.join("plugin-bridge-sdk-shim");
+            let bundled: PathBuf = resource_dir.join("plugin-bridge-sdk-shim");
             if bundled.exists() {
                 return Some(bundled);
             }
