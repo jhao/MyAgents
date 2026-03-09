@@ -61,6 +61,13 @@ function parseToolResult(result: string | undefined): {
   };
 }
 
+function formatTime(sec: number): string {
+  if (!sec || !isFinite(sec)) return '0:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
 /** Compact audio player bar with progress */
 function AudioPlayerBar({ filePath }: { filePath: string }) {
   const { isActive, toggle, progress, duration } = useAudioPlayer(filePath);
@@ -76,12 +83,6 @@ function AudioPlayerBar({ filePath }: { filePath: string }) {
   }, [isActive, toggle]);
 
   const displayProgress = isActive && duration > 0 ? progress / duration : 0;
-  const formatTime = (sec: number) => {
-    if (!sec || !isFinite(sec)) return '0:00';
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
-  };
 
   return (
     <div className="flex items-center gap-2.5 rounded-lg bg-[var(--paper-inset)] px-3 py-2 max-w-[400px]">

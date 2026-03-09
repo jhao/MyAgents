@@ -15,8 +15,8 @@ export function getAudioUrl(filePath: string): string {
   return `/api/audio?path=${encodeURIComponent(filePath)}`;
 }
 
-/** Audio extensions we recognize for inline playback */
-const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'opus', 'webm', 'aac', 'm4a']);
+/** Audio extensions we recognize for inline playback (exported for pathDetection reuse) */
+export const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'opus', 'webm', 'aac', 'm4a']);
 
 /** Check if a file path is an audio file */
 export function isAudioPath(filePath: string): boolean {
@@ -104,7 +104,3 @@ export function stopAudio(): void {
   notify();
 }
 
-/** Check if a specific file is currently playing */
-export function isPlaying(filePath: string): boolean {
-  return currentPath === filePath && audio !== null && !audio.paused && !audio.ended;
-}
