@@ -1261,7 +1261,7 @@ async function handleAskUserQuestion(
   });
 
   // Wait for user response or abort
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     // Timeout after 10 minutes (user needs time to think)
     const timer = setTimeout(() => {
       if (pendingAskUserQuestions.has(requestId)) {
@@ -1280,7 +1280,10 @@ async function handleAskUserQuestion(
     const onAbort = () => {
       console.debug('[AskUserQuestion] Aborted by SDK signal');
       cleanup();
-      resolve(null);
+      // Reject with AbortError so SDK's own abort handling creates the single tool_result.
+      // Previously resolve(null) caused canUseTool to return deny → duplicate tool_result
+      // (one from our deny, one from SDK's internal abort) → "tool_use ids must be unique" on resume.
+      reject(new DOMException('Aborted', 'AbortError'));
     };
 
     // Listen for SDK abort signal
@@ -1339,7 +1342,7 @@ async function handleExitPlanMode(
 
   broadcast('exit-plan-mode:request', { requestId, plan, allowedPrompts });
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       if (pendingExitPlanMode.has(requestId)) {
         cleanup();
@@ -1357,7 +1360,7 @@ async function handleExitPlanMode(
     const onAbort = () => {
       console.debug('[ExitPlanMode] Aborted by SDK signal');
       cleanup();
-      resolve(false);
+      reject(new DOMException('Aborted', 'AbortError'));
     };
 
     signal?.addEventListener('abort', onAbort);
@@ -1400,7 +1403,7 @@ async function handleEnterPlanMode(
 
   broadcast('enter-plan-mode:request', { requestId });
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       if (pendingEnterPlanMode.has(requestId)) {
         cleanup();
@@ -1418,7 +1421,7 @@ async function handleEnterPlanMode(
     const onAbort = () => {
       console.debug('[EnterPlanMode] Aborted by SDK signal');
       cleanup();
-      resolve(false);
+      reject(new DOMException('Aborted', 'AbortError'));
     };
 
     signal?.addEventListener('abort', onAbort);
@@ -1505,10 +1508,10 @@ async function checkToolPermission(
     return 'allow';
   }
 
-  // 4. Check if already aborted
+  // 4. Check if already aborted — throw so SDK's own abort handling creates a single tool_result
   if (signal?.aborted) {
-    console.debug(`[permission] ${toolName}: already aborted, denying`);
-    return 'deny';
+    console.debug(`[permission] ${toolName}: already aborted`);
+    throw new DOMException('Aborted', 'AbortError');
   }
 
   // 5. Request user confirmation via frontend
@@ -1531,22 +1534,8 @@ async function checkToolPermission(
   }
 
   // Wait for user response or abort
-  return new Promise((resolve) => {
-    const cleanup = () => {
-      pendingPermissions.delete(requestId);
-      signal?.removeEventListener('abort', onAbort);
-    };
-
-    const onAbort = () => {
-      console.debug(`[permission] ${toolName}: aborted by SDK signal, denying`);
-      cleanup();
-      resolve('deny');
-    };
-
-    // Listen for SDK abort signal
-    signal?.addEventListener('abort', onAbort);
-
-    // Timeout after 10 minutes (consistent with AskUserQuestion timeout)
+  return new Promise((resolve, reject) => {
+    // Timer is declared before cleanup (same pattern as handleAskUserQuestion) so cleanup can clear it
     const timer = setTimeout(() => {
       if (pendingPermissions.has(requestId)) {
         cleanup();
@@ -1554,6 +1543,23 @@ async function checkToolPermission(
         resolve('deny');
       }
     }, 10 * 60 * 1000);
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      pendingPermissions.delete(requestId);
+      signal?.removeEventListener('abort', onAbort);
+    };
+
+    const onAbort = () => {
+      console.debug(`[permission] ${toolName}: aborted by SDK signal`);
+      cleanup();
+      // Reject with AbortError so SDK's own abort handling creates the single tool_result.
+      // Previously resolve('deny') caused a duplicate tool_result on abort.
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+
+    // Listen for SDK abort signal
+    signal?.addEventListener('abort', onAbort);
 
     pendingPermissions.set(requestId, { resolve, toolName, input, timer });
   });
@@ -3813,6 +3819,7 @@ async function startStreamingSession(preWarm = false): Promise<void> {
 
   // Declared outside try so finally can clean up
   let startupTimeoutId: ReturnType<typeof setTimeout> | undefined;
+  let apiWatchdogId: ReturnType<typeof setInterval> | undefined;
 
   try {
     const sdkPermissionMode = mapToSdkPermissionMode(currentPermissionMode);
@@ -4086,8 +4093,35 @@ async function startStreamingSession(preWarm = false): Promise<void> {
 
     let messageCount = 0;
 
+    // ── API response watchdog ──────────────────────────────────────────
+    // Detects hung API connections that produce no SDK events.
+    // Heartbeat (15s ping) keeps the SSE alive, so Rust's 60s read_timeout
+    // never fires. Without this watchdog, the session hangs indefinitely.
+    //
+    // Only active when isStreamingMessage is true (an active turn is in progress).
+    // pendingTools > 0 means a local tool or subagent is executing (no API
+    // call in flight), so we skip. pendingTools === 0 means we're waiting
+    // for the API — if no SDK event arrives for 5 minutes, abort.
+    let pendingTools = 0;
+    let lastSdkEventAt = Date.now();
+    const API_WATCHDOG_INTERVAL_MS = 30_000;
+    const API_WATCHDOG_TIMEOUT_MS = 5 * 60 * 1000;
+    apiWatchdogId = setInterval(() => {
+      // Only check during active turns (not pre-warm, not idle between turns)
+      if (!isStreamingMessage || isPreWarming) return;
+      if (pendingTools === 0 && Date.now() - lastSdkEventAt > API_WATCHDOG_TIMEOUT_MS) {
+        console.error(`[agent] API watchdog: no SDK event for ${API_WATCHDOG_TIMEOUT_MS / 1000}s with no pending tools — aborting`);
+        broadcast('chat:agent-error', {
+          message: 'API 响应超时（5 分钟无活动），已自动终止。请重试。'
+        });
+        broadcast('chat:message-error', 'API 响应超时');
+        abortPersistentSession();
+      }
+    }, API_WATCHDOG_INTERVAL_MS);
+
     for await (const sdkMessage of querySession) {
       messageCount++;
+      lastSdkEventAt = Date.now();
       // stream_event is high-frequency (per token delta) — skip logging entirely;
       // other types (user/assistant/result/system_init) are low-frequency and important
       if (sdkMessage.type !== 'stream_event') {
@@ -4301,6 +4335,7 @@ async function startStreamingSession(preWarm = false): Promise<void> {
               // so the frontend splits streaming before adding new content.
               handleToolUseStart(toolPayload);
               broadcast('chat:tool-use-start', toolPayload);
+              pendingTools++;
             }
           } else if (streamEvent.content_block.type === 'server_tool_use') {
             // Server-side tool use (e.g., 智谱 GLM-4.7's webReader, analyze_image)
@@ -4502,6 +4537,7 @@ async function startStreamingSession(preWarm = false): Promise<void> {
                   toolUseId: toolResultBlock.tool_use_id,
                   content: stripped ? PLAYWRIGHT_RESULT_SENTINEL : contentStr
                 });
+                pendingTools = Math.max(0, pendingTools - 1);
               }
               handleToolResultComplete(toolResultBlock.tool_use_id, contentStr);
             }
@@ -4632,6 +4668,7 @@ async function startStreamingSession(preWarm = false): Promise<void> {
                   content: stripped ? PLAYWRIGHT_RESULT_SENTINEL : contentStr,
                   isError: toolResultBlock.is_error || false
                 });
+                pendingTools = Math.max(0, pendingTools - 1);
               }
               handleToolResultComplete(
                 toolResultBlock.tool_use_id,
@@ -4676,6 +4713,8 @@ async function startStreamingSession(preWarm = false): Promise<void> {
           }
         }
       } else if (sdkMessage.type === 'result') {
+        // Turn complete — reset pending tool counter
+        pendingTools = 0;
         // Extract token usage from result message
         // SDK result contains modelUsage (per-model stats) and/or usage (aggregate)
         // This is the authoritative source for token statistics
@@ -4918,6 +4957,7 @@ async function startStreamingSession(preWarm = false): Promise<void> {
     }
   } finally {
     clearTimeout(startupTimeoutId);
+    clearInterval(apiWatchdogId);
     const wasPreWarming = isPreWarming;
     isPreWarming = false;
     isProcessing = false;
