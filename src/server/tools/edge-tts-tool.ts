@@ -67,7 +67,17 @@ function getGeneratedAudioDir(): string {
   const dir = workspace
     ? join(workspace, 'myagents-generated', 'audio')
     : join(homedir(), '.myagents', 'generated_audio');
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+    // Ensure .gitignore in myagents-generated/ parent to prevent accidental commits
+    if (workspace) {
+      const parentDir = join(workspace, 'myagents-generated');
+      const gitignorePath = join(parentDir, '.gitignore');
+      if (!existsSync(gitignorePath)) {
+        writeFileSync(gitignorePath, '*\n');
+      }
+    }
+  }
   return dir;
 }
 

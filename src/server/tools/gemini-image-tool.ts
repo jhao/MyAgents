@@ -62,7 +62,17 @@ function getGeneratedDir(): string {
   const dir = workspace
     ? join(workspace, 'myagents-generated', 'images')
     : join(homedir(), '.myagents', 'generated');
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+    // Ensure .gitignore in myagents-generated/ parent to prevent accidental commits
+    if (workspace) {
+      const parentDir = join(workspace, 'myagents-generated');
+      const gitignorePath = join(parentDir, '.gitignore');
+      if (!existsSync(gitignorePath)) {
+        writeFileSync(gitignorePath, '*\n');
+      }
+    }
+  }
   return dir;
 }
 
