@@ -6539,9 +6539,9 @@ async function main() {
   console.log(`[server] Version: MCP-Install-Fix-v2`);
 
   // Verify PATH detection
-  import('./utils/shell').then(({ getShellEnv }) => {
-    const env = getShellEnv();
-    console.log('[server] Startup PATH:', env.PATH);
+  import('./utils/shell').then(({ getShellEnv, getShellPath }) => {
+    getShellEnv(); // Ensure PATH is initialized
+    console.log('[server] Startup PATH:', getShellPath());
   });
 }
 
