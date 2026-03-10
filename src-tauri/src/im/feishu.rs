@@ -159,15 +159,32 @@ fn is_table_separator(line: &str) -> bool {
     inner.chars().all(|c| matches!(c, '-' | ':' | '|' | ' ')) && inner.contains('-')
 }
 
+/// Strip `**bold**` markers from markdown table rows.
+/// Feishu Card Kit renders tables natively but doesn't parse inline formatting in cells.
+fn strip_bold_in_table_rows(text: &str) -> String {
+    let mut result = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        let is_table_row = trimmed.starts_with('|') && trimmed.ends_with('|') && trimmed.len() > 1;
+        if is_table_row && trimmed.contains("**") {
+            result.push(line.replace("**", ""));
+        } else {
+            result.push(line.to_string());
+        }
+    }
+    result.join("\n")
+}
+
 /// Build a Card Kit v2.0 JSON structure with a single markdown element.
 fn build_markdown_card(text: &str) -> Value {
+    let content = strip_bold_in_table_rows(text);
     json!({
         "schema": "2.0",
         "config": { "wide_screen_mode": true },
         "body": {
             "elements": [{
                 "tag": "markdown",
-                "content": text,
+                "content": content,
             }]
         }
     })
