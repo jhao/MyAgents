@@ -3666,8 +3666,11 @@ export async function interruptCurrentResponse(): Promise<boolean> {
     let shouldForceAbort = false;
     // 使用 Promise.race 添加 5 秒超时
     const interruptPromise = querySession.interrupt();
+    // 15s timeout: SDK interrupt may be slow when the subprocess is mid-tool-execution,
+    // waiting for API response, or processing large MCP output. The previous 5s timeout
+    // caused cascading failures (force-abort → rewind error → MIME loss → subprocess crash).
     const timeoutPromise = new Promise<void>((_, reject) => {
-      setTimeout(() => reject(new Error('Interrupt timeout')), 5000);
+      setTimeout(() => reject(new Error('Interrupt timeout')), 15000);
     });
 
     try {

@@ -1280,7 +1280,9 @@ async function main() {
           console.log('[chat] stop');
           const stopped = await interruptCurrentResponse();
           if (!stopped) {
-            return jsonResponse({ success: false, error: 'No active response to stop.' }, 400);
+            // Not an error — common when user double-clicks stop or response finishes
+            // between button click and request arrival. Return 200 to avoid frontend error toast.
+            return jsonResponse({ success: true, alreadyStopped: true });
           }
           return jsonResponse({ success: true });
         } catch (error) {
