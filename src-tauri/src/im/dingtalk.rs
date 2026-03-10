@@ -1291,6 +1291,15 @@ impl super::adapter::ImStreamAdapter for DingtalkAdapter {
         MAX_MESSAGE_LENGTH
     }
 
+    async fn finalize_message(
+        &self,
+        chat_id: &str,
+        message_id: &str,
+        text: &str,
+    ) -> super::adapter::AdapterResult<()> {
+        self.edit_message(chat_id, message_id, text).await
+    }
+
     async fn send_approval_card(
         &self,
         chat_id: &str,
