@@ -1791,7 +1791,7 @@ pub async fn monitor_global_sidecar(
         } else if consecutive_restart_failures > 0 {
             // Exponential backoff: 30s, 60s, 120s, 240s, 300s, 300s, ...
             let backoff = std::cmp::min(
-                CHECK_INTERVAL_SECS * 2u64.pow(consecutive_restart_failures),
+                CHECK_INTERVAL_SECS.saturating_mul(2u64.saturating_pow(consecutive_restart_failures)),
                 MAX_BACKOFF_SECS,
             );
             tokio::time::sleep(Duration::from_secs(backoff)).await;

@@ -468,9 +468,7 @@ try {
                 # Create bun.exe alias for SDK subprocess compatibility
                 # (SDK uses which("bun") which only matches bun.exe, not the triple-suffixed name)
                 $bunAlias = Join-Path $portableDir "bun.exe"
-                if (-not (Test-Path $bunAlias)) {
-                    Copy-Item $bunExe $bunAlias -Force
-                }
+                Copy-Item $bunExe $bunAlias -Force
             }
 
             # Copy VC++ Runtime DLLs for portable version (app-local deployment)
