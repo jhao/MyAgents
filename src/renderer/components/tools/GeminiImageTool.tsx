@@ -1,10 +1,9 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import type { ToolUseSimple } from '@/types/chat';
 import { CollapsibleTool } from './CollapsibleTool';
-import { ToolHeader } from './utils';
+import { ToolHeader, unwrapMcpResult } from './utils';
 import { useImagePreview } from '@/context/ImagePreviewContext';
-import { isTauriEnvironment } from '@/utils/browserMock';
-import { convertFileSrc } from '@tauri-apps/api/core';
+import { readLocalFileAsBlobUrl } from '@/utils/audioPlayer';
 
 interface GeminiImageToolProps {
   tool: ToolUseSimple;
@@ -23,6 +22,10 @@ function parseToolResult(result: string | undefined): {
   error?: string;
 } {
   if (!result) return { isEdit: false };
+
+  // Unwrap JSON-encoded MCP content array if present
+  const unwrapped = unwrapMcpResult(result);
+  if (unwrapped !== result) return parseToolResult(unwrapped);
 
   const lines = result.split('\n');
   const fields: Record<string, string> = {};
@@ -61,12 +64,11 @@ function parseToolResult(result: string | undefined): {
   };
 }
 
-/** Convert a file path to a displayable image URL */
-function getImageUrl(filePath: string): string {
-  if (isTauriEnvironment()) {
-    return convertFileSrc(filePath);
-  }
-  return `/api/image?path=${encodeURIComponent(filePath)}`;
+/** Infer MIME type from image file extension */
+function imageMime(filePath: string): string {
+  const ext = filePath.split('.').pop()?.toLowerCase();
+  const map: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
+  return map[ext ?? ''] ?? 'image/png';
 }
 
 export default function GeminiImageTool({ tool }: GeminiImageToolProps) {
@@ -75,19 +77,55 @@ export default function GeminiImageTool({ tool }: GeminiImageToolProps) {
   // Use key-based reset instead of useEffect setState to avoid cascading renders
   const resultKey = tool.result ?? '';
   const [imageState, setImageState] = useState<{ loaded: boolean; error: boolean; key: string }>({ loaded: false, error: false, key: resultKey });
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const blobUrlRef = useRef<string | null>(null);
 
   // Reset when result changes (via key comparison, not effect)
   const imageLoaded = imageState.key === resultKey ? imageState.loaded : false;
   const imageError = imageState.key === resultKey ? imageState.error : false;
 
+  // Resolve image URL (blob URL in Tauri, direct URL in browser)
+  useEffect(() => {
+    if (!parsed.filePath) {
+      // Use rAF to avoid synchronous setState in effect body (react-hooks/set-state-in-effect)
+      const id = requestAnimationFrame(() => setImageUrl(null));
+      return () => cancelAnimationFrame(id);
+    }
+    const filePath = parsed.filePath;
+    let cancelled = false;
+
+    readLocalFileAsBlobUrl(filePath, imageMime(filePath), '/api/image')
+      .then(url => {
+        if (cancelled) {
+          if (url.startsWith('blob:')) URL.revokeObjectURL(url);
+          return;
+        }
+        // Revoke previous blob URL
+        if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = url.startsWith('blob:') ? url : null;
+        setImageUrl(url);
+      })
+      .catch(() => {
+        if (!cancelled) setImageState({ loaded: false, error: true, key: resultKey });
+      });
+
+    return () => {
+      cancelled = true;
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
+      }
+    };
+  }, [parsed.filePath, resultKey]);
+
   const toolLabel = tool.name.includes('edit_image') ? '编辑图片' : '生成图片';
   const isGenerating = !tool.result;
 
   const handleImageClick = useCallback(() => {
-    if (parsed.filePath) {
-      openPreview(getImageUrl(parsed.filePath), parsed.filePath.split('/').pop() || 'image.png');
+    if (imageUrl) {
+      openPreview(imageUrl, parsed.filePath?.split('/').pop() || 'image.png');
     }
-  }, [parsed.filePath, openPreview]);
+  }, [imageUrl, parsed.filePath, openPreview]);
 
   const collapsedContent = (
     <div className="flex items-center gap-1.5">
@@ -149,13 +187,15 @@ export default function GeminiImageTool({ tool }: GeminiImageToolProps) {
                 <span className="text-xs text-[var(--error)]">图片加载失败</span>
               </div>
             )}
-            <img
-              src={getImageUrl(parsed.filePath)}
-              alt={parsed.description || toolLabel}
-              className={`max-w-[400px] max-h-[400px] rounded-lg transition-opacity ${imageLoaded ? 'opacity-100' : 'opacity-0 absolute'}`}
-              onLoad={() => setImageState({ loaded: true, error: false, key: resultKey })}
-              onError={() => setImageState({ loaded: false, error: true, key: resultKey })}
-            />
+            {imageUrl && (
+              <img
+                src={imageUrl}
+                alt={parsed.description || toolLabel}
+                className={`max-w-[400px] max-h-[400px] rounded-lg transition-opacity ${imageLoaded ? 'opacity-100' : 'opacity-0 absolute'}`}
+                onLoad={() => setImageState({ loaded: true, error: false, key: resultKey })}
+                onError={() => setImageState({ loaded: false, error: true, key: resultKey })}
+              />
+            )}
             {imageLoaded && (
               <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors rounded-lg flex items-center justify-center">
                 <span className="opacity-0 group-hover:opacity-100 text-white text-xs bg-black/50 px-2 py-1 rounded transition-opacity">

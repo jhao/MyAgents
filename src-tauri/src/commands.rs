@@ -780,3 +780,12 @@ fn merge_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     }
     Ok(())
 }
+
+/// Read a local file and return its contents as base64.
+/// Used by the audio player to create blob URLs without asset protocol scope issues.
+#[tauri::command]
+pub async fn cmd_read_file_base64(path: String) -> Result<String, String> {
+    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+    let bytes = tokio::fs::read(&path).await.map_err(|e| format!("Failed to read {}: {}", path, e))?;
+    Ok(BASE64.encode(&bytes))
+}

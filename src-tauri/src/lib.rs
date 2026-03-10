@@ -188,6 +188,8 @@ pub fn run() {
             im::cmd_install_openclaw_plugin,
             im::cmd_list_openclaw_plugins,
             im::cmd_uninstall_openclaw_plugin,
+            // File utility commands
+            commands::cmd_read_file_base64,
         ])
         .setup(|app| {
             // Initialize logging for all builds

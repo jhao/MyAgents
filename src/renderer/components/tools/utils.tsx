@@ -10,6 +10,25 @@ import {
   getToolExpandedLabel
 } from './toolBadgeConfig';
 
+/**
+ * Unwrap MCP tool result that may be JSON-encoded content array.
+ * MCP tools return `[{type:'text', text:'...'}]` which the server JSON.stringify's.
+ * This extracts the plain text so component-specific parsers can work.
+ */
+export function unwrapMcpResult(result: string): string {
+  if (!result.startsWith('[')) return result;
+  try {
+    const parsed = JSON.parse(result) as unknown[];
+    const texts = parsed
+      .filter((c): c is { text: string } =>
+        typeof c === 'object' && c !== null && 'text' in c &&
+        typeof (c as { text: unknown }).text === 'string')
+      .map(c => c.text);
+    if (texts.length > 0) return texts.join('\n');
+  } catch { /* not JSON, return as-is */ }
+  return result;
+}
+
 // Legacy function for backward compatibility - now uses unified config
 export function getToolColors(toolName: string): {
   text: string;

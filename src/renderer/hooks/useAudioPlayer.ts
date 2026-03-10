@@ -1,5 +1,5 @@
 import { useCallback, useSyncExternalStore } from 'react';
-import { subscribeAudio, toggleAudio } from '@/utils/audioPlayer';
+import { subscribeAudio, toggleAudio, seekTo } from '@/utils/audioPlayer';
 import type { AudioState } from '@/utils/audioPlayer';
 
 const defaultState: AudioState = { playing: false, currentPath: null, progress: 0, duration: 0 };
@@ -39,8 +39,9 @@ export function useAudioPlayer(filePath: string) {
 
   const isActive = state.currentPath === filePath && state.playing;
 
-  // toggleAudio reads internal singleton state, so no dependency on isActive
+  // toggleAudio/seekTo read internal singleton state, so no dependency on isActive
   const toggle = useCallback(() => toggleAudio(filePath), [filePath]);
+  const seek = useCallback((time: number) => seekTo(time), []);
 
-  return { isActive, progress: isActive ? state.progress : 0, duration: isActive ? state.duration : 0, toggle };
+  return { isActive, progress: isActive ? state.progress : 0, duration: isActive ? state.duration : 0, toggle, seek };
 }
