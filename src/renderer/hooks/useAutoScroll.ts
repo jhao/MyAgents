@@ -160,6 +160,8 @@ export function useAutoScroll(
           const fromHeight = currentHeight;
           const startTime = performance.now();
 
+          let prevSpacerHeight = fromHeight;
+
           const tick = () => {
             // Calculate new spacer height
             const elapsed = performance.now() - startTime;
@@ -171,12 +173,20 @@ export function useAutoScroll(
               ? Math.round(fromHeight + (IDLE_SPACER_HEIGHT - fromHeight) * eased)
               : IDLE_SPACER_HEIGHT;
 
+            // Track only the spacer's height delta this frame.
+            // Using scrollHeight-based pinning causes jumps when OTHER DOM mutations
+            // (AssistantActions appearing, thinking blocks collapsing) change scrollHeight
+            // during the collapse animation.
+            const heightDelta = prevSpacerHeight - newHeight;
+            prevSpacerHeight = newHeight;
+
             const savedScrollTop = container.scrollTop;
             spacer.style.minHeight = `${newHeight}px`;
 
             if (shouldPinToBottom) {
-              // Auto-scroll was active → pin to new bottom (smooth follow)
-              container.scrollTop = container.scrollHeight - container.clientHeight;
+              // Auto-scroll was active → subtract the exact spacer shrinkage from scrollTop.
+              // This keeps the viewport pinned to the same content position.
+              container.scrollTop = Math.max(0, savedScrollTop - heightDelta);
             } else {
               // User had scrolled up → preserve viewport position (invisible collapse)
               container.scrollTop = savedScrollTop;
@@ -497,13 +507,17 @@ export function useAutoScroll(
     // Without this guard, the sequence scrollToBottom() → sessionId change → pendingScroll=true
     // would override content-aware mode and instant-scroll to absolute bottom.
     if (pendingScrollRef.current && !isContentAwareRef.current) {
-      pendingScrollRef.current = false;
+      // Don't clear pendingScrollRef until the instant scroll actually fires.
+      // If we clear it now, a messagesLength change between now and the RAF callback
+      // would fall through to startSmoothScroll(), causing a slow animated scroll
+      // through the entire long session.
       if (isDebugMode()) {
         console.log(LOG, 'Messages loaded with pending scroll, executing scrollToBottomInstant');
       }
       // Use RAF to ensure DOM has rendered the messages
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
+          pendingScrollRef.current = false;
           scrollToBottomInstant();
         });
       });
