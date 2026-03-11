@@ -779,6 +779,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
       setSelectedModel(fallback);
       void patchProject(currentProject.id, { model: fallback });
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to specific sub-properties, not full object refs
   }, [currentProject?.id, currentProvider?.id, currentProvider?.models, currentProvider?.primaryModel, selectedModel, patchProject]);
 
   // Sync selectedModel to backend so pre-warm uses the correct model.

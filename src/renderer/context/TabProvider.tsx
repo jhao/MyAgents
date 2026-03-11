@@ -1594,8 +1594,7 @@ export default function TabProvider({
                 setQueuedMessages(prev => prev.filter(q => q.queueId !== localQueueId));
             }
             const msg = error instanceof Error ? error.message : '网络错误';
-            if (msg !== 'Failed to fetch') setAgentError(msg);
-            else setIsLoading(false);
+            setAgentError(msg === 'Failed to fetch' ? '网络连接中断，请重试' : msg);
             pendingAttachmentsRef.current = null;
         });
 

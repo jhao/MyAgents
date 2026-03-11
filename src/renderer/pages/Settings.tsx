@@ -1527,8 +1527,12 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
             }
             // Persist provider to disk and refresh providers list
             await addCustomProvider(newProvider);
-            // Switch default to the newly added provider so Chat/Launcher use it immediately
-            await updateConfig({ defaultProviderId: newProvider.id });
+            // Set as default only when no valid default exists (avoid overriding user's existing choice)
+            const currentDefault = config.defaultProviderId;
+            const defaultStillExists = currentDefault && providers.some(p => p.id === currentDefault);
+            if (!defaultStillExists) {
+                await updateConfig({ defaultProviderId: newProvider.id });
+            }
             // Trigger verification directly (no debounce — unlike handleSaveApiKey which
             // debounces for keystroke input, creation is a one-shot operation)
             if (customForm.apiKey) {
