@@ -124,6 +124,11 @@ enum ListKind {
     Ordered(u64), // current item number
 }
 
+/// Safe single-message size limit (bytes). Feishu API has a ~150KB request body limit.
+/// After markdown→Post JSON conversion + double JSON encoding, 15000 bytes of raw markdown
+/// is a conservative safe ceiling for a single message.
+const FEISHU_SPLIT_THRESHOLD: usize = 15000;
+
 // ── Card Kit v2.0 helpers ──────────────────────────────────────
 
 /// Check if text contains markdown tables or fenced code blocks that benefit
@@ -957,12 +962,7 @@ impl FeishuAdapter {
     /// Auto-detecting send: Card Kit v2.0 for table/code content, Post for plain text.
     /// Automatically splits messages that exceed the safe size limit into multiple sends.
     pub async fn send_text_message(&self, chat_id: &str, text: &str) -> Result<Option<String>, String> {
-        // Feishu API has a ~150KB request body limit. After markdown→Post JSON conversion
-        // + double JSON encoding, a safe character limit for raw markdown is ~15000 chars.
-        // Card messages are more compact but we use the same limit for simplicity.
-        const FEISHU_SPLIT_THRESHOLD: usize = 15000;
-
-        if text.chars().count() <= FEISHU_SPLIT_THRESHOLD {
+        if text.len() <= FEISHU_SPLIT_THRESHOLD {
             // Single message — use auto-detect (Card or Post)
             return if should_use_card(text) {
                 self.send_card_message(chat_id, text).await
@@ -2217,10 +2217,7 @@ impl super::adapter::ImStreamAdapter for FeishuAdapter {
     }
 
     fn max_message_length(&self) -> usize {
-        // Must match FEISHU_SPLIT_THRESHOLD in send_text_message.
-        // Feishu API has ~150KB body limit; after markdown→Post JSON + double encoding,
-        // 15000 raw chars is a safe single-message ceiling.
-        15000
+        FEISHU_SPLIT_THRESHOLD
     }
 
     async fn finalize_message(

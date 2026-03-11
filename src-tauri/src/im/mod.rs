@@ -2606,7 +2606,7 @@ async fn finalize_block<A: adapter::ImStreamAdapter>(
         // Standard mode: edit-in-place or delete+send
         let max_len = adapter.max_message_length();
         if let Some(ref did) = draft_id {
-            if text.chars().count() <= max_len {
+            if text.len() <= max_len {
                 if let Err(e) = adapter.finalize_message(chat_id, did, text).await {
                     ulog_warn!("[im] Finalize edit failed: {}, sending as new message", e);
                     let _ = adapter.send_message(chat_id, text).await;
@@ -2624,16 +2624,16 @@ async fn finalize_block<A: adapter::ImStreamAdapter>(
 }
 
 /// Format draft display text (truncate if needed for platform limit).
-/// `max_len` is the platform's message limit (e.g. 4096 for Telegram, 30000 for Feishu).
+/// `max_len` is the platform's message limit in bytes (e.g. 4096 for Telegram, 15000 for Feishu).
 fn format_draft_text(text: &str, max_len: usize) -> String {
     // Reserve a small margin for the "..." truncation indicator
     let limit = max_len.saturating_sub(10);
-    if text.chars().count() > limit {
-        let truncate_at = text
-            .char_indices()
-            .nth(limit)
-            .map(|(i, _)| i)
-            .unwrap_or(text.len());
+    if text.len() > limit {
+        // Find a char-boundary-safe truncation point
+        let mut truncate_at = limit.min(text.len());
+        while !text.is_char_boundary(truncate_at) && truncate_at > 0 {
+            truncate_at -= 1;
+        }
         format!("{}...", &text[..truncate_at])
     } else {
         text.to_string()

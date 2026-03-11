@@ -88,7 +88,7 @@ pub trait ImStreamAdapter: ImAdapter {
         message_id: &str,
     ) -> impl std::future::Future<Output = AdapterResult<()>> + Send;
 
-    /// Max message length for this platform (Telegram: 4096, Feishu: 30000).
+    /// Max message length in bytes for this platform (Telegram: 4096, Feishu: 15000).
     fn max_message_length(&self) -> usize;
 
     /// Send an interactive approval card/keyboard and return its message ID.
