@@ -285,7 +285,7 @@ export default memo(function TemplateLibraryDialog({
             <div className="flex w-[640px] max-h-[80vh] flex-col rounded-2xl bg-[var(--paper-elevated)] shadow-lg">
                 {/* Header */}
                 <div className="flex items-center justify-between border-b border-[var(--line)] px-6 py-4">
-                    <h2 className="text-lg font-semibold text-[var(--ink)]">从模板创建工作区</h2>
+                    <h2 className="text-lg font-semibold text-[var(--ink)]">从模板创建 Agent</h2>
                     <button
                         onClick={onClose}
                         className="rounded-lg p-1.5 text-[var(--ink-muted)] transition-colors hover:bg-[var(--paper-inset)] hover:text-[var(--ink)]"
@@ -554,7 +554,7 @@ export default memo(function TemplateLibraryDialog({
                                         ) : (
                                             <Plus className="h-3.5 w-3.5" />
                                         )}
-                                        创建工作区
+                                        创建 Agent
                                     </button>
                                 </div>
                             </>
