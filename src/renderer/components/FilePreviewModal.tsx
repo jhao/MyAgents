@@ -283,7 +283,7 @@ export default function FilePreviewModal({
         // Use raw mode to skip streaming preprocessing (which can break valid markdown)
         if (isMarkdown) {
             return (
-                <div className="h-full overflow-auto p-6 bg-[var(--paper-elevated)]">
+                <div className="h-full overflow-auto overscroll-contain p-6 bg-[var(--paper-elevated)]">
                     <div className="prose prose-stone max-w-none dark:prose-invert">
                         <Markdown raw basePath={path ? path.substring(0, path.lastIndexOf('/')) : undefined}>{previewContent}</Markdown>
                     </div>
@@ -293,7 +293,7 @@ export default function FilePreviewModal({
 
         // Preview mode: Code files with syntax highlighting (memoized)
         return (
-            <div className="h-full overflow-auto bg-[var(--paper-elevated)]">
+            <div className="h-full overflow-auto overscroll-contain bg-[var(--paper-elevated)]">
                 {syntaxHighlightedContent}
             </div>
         );
