@@ -14,7 +14,7 @@ pub struct BotConfigPatch {
     pub provider_id: Option<String>,
     pub provider_env_json: Option<String>,
     pub permission_mode: Option<String>,
-    /// Complete MCP server definitions JSON (pushed to Sidecar at runtime, NOT persisted)
+    /// Complete MCP server definitions JSON (pushed to Sidecar at runtime, also persisted for auto-start)
     pub mcp_servers_json: Option<String>,
     /// Enabled MCP server ID list (persisted to imBotConfigs)
     pub mcp_enabled_servers: Option<Vec<String>>,
@@ -734,7 +734,7 @@ pub struct AgentConfigRust {
     pub permission_mode: String,
     #[serde(default)]
     pub mcp_enabled_servers: Option<Vec<String>>,
-    /// Complete MCP server definitions JSON (runtime only, NOT persisted)
+    /// Complete MCP server definitions JSON (persisted for auto-start, rebuilt on manual start)
     #[serde(default)]
     pub mcp_servers_json: Option<String>,
 

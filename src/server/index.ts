@@ -4765,6 +4765,34 @@ async function main() {
 
             try {
               copyDirRecursiveSync(srcDir, destDir, '[api/skill/sync-from-claude]');
+
+              // Ensure SKILL.md exists — Claude Code may use different file names
+              const skillMdPath = join(destDir, 'SKILL.md');
+              if (!existsSync(skillMdPath)) {
+                // Sanitize folder name for YAML frontmatter (escape quotes and backslashes)
+                const safeName = folder.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+                // Look for any .md file to use as the skill definition
+                const mdFiles = readdirSync(destDir).filter(f => f.endsWith('.md') && f !== 'SKILL.md');
+                if (mdFiles.length > 0) {
+                  // Use the first .md file as SKILL.md source
+                  const srcMd = join(destDir, mdFiles[0]);
+                  const mdContent = readFileSync(srcMd, 'utf-8');
+                  // Check if it already has frontmatter; if not, add minimal frontmatter
+                  if (mdContent.startsWith('---')) {
+                    writeFileSync(skillMdPath, mdContent, 'utf-8');
+                  } else {
+                    const skillContent = `---\nname: "${safeName}"\ndescription: "Imported from Claude Code"\n---\n\n${mdContent}`;
+                    writeFileSync(skillMdPath, skillContent, 'utf-8');
+                  }
+                  console.log(`[api/skill/sync-from-claude] Created SKILL.md from ${mdFiles[0]} for "${folder}"`);
+                } else {
+                  // No .md files — create minimal SKILL.md
+                  const minimalContent = `---\nname: "${safeName}"\ndescription: "Imported from Claude Code"\n---\n\nSkill imported from Claude Code.\n`;
+                  writeFileSync(skillMdPath, minimalContent, 'utf-8');
+                  console.log(`[api/skill/sync-from-claude] Created minimal SKILL.md for "${folder}"`);
+                }
+              }
+
               synced++;
               if (process.env.DEBUG === '1') {
                 console.log(`[api/skill/sync-from-claude] Synced skill "${folder}"`);

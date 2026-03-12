@@ -94,6 +94,8 @@ export interface AgentConfig {
   providerEnvJson?: string;
   permissionMode: string;  // 'plan' | 'auto' | 'fullAgency'
   mcpEnabledServers?: string[];
+  /** Resolved MCP server definitions JSON (persisted for auto-start, rebuilt on manual start) */
+  mcpServersJson?: string;
 
   // Heartbeat (Agent-level, shared across channels)
   heartbeat?: HeartbeatConfig;

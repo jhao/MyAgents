@@ -27,6 +27,7 @@ import {
 } from '@/config/configService';
 import { deleteCronTask, stopCronTask, startCronTask, startCronScheduler } from '@/api/cronTaskClient';
 import { isBrowserDevMode, pickFolderForDialog } from '@/utils/browserMock';
+import { useAgentStatuses } from '@/hooks/useAgentStatuses';
 import type { SessionMetadata } from '@/api/sessionClient';
 import type { CronTask } from '@/types/cronTask';
 import type { InitialMessage } from '@/types/tab';
@@ -60,6 +61,21 @@ export default function Launcher({ onLaunchProject, isStarting, startError: _sta
 
     // Filter out internal projects (e.g. ~/.myagents diagnostic workspace)
     const visibleProjects = useMemo(() => projects.filter(p => !p.internal), [projects]);
+
+    // Poll agent statuses only when any project has proactive mode
+    const hasAnyAgent = useMemo(() => visibleProjects.some(p => p.isAgent), [visibleProjects]);
+    const { statuses: agentStatuses } = useAgentStatuses(hasAnyAgent);
+
+    // Build agent lookup: project path → { agent config, runtime status }
+    const agentLookup = useMemo(() => {
+        const map = new Map<string, { agent: NonNullable<typeof config.agents>[number]; status?: (typeof agentStatuses)[string] }>();
+        if (!config.agents) return map;
+        for (const agent of config.agents) {
+            const key = agent.workspacePath.replace(/\\/g, '/');
+            map.set(key, { agent, status: agentStatuses[agent.id] });
+        }
+        return map;
+    }, [config.agents, agentStatuses]);
 
     const [_addError, setAddError] = useState<string | null>(null);
     const [launchingProjectId, setLaunchingProjectId] = useState<string | null>(null);
@@ -517,7 +533,7 @@ export default function Launcher({ onLaunchProject, isStarting, startError: _sta
                     <div className="mx-6 border-t border-[var(--line)]" />
                     <div className="flex flex-shrink-0 items-center justify-between px-6 py-4">
                         <h2 className="text-[13px] font-semibold tracking-[0.04em] text-[var(--ink-muted)]">
-                            工作区
+                            Agent 工作区
                         </h2>
                         <div className="flex items-center gap-3">
                             {config.showDevTools && (
@@ -572,16 +588,21 @@ export default function Launcher({ onLaunchProject, isStarting, startError: _sta
                             </div>
                         ) : (
                             <div className="grid grid-cols-2 gap-3">
-                                {visibleProjects.map((project) => (
-                                    <WorkspaceCard
-                                        key={project.id}
-                                        project={project}
-                                        onLaunch={handleLaunch}
-                                        onRemove={handleRemoveProject}
-                                        onAgentSettings={handleAgentSettings}
-                                        isLoading={launchingProjectId === project.id && isStarting}
-                                    />
-                                ))}
+                                {visibleProjects.map((project) => {
+                                    const agentData = agentLookup.get(project.path.replace(/\\/g, '/'));
+                                    return (
+                                        <WorkspaceCard
+                                            key={project.id}
+                                            project={project}
+                                            agent={agentData?.agent}
+                                            agentStatus={agentData?.status}
+                                            onLaunch={handleLaunch}
+                                            onRemove={handleRemoveProject}
+                                            onAgentSettings={handleAgentSettings}
+                                            isLoading={launchingProjectId === project.id && isStarting}
+                                        />
+                                    );
+                                })}
                             </div>
                         )}
                     </div>

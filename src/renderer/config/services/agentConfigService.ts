@@ -206,11 +206,38 @@ export async function patchAgentConfig(
   patch: Partial<Omit<AgentConfig, 'id'>>,
 ): Promise<AgentConfig | undefined> {
   let updated: AgentConfig | undefined;
+
+  // If mcpEnabledServers changed, resolve mcpServersJson before disk write
+  // so both fields are persisted atomically in a single transaction
+  let resolvedMcpJson: string | undefined;
+  if ('mcpEnabledServers' in patch) {
+    try {
+      const { getAllMcpServers, getEnabledMcpServerIds } = await import('@/config/configService');
+      const allServers = await getAllMcpServers();
+      const globalEnabled = await getEnabledMcpServerIds();
+      const agentMcpIds = patch.mcpEnabledServers ?? [];
+      const enabledMcpDefs = allServers.filter(
+        s => globalEnabled.includes(s.id) && agentMcpIds.includes(s.id),
+      );
+      resolvedMcpJson = enabledMcpDefs.length > 0 ? JSON.stringify(enabledMcpDefs) : undefined;
+    } catch (e) {
+      console.warn('[agentConfigService] Failed to resolve MCP servers:', e);
+    }
+  }
+
   await atomicModifyConfig(config => {
     const agents = [...(config.agents || [])];
     const idx = agents.findIndex(a => a.id === agentId);
     if (idx < 0) return config;
-    agents[idx] = { ...agents[idx], ...patch, id: agentId };
+    agents[idx] = {
+      ...agents[idx],
+      ...patch,
+      id: agentId,
+      // Persist resolved MCP JSON alongside mcpEnabledServers
+      ...(resolvedMcpJson !== undefined || 'mcpEnabledServers' in patch
+        ? { mcpServersJson: resolvedMcpJson }
+        : {}),
+    };
     updated = agents[idx];
     return {
       ...config,
@@ -221,7 +248,7 @@ export async function patchAgentConfig(
 
   // Hot-reload runtime state if any runtime-sensitive field changed
   if (updated) {
-    await syncAgentRuntime(agentId, patch, updated);
+    await syncAgentRuntime(agentId, patch, updated, resolvedMcpJson);
   }
 
   return updated;
@@ -234,7 +261,8 @@ export async function patchAgentConfig(
 async function syncAgentRuntime(
   agentId: string,
   patch: Partial<Omit<AgentConfig, 'id'>>,
-  updatedAgent: AgentConfig,
+  _updatedAgent: AgentConfig,
+  preResolvedMcpJson?: string,
 ): Promise<void> {
   const { isTauriEnvironment } = await import('@/utils/browserMock');
   if (!isTauriEnvironment()) return;
@@ -260,21 +288,10 @@ async function syncAgentRuntime(
     hasRuntimeChanges = true;
   }
 
-  // mcpEnabledServers changed → resolve to mcpServersJson
+  // mcpEnabledServers changed → use pre-resolved JSON (already persisted to disk atomically)
   if ('mcpEnabledServers' in patch) {
-    try {
-      const { getAllMcpServers, getEnabledMcpServerIds } = await import('@/config/configService');
-      const allServers = await getAllMcpServers();
-      const globalEnabled = await getEnabledMcpServerIds();
-      const agentMcpIds = updatedAgent.mcpEnabledServers ?? [];
-      const enabledMcpDefs = allServers.filter(
-        s => globalEnabled.includes(s.id) && agentMcpIds.includes(s.id),
-      );
-      runtimePatch.mcpServersJson = enabledMcpDefs.length > 0 ? JSON.stringify(enabledMcpDefs) : null;
-      hasRuntimeChanges = true;
-    } catch (e) {
-      console.warn('[agentConfigService] Failed to resolve MCP servers for runtime sync:', e);
-    }
+    runtimePatch.mcpServersJson = preResolvedMcpJson ?? null;
+    hasRuntimeChanges = true;
   }
 
   if (!hasRuntimeChanges) return;

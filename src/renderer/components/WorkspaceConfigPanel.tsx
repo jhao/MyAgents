@@ -167,9 +167,6 @@ export default function WorkspaceConfigPanel({ agentDir, onClose, refreshKey: ex
         setActiveTab(tab);
     }, [isAnyEditing]);
 
-    // Get workspace name from path (support both / and \ separators for cross-platform)
-    const workspaceName = agentDir.split(/[/\\]/).filter(Boolean).pop() || 'Workspace';
-
     return createPortal(
         <div
             className="fixed inset-0 z-[200] flex items-center justify-center bg-black/30 backdrop-blur-sm"
@@ -181,26 +178,23 @@ export default function WorkspaceConfigPanel({ agentDir, onClose, refreshKey: ex
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* Header — three zones: left (icon+title), center (tabs), right (close) */}
-                <div className="flex flex-shrink-0 items-center border-b border-[var(--line)] bg-gradient-to-r from-[var(--paper-inset)] to-[var(--paper)] px-6 py-4">
+                <div className="flex flex-shrink-0 items-center border-b border-[var(--line)] bg-gradient-to-r from-[var(--paper-inset)] to-[var(--paper)] px-6 py-3">
                     {/* Left zone */}
-                    <div className="flex min-w-0 items-center gap-3">
+                    <div className="flex min-w-0 items-center gap-2.5">
                         {detailView.type !== 'none' && (
                             <button
                                 type="button"
                                 onClick={handleBackFromDetail}
-                                className="mr-2 rounded-lg p-1.5 text-[var(--ink-muted)] transition-colors hover:bg-[var(--paper-inset)] hover:text-[var(--ink)]"
+                                className="mr-1 rounded-lg p-1.5 text-[var(--ink-muted)] transition-colors hover:bg-[var(--paper-inset)] hover:text-[var(--ink)]"
                                 title="返回列表"
                             >
                                 <ChevronLeft className="h-5 w-5" />
                             </button>
                         )}
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--ink)] shadow-lg">
-                            <Settings className="h-5 w-5 text-white" />
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ink)] shadow">
+                            <Settings className="h-4 w-4 text-white" />
                         </div>
-                        <div className="min-w-0">
-                            <h2 className="text-lg font-semibold text-[var(--ink)]">项目设置</h2>
-                            <p className="truncate text-xs text-[var(--ink-muted)]">{workspaceName}</p>
-                        </div>
+                        <h2 className="text-base font-semibold text-[var(--ink)]">项目设置</h2>
                     </div>
 
                     {/* Tab switcher — left-aligned after title (only in list view) */}
@@ -240,8 +234,8 @@ export default function WorkspaceConfigPanel({ agentDir, onClose, refreshKey: ex
                     </button>
                 </div>
 
-                {/* Content Area */}
-                <div className="flex-1 overflow-hidden">
+                {/* Content Area — paper base so elevated cards stand out */}
+                <div className="flex-1 overflow-hidden bg-[var(--paper)]">
                     {detailView.type === 'none' ? (
                         <>
                             {activeTab === 'general' && (

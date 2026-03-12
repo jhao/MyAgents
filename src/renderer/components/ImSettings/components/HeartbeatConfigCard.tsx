@@ -111,7 +111,7 @@ export default function HeartbeatConfigCard({
         <>
         <div className={flat ? '' : 'rounded-xl border border-[var(--line)] bg-[var(--paper-elevated)] p-5'}>
             {/* Header with toggle */}
-            <div className="mb-4 flex items-center justify-between">
+            <div className={`flex items-center justify-between${config.enabled ? ' mb-4' : ''}`}>
                 <div>
                     <h3 className="text-base font-medium text-[var(--ink)]">心跳感知 Heartbeat</h3>
                     <p className="mt-0.5 text-xs text-[var(--ink-muted)]">
@@ -133,13 +133,13 @@ export default function HeartbeatConfigCard({
                 <button
                     type="button"
                     onClick={toggleEnabled}
-                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                        config.enabled ? 'bg-[var(--accent)]' : 'bg-[var(--ink-faint)]'
+                    className={`relative h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors ${
+                        config.enabled ? 'bg-[var(--accent)]' : 'bg-[var(--line-strong)]'
                     }`}
                 >
                     <span
-                        className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                            config.enabled ? 'translate-x-4' : 'translate-x-0'
+                        className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                            config.enabled ? 'translate-x-5' : 'translate-x-0'
                         }`}
                     />
                 </button>
@@ -202,13 +202,13 @@ export default function HeartbeatConfigCard({
                             <button
                                 type="button"
                                 onClick={toggleActiveHours}
-                                className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                                    config.activeHours ? 'bg-[var(--accent)]' : 'bg-[var(--ink-faint)]'
+                                className={`relative h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors ${
+                                    config.activeHours ? 'bg-[var(--accent)]' : 'bg-[var(--line-strong)]'
                                 }`}
                             >
                                 <span
-                                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                                        config.activeHours ? 'translate-x-4' : 'translate-x-0'
+                                    className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                                        config.activeHours ? 'translate-x-5' : 'translate-x-0'
                                     }`}
                                 />
                             </button>

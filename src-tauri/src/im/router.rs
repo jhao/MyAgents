@@ -386,7 +386,8 @@ impl SessionRouter {
     /// Collect idle sessions that haven't been active for IDLE_TIMEOUT_SECS.
     /// Releases the Sidecar process but preserves the PeerSession (with port=0)
     /// so that the stable session_id can be reused for resume on next message.
-    pub fn collect_idle_sessions(&mut self, manager: &ManagedSidecarManager) {
+    /// Returns the number of sessions collected (for UI notification).
+    pub fn collect_idle_sessions(&mut self, manager: &ManagedSidecarManager) -> usize {
         let now = Instant::now();
         let idle_keys: Vec<String> = self
             .peer_sessions
@@ -398,6 +399,7 @@ impl SessionRouter {
             .map(|(k, _)| k.clone())
             .collect();
 
+        let count = idle_keys.len();
         for key in idle_keys {
             if let Some(ps) = self.peer_sessions.get_mut(&key) {
                 ulog_info!(
@@ -411,6 +413,7 @@ impl SessionRouter {
                 ps.sidecar_port = 0; // Sidecar released, but session preserved for resume
             }
         }
+        count
     }
 
     /// Get workspace path for a peer session (for attachment file saving).

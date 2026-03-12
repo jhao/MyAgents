@@ -12,7 +12,7 @@ import WorkspaceBasicsSection from './WorkspaceBasicsSection';
 import AgentChannelsSection from './sections/AgentChannelsSection';
 import AgentHeartbeatSection from './sections/AgentHeartbeatSection';
 import AgentTasksSection from './sections/AgentTasksSection';
-import { Settings, BrainCircuit } from 'lucide-react';
+import { Settings2, HeartPulse } from 'lucide-react';
 
 interface WorkspaceGeneralTabProps {
   agentDir: string;
@@ -134,22 +134,24 @@ export default function WorkspaceGeneralTab({ agentDir }: WorkspaceGeneralTabPro
 
   return (
     <div className="h-full overflow-auto px-8 py-6">
-      <div className="mx-auto max-w-2xl space-y-0 pb-8">
-        {/* Section 1: Workspace Basics (L1) */}
-        <div className="border-b border-[var(--line)] pb-6">
-          <h3 className="mb-4 flex items-center gap-2 text-lg font-semibold text-[var(--ink)]">
-            <Settings className="h-5 w-5 text-[var(--ink-muted)]" />
+      <div className="mx-auto max-w-2xl space-y-6 pb-8">
+        {/* Card 1: 基础设置 */}
+        <div className="rounded-xl border border-[var(--line)] bg-[var(--paper-elevated)] p-5">
+          <h3 className="flex items-center gap-2 text-base font-medium text-[var(--ink)]">
+            <Settings2 className="h-[18px] w-[18px] text-[var(--ink-muted)]" />
             基础设置
           </h3>
-          <WorkspaceBasicsSection project={project} agent={agent} agentDir={agentDir} />
+          <div className="mt-4">
+            <WorkspaceBasicsSection project={project} agent={agent} agentDir={agentDir} />
+          </div>
         </div>
 
-        {/* Section 2: Proactive Agent Toggle (L1) */}
-        <div className="pt-6">
+        {/* Card 2: 主动 Agent 模式 */}
+        <div className="rounded-xl border border-[var(--line)] bg-[var(--paper-elevated)] p-5">
           <div className="flex items-center justify-between">
-            <div>
-              <h3 className="flex items-center gap-2 text-lg font-semibold text-[var(--ink)]">
-                <BrainCircuit className="h-5 w-5 text-[var(--ink-muted)]" />
+            <div className="flex-1 pr-4">
+              <h3 className="flex items-center gap-2 text-base font-medium text-[var(--ink)]">
+                <HeartPulse className="h-[18px] w-[18px] text-[var(--heartbeat)]" />
                 主动 Agent 模式
               </h3>
               <p className="mt-0.5 text-xs text-[var(--ink-muted)]">
@@ -157,40 +159,39 @@ export default function WorkspaceGeneralTab({ agentDir }: WorkspaceGeneralTabPro
               </p>
             </div>
             <button
-              className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus:outline-none ${
+              className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+                toggling ? 'cursor-wait opacity-50' : 'cursor-pointer'
+              } ${
                 isProactive ? 'bg-[var(--accent)]' : 'bg-[var(--line-strong)]'
               }`}
               onClick={handleToggleProactive}
               disabled={toggling}
             >
               <span
-                className={`pointer-events-none inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm ring-0 transition-transform ${
-                  isProactive ? 'translate-x-4' : 'translate-x-0.5'
+                className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                  isProactive ? 'translate-x-5' : 'translate-x-0'
                 }`}
               />
             </button>
           </div>
+
+          {/* Sub-sections: Channels / Heartbeat / Tasks */}
+          {isProactive && agent && (
+            <>
+              <div className="mt-6 border-t border-[var(--line)] pt-5">
+                <AgentChannelsSection agent={agent} status={status} onAgentChanged={handleAgentChanged} />
+              </div>
+
+              <div className="mt-6 border-t border-[var(--line)] pt-5">
+                <AgentHeartbeatSection agent={agent} onAgentChanged={handleAgentChanged} />
+              </div>
+
+              <div className="mt-6 border-t border-[var(--line)] pt-5">
+                <AgentTasksSection agent={agent} />
+              </div>
+            </>
+          )}
         </div>
-
-        {/* Section 3: Proactive Agent sections (only when enabled) */}
-        {isProactive && agent && (
-          <>
-            {/* Channels */}
-            <div className="border-b border-[var(--line)] pb-6 pt-6">
-              <AgentChannelsSection agent={agent} status={status} onAgentChanged={handleAgentChanged} />
-            </div>
-
-            {/* Heartbeat */}
-            <div className="border-b border-[var(--line)] pb-6 pt-6">
-              <AgentHeartbeatSection agent={agent} onAgentChanged={handleAgentChanged} />
-            </div>
-
-            {/* Tasks */}
-            <div className="pt-6">
-              <AgentTasksSection agent={agent} />
-            </div>
-          </>
-        )}
       </div>
     </div>
   );

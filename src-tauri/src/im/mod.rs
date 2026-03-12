@@ -1955,6 +1955,7 @@ pub async fn start_im_bot<R: Runtime>(
     // Start idle session collector
     let router_for_idle = Arc::clone(&router);
     let manager_for_idle = Arc::clone(sidecar_manager);
+    let app_for_idle = app_handle.clone();
     let mut idle_shutdown_rx = shutdown_rx.clone();
 
     let _idle_handle = tokio::spawn(async move {
@@ -1962,7 +1963,11 @@ pub async fn start_im_bot<R: Runtime>(
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    router_for_idle.lock().await.collect_idle_sessions(&manager_for_idle);
+                    let collected = router_for_idle.lock().await.collect_idle_sessions(&manager_for_idle);
+                    if collected > 0 {
+                        // Notify UI so it can update session status display
+                        let _ = app_for_idle.emit("im:status-changed", json!({ "event": "sessions_collected" }));
+                    }
                 }
                 _ = idle_shutdown_rx.changed() => {
                     if *idle_shutdown_rx.borrow() {
@@ -3562,7 +3567,6 @@ pub async fn cmd_im_conversations(
 
 /// Persist a partial patch to a single bot's entry in `~/.myagents/config.json`.
 /// Uses atomic write (.tmp.rust → .bak → rename). `None` = no change, `Some("")` = clear.
-/// `mcp_servers_json` is intentionally NOT persisted (runtime-only, pushed to Sidecar).
 fn persist_bot_config_patch(bot_id: &str, patch: &BotConfigPatch) -> Result<(), String> {
     let home = dirs::home_dir().ok_or("[im] Home dir not found")?;
     let config_path = home.join(".myagents").join("config.json");
@@ -3621,6 +3625,15 @@ fn persist_bot_config_patch(bot_id: &str, patch: &BotConfigPatch) -> Result<(), 
         bot["mcpEnabledServers"] = serde_json::json!(servers);
     }
 
+    // mcp_servers_json → persisted as "mcpServersJson" (resolved definitions for auto-start)
+    if let Some(ref json) = patch.mcp_servers_json {
+        if json.is_empty() {
+            if let Some(o) = bot.as_object_mut() { o.remove("mcpServersJson"); }
+        } else {
+            bot["mcpServersJson"] = serde_json::json!(json);
+        }
+    }
+
     // allowed_users → persisted as "allowedUsers"
     if let Some(ref users) = patch.allowed_users {
         bot["allowedUsers"] = serde_json::json!(users);
@@ -3642,8 +3655,6 @@ fn persist_bot_config_patch(bot_id: &str, patch: &BotConfigPatch) -> Result<(), 
     if let Some(val) = patch.setup_completed {
         bot["setupCompleted"] = serde_json::json!(val);
     }
-
-    // NOTE: mcp_servers_json is NOT persisted (runtime only, pushed to Sidecar)
 
     // OpenClaw plugin config (v0.1.38)
     if let Some(ref val) = patch.openclaw_plugin_config {
@@ -3725,7 +3736,7 @@ async fn update_bot_config_internal<R: Runtime>(
         provider_id: patch_provider_id.clone(),
         provider_env_json: patch_provider_env.clone(),
         permission_mode: patch_perm.clone(),
-        mcp_servers_json: None, // Not persisted
+        mcp_servers_json: patch_mcp_json.clone(), // Persisted for auto-start reconstruction
         mcp_enabled_servers: patch_mcp_enabled,
         allowed_users: patch_allowed.clone(),
         default_workspace_path: patch_workspace.clone(),
