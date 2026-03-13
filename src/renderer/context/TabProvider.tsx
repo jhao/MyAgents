@@ -37,6 +37,7 @@ import {
     notifyAskUserQuestion,
     notifyPlanModeRequest,
 } from '@/services/notificationService';
+import { setBackgroundTaskStatus, clearAllBackgroundTaskStatuses } from '@/utils/backgroundTaskStatus';
 
 // File-modifying tools that should trigger workspace refresh
 // These tools can create, modify, or delete files in the workspace
@@ -350,6 +351,7 @@ export default function TabProvider({
         setPendingEnterPlanMode(null);
         setQueuedMessages([]);
         startedQueueIdsRef.current.clear();
+        clearAllBackgroundTaskStatuses();
     }, []);
 
     const resetSession = useCallback(async (): Promise<boolean> => {
@@ -1257,9 +1259,15 @@ export default function TabProvider({
             // Background task lifecycle (SDK Task tool)
             case 'chat:task-started':
             case 'chat:task-notification': {
-                // Logged for debugging; frontend rendering handled by TaskTool component
-                // via existing subagent stream events and output_file polling.
                 console.log(`[TabProvider ${tabId}] ${eventName}:`, data);
+                // Persist status to module-level Map + dispatch DOM event so TaskTool
+                // components can read it regardless of mount timing.
+                if (eventName === 'chat:task-notification') {
+                    const payload = data as { taskId?: string; status?: string };
+                    if (payload.taskId && payload.status) {
+                        setBackgroundTaskStatus(payload.taskId, payload.status);
+                    }
+                }
                 break;
             }
 
