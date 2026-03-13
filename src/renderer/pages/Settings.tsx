@@ -2634,13 +2634,13 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                             <div className="rounded-xl border border-[var(--line)] bg-[var(--paper-elevated)] p-5">
                                 <div className="space-y-4 text-sm leading-relaxed text-[var(--ink-secondary)]">
                                     <p>
-                                        <span className="font-medium text-[var(--ink)]">MyAgents</span> 是一款本地运行的 AI Agent 桌面客户端，基于 Claude Agent SDK 运行，同时支持接入各家大模型与快速切换服务。
+                                        <span className="font-medium text-[var(--ink)]">MyAgents</span> 是一款住在你电脑里的 AI Agent 桌面客户端，你的个人 AI 中心。基于 Claude Agent SDK 运行，同时支持接入各家大模型与快速切换。所有操作都在本地完成，数据始终留在你的电脑里。
                                     </p>
                                     <p>
-                                        MyAgents 已支持多标签页、多项目管理，让大家可以同时在电脑上跑若干个 Agent。Agent 可以读取文件、创建文档、执行命令——所有操作都在本地完成，让数据始终留在你的电脑里。
+                                        Claude Code 让开发者率先体会到了 AI 加持下的无限生产力，OpenClaw 又让普通人看到了像伙伴一样的主动型 Agent 助手的雏形。而 MyAgents 要做的，是让本地 Agent 成为完全体——当你在电脑前，它能触达你的文件、项目与一切工具，与你精细化地协同工作，完成高质量的产出；当你不在电脑前，它也能像你的分身，7×24 小时感知世界，按照你的意图持续行动。
                                     </p>
-                                    <p className="text-[var(--ink-muted)] italic">
-                                        Claude Code 这类 Agent 让开发者首先见识到了 AGI 的雏形，那么我们希望 MyAgents 成为让更多的非开发者也能体会到创作的乐趣，体会到来自 AI 智能的推背感，成就更好的自己。
+                                    <p className="text-[var(--ink-muted)]">
+                                        不同于每次对话都要重新自我介绍的 AI 工具，MyAgents 里的 Agent 与你的生活、工作深度同步，是一个越来越懂你的搭档。我们希望它成为每个人意图的超级放大器——你有一个想法，And it's done。
                                     </p>
                                 </div>
                             </div>
