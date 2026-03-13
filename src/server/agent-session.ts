@@ -3430,17 +3430,22 @@ export async function enqueueUserMessage(
   // Apply runtime config changes if session is active (model/permission changes don't require restart)
   // Skip for queued messages — config is locked to the current session while streaming
   if (!isSessionBusy) {
+    // applySessionConfig reads currentPermissionMode/currentModel to detect changes,
+    // so call it BEFORE updating the tracking variables.
     await applySessionConfig(model, permissionMode);
+  }
 
-    // Update local tracking even if SDK call is skipped (first message)
-    if (permissionMode && permissionMode !== currentPermissionMode) {
-      currentPermissionMode = permissionMode;
-      if (isDebugMode) console.log(`[agent] permission mode set to: ${permissionMode}`);
-    }
-    if (model && model !== currentModel) {
-      currentModel = model;
-      if (isDebugMode) console.log(`[agent] model set to: ${model}`);
-    }
+  // Always update tracking variables so the next session start picks up correct values.
+  // Without this, permission/model from the user's message is lost when the session is busy
+  // (e.g., during abort/restart), and the next pre-warm starts with stale defaults.
+  // When !isSessionBusy, applySessionConfig already updated these — the checks below are no-ops.
+  if (permissionMode && permissionMode !== currentPermissionMode) {
+    currentPermissionMode = permissionMode;
+    if (isDebugMode) console.log(`[agent] permission mode set to: ${permissionMode}`);
+  }
+  if (model && model !== currentModel) {
+    currentModel = model;
+    if (isDebugMode) console.log(`[agent] model set to: ${model}`);
   }
 
   // Persist session to SessionStore on first message
