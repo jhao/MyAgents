@@ -6,15 +6,16 @@
 ## 总体状态
 
 - **Phase 1 (数据模型 + 迁移)**: 已完成
-- **Phase 2 (Rust 层重构)**: 主体完成，6 个子项仍未完成
+- **Phase 2 (Rust 层重构)**: 主体完成，4 个子项仍未完成 (TD-5, TD-7, TD-8, TD-6 残留)
 - **Phase 3 (UI 改造)**: 已完成
-- **系统功能完整**: 所有 Agent 功能端到端可用，当前靠兼容层桥接新旧架构
+- **v0.1.41 commit `0ddb7b1`**: 一次性解决 TD-1 ~ TD-4 + TD-6 主体
+- **剩余技术债**: 见 `specs/prd/prd_0.1.42_rust_agent_native.md`
 
 ---
 
-## TD-1: `start_im_bot()` 中转模式 (Plan 2.4)
+## TD-1: `start_im_bot()` 中转模式 (Plan 2.4) ✅ RESOLVED
 
-**优先级: 高 | 工作量: 中**
+**优先级: 高 | 工作量: 中 | 完成于: v0.1.41 commit `0ddb7b1`**
 
 ### 现状
 
@@ -45,9 +46,9 @@ if let Some(bot_instance) = im_guard.remove(&channelId) { ... }
 
 ---
 
-## TD-2: Session Key 新格式未激活 (Plan 2.3)
+## TD-2: Session Key 新格式未激活 (Plan 2.3) ✅ RESOLVED
 
-**优先级: 高 | 工作量: 中**
+**优先级: 高 | 工作量: 中 | 完成于: v0.1.41 commit `0ddb7b1`**
 
 ### 现状
 
@@ -83,9 +84,9 @@ Agent Channel 启动时使用 `SessionRouter::new_for_agent()`，生成 `agent:`
 
 ---
 
-## TD-3: 健康状态文件路径未迁移 (Plan 2.10)
+## TD-3: 健康状态文件路径未迁移 (Plan 2.10) ✅ RESOLVED
 
-**优先级: 高 | 工作量: 中**
+**优先级: 高 | 工作量: 中 | 完成于: v0.1.41 commit `0ddb7b1`**
 
 ### 现状
 
@@ -117,9 +118,9 @@ Agent Channel 的健康状态文件仍使用旧路径:
 
 ---
 
-## TD-4: `buildImBotConfigsShim()` 兼容层 (Plan 1.5)
+## TD-4: `buildImBotConfigsShim()` 兼容层 (Plan 1.5) ✅ RESOLVED
 
-**优先级: 中 | 工作量: 低 (删除即可，但依赖 TD-1)**
+**优先级: 中 | 工作量: 低 | 完成于: v0.1.41 commit `0ddb7b1`**
 
 ### 现状
 
@@ -296,33 +297,29 @@ TD-1 完成 + ImSettings 废弃后，移除 `ManagedImBots` 查找分支。
 
 ---
 
-## 依赖关系图
+## 依赖关系图（更新于 2026-03-14）
 
 ```
-TD-1 (start_channel 提取)
-  ├── TD-4 (shim 删除) — TD-1 完成后 Rust 不再读 imBotConfigs
-  ├── TD-5 (旧命令 alias) — 可与 TD-1 并行
-  └── TD-8 (management_api 简化)
+✅ TD-1 (start_channel 提取)     — DONE
+✅ TD-2 (session key 激活)        — DONE
+✅ TD-3 (健康文件迁移)            — DONE
+✅ TD-4 (shim 删除)               — DONE
+✅ TD-6 主体 (ImSettings 从 Settings.tsx 移除) — DONE
 
-TD-2 (session key 激活) — 独立，但建议与 TD-1 一起做
-
-TD-3 (健康文件迁移) — 独立
-
-TD-6 (ImSettings 废弃)
-  ├── TD-4 (shim 删除)
-  ├── TD-5 (旧命令清理)
-  └── TD-7 (事件清理)
+❌ TD-5 (旧命令 alias)     — 待 v0.1.42
+❌ TD-6 残留 (ImSettings 目录删除) — 待 v0.1.42
+❌ TD-7 (双重事件清理)     — 待 v0.1.42
+❌ TD-8 (management_api 简化) — 待 v0.1.42
 ```
 
 ---
 
-## 建议实施顺序
+## 实施计划
 
-| 批次 | 内容 | 版本 |
+| 版本 | 内容 | 状态 |
 |------|------|------|
-| 1 | TD-1 (start_channel) + TD-2 (session key) + TD-3 (健康文件) | v0.1.42 |
-| 2 | TD-4 (shim 删除) + TD-5 (旧命令 alias) + TD-7 (事件清理) | v0.1.42 |
-| 3 | TD-6 (ImSettings 废弃) + TD-8 (management_api 简化) | v0.1.43+ |
+| v0.1.41 | TD-1 + TD-2 + TD-3 + TD-4 + TD-6 主体 | ✅ 已完成 (commit `0ddb7b1`) |
+| v0.1.42 | TD-5 + TD-6 残留 + TD-7 + TD-8 | 待实施 (PRD: `prd_0.1.42_rust_agent_native.md`) |
 
 ---
 
