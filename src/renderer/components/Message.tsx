@@ -181,7 +181,7 @@ const Message = memo(function Message({ message, isLoading = false, onRewind, on
       const timer = setTimeout(() => setActionsReady(true), 350);
       return () => clearTimeout(timer);
     }
-    setActionsReady(false);
+    setActionsReady(false); // eslint-disable-line react-hooks/set-state-in-effect -- synchronous reset is intentional: streaming just started, actions must hide immediately
   }, [isLoading]);
 
   useEffect(() => {

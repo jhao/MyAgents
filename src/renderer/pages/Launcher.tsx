@@ -75,6 +75,7 @@ export default function Launcher({ onLaunchProject, isStarting, startError: _sta
             map.set(key, { agent, status: agentStatuses[agent.id] });
         }
         return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- config.agents is the actual dependency; full config would cause unnecessary recomputes
     }, [config.agents, agentStatuses]);
 
     const [_addError, setAddError] = useState<string | null>(null);

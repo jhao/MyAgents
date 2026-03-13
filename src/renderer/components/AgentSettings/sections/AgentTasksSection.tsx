@@ -54,6 +54,7 @@ export default function AgentTasksSection({ agent }: AgentTasksSectionProps) {
   }, [agent.channels]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loadTasks fetches from external API then sets state, which is the correct pattern for effects
     void loadTasks();
   }, [loadTasks]);
 
