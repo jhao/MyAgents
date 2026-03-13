@@ -109,6 +109,22 @@ export default function HeartbeatConfigCard({
         }
     }, [workspacePath]);
 
+    // Direct file save via Tauri fs — enables editing even outside Tab context
+    const handleDirectSave = useCallback(async (content: string) => {
+        if (!previewFile) return;
+        const { writeTextFile } = await import('@tauri-apps/plugin-fs');
+        await writeTextFile(previewFile.path, content);
+    }, [previewFile]);
+
+    // Reveal file in system file manager via Tauri shell
+    const handleRevealFile = useCallback(async () => {
+        if (!previewFile) return;
+        const parentDir = previewFile.path.substring(0, previewFile.path.lastIndexOf('/'))
+            || previewFile.path.substring(0, previewFile.path.lastIndexOf('\\'));
+        const { open } = await import('@tauri-apps/plugin-shell');
+        await open(parentDir);
+    }, [previewFile]);
+
     const isCustomInterval = !INTERVAL_PRESETS.some(p => p.value === config.intervalMinutes);
     const selectedTz = COMMON_TIMEZONES.find(tz => tz.value === config.activeHours?.timezone);
 
@@ -296,6 +312,8 @@ export default function HeartbeatConfigCard({
                     path={previewFile.path}
                     isLoading={previewLoading}
                     onClose={() => setPreviewFile(null)}
+                    onSave={handleDirectSave}
+                    onRevealFile={handleRevealFile}
                 />
             </Suspense>
         )}
