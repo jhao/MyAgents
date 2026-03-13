@@ -115,7 +115,7 @@ export default memo(function TemplateLibraryDialog({
             const selected = await open({
                 directory: true,
                 multiple: false,
-                title: '选择目标目录',
+                title: '选择工作区地址',
             });
             if (selected && typeof selected === 'string') {
                 setTargetDir(selected);
@@ -491,19 +491,19 @@ export default memo(function TemplateLibraryDialog({
 
                                 {/* Project name */}
                                 <div className="mb-4">
-                                    <label className="mb-2 block text-sm font-medium text-[var(--ink)]">项目名称</label>
+                                    <label className="mb-2 block text-sm font-medium text-[var(--ink)]">Agent 名称</label>
                                     <input
                                         type="text"
                                         value={projectName}
                                         onChange={(e) => setProjectName(e.target.value.replace(/[/\\]/g, ''))}
                                         className="w-full rounded-[6px] border border-[var(--line)] bg-transparent px-3 py-2.5 text-sm text-[var(--ink)] placeholder:text-[var(--ink-muted)] focus:border-[var(--ink)] focus:outline-none transition-colors"
-                                        placeholder="输入项目名称"
+                                        placeholder="输入 Agent 名称"
                                     />
                                 </div>
 
                                 {/* Target directory */}
                                 <div className="mb-6">
-                                    <label className="mb-2 block text-sm font-medium text-[var(--ink)]">目标目录</label>
+                                    <label className="mb-2 block text-sm font-medium text-[var(--ink)]">工作区地址</label>
                                     <div className="flex items-center gap-2">
                                         <div className="flex min-w-0 flex-1 items-center rounded-[6px] border border-[var(--line)] bg-[var(--paper)] px-3 py-2.5">
                                             <span className="truncate text-sm text-[var(--ink-muted)]">
