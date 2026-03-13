@@ -96,35 +96,44 @@ export function createBridgeHandler(config: BridgeConfig): BridgeHandler {
       ? translateRequestToResponses(anthropicReq, { modelOverride: upstream.model, modelMapping: config.modelMapping })
       : translateRequest(anthropicReq, { modelMapping: config.modelMapping, modelOverride: upstream.model });
 
-    // 4a. Re-inject thought_signatures into tool_calls (Gemini thinking models).
+    // 4a. Normalize thought_signatures on tool_calls (Gemini thinking models).
     // Gemini requires thought_signature on tool_calls in conversation history.
+    // In OpenAI-compat format, Gemini expects it at extra_content.google.thought_signature.
     // The Claude Agent SDK strips non-standard fields, so we re-inject from cache.
-    // In OpenAI-compat format, Gemini puts thought_signature at:
-    //   tool_calls[].extra_content.google.thought_signature
-    // We inject at BOTH locations (direct + extra_content) for maximum compatibility.
-    // Fallback: Google-documented dummy value to skip validation when real sig unavailable.
+    // We normalize ALL tool_calls to have BOTH locations (direct + extra_content):
+    //   - Sig exists at one location → copy to the other (normalization)
+    //   - No sig at either → inject from cache or Google-documented dummy fallback
     if (!isResponses) {
       const chatReq = translatedReq as OpenAIRequest;
       let injectedCached = 0;
       let injectedDummy = 0;
+      let normalized = 0;
       for (const msg of chatReq.messages) {
         if (msg.role === 'assistant' && 'tool_calls' in msg && msg.tool_calls) {
           for (const tc of msg.tool_calls) {
             const existingSig = tc.thought_signature
               || tc.extra_content?.google?.thought_signature;
-            if (!existingSig) {
+            if (existingSig) {
+              // Normalize: ensure both locations have the sig
+              if (!tc.thought_signature || !tc.extra_content?.google?.thought_signature) {
+                tc.thought_signature = existingSig;
+                tc.extra_content = { ...tc.extra_content, google: { ...tc.extra_content?.google, thought_signature: existingSig } };
+                normalized++;
+              }
+            } else {
+              // No sig anywhere — inject from cache or dummy
               const cached = thoughtSignatureCache.get(tc.id);
               const sig = cached || THOUGHT_SIG_SKIP_VALIDATOR;
               tc.thought_signature = sig;
-              tc.extra_content = { google: { thought_signature: sig } };
+              tc.extra_content = { ...tc.extra_content, google: { ...tc.extra_content?.google, thought_signature: sig } };
               if (cached) injectedCached++;
               else injectedDummy++;
             }
           }
         }
       }
-      if (injectedCached > 0 || injectedDummy > 0) {
-        log(`[bridge] Injected thought_signatures: ${injectedCached} cached, ${injectedDummy} dummy`);
+      if (injectedCached > 0 || injectedDummy > 0 || normalized > 0) {
+        log(`[bridge] thought_signatures: ${injectedCached} cached, ${injectedDummy} dummy, ${normalized} normalized`);
       }
     }
 
