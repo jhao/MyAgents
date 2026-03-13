@@ -979,7 +979,7 @@ export default function TabProvider({
                     const model = completePayload?.model || lastModelRef.current || '';
                     const pEnv = lastProviderEnvRef.current;
                     // Fire-and-forget — guard against session switch during async call
-                    generateSessionTitle(sid, userText, assistantText, model, pEnv)
+                    generateSessionTitle(postJson, sid, userText, assistantText, model, pEnv)
                         .then(r => {
                             if (r?.success && r.title && currentSessionIdRef.current === sid) {
                                 onTitleChangeRef.current?.(r.title);
