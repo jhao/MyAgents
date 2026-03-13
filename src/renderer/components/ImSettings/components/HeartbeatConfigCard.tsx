@@ -33,7 +33,7 @@ export default function HeartbeatConfigCard({
     onChange: (config: HeartbeatConfig | undefined) => void;
     /** When true, renders without card border/bg — parent handles container styling */
     flat?: boolean;
-    /** Workspace path — used to open HEARTBEAT.md in system editor */
+    /** Workspace path — used to open HEARTBEAT.md in built-in preview/editor */
     workspacePath?: string;
 }) {
     const config = useMemo(
@@ -95,10 +95,15 @@ export default function HeartbeatConfigCard({
             const { readTextFile } = await import('@tauri-apps/plugin-fs');
             const sep = workspacePath.includes('\\') ? '\\' : '/';
             const filePath = `${workspacePath}${sep}HEARTBEAT.md`;
-            const content = await readTextFile(filePath);
+            let content = '';
+            try {
+                content = await readTextFile(filePath);
+            } catch {
+                // File doesn't exist yet — open with empty content so user can create it
+            }
             setPreviewFile({ name: 'HEARTBEAT.md', content, size: new TextEncoder().encode(content).length, path: filePath });
         } catch (e) {
-            console.warn('[HeartbeatConfigCard] Failed to read HEARTBEAT.md:', e);
+            console.warn('[HeartbeatConfigCard] Failed to open HEARTBEAT.md:', e);
         } finally {
             setPreviewLoading(false);
         }
@@ -115,7 +120,7 @@ export default function HeartbeatConfigCard({
                 <div>
                     <h3 className="text-base font-medium text-[var(--ink)]">心跳感知 Heartbeat</h3>
                     <p className="mt-0.5 text-xs text-[var(--ink-muted)]">
-                        心跳清单存放在工作区根目录的{' '}
+                        心跳感知赋予 Agent 按心跳间隔时间苏醒，检查一下心跳清单{' '}
                         {workspacePath ? (
                             <button
                                 type="button"
@@ -127,7 +132,19 @@ export default function HeartbeatConfigCard({
                         ) : (
                             <code className="rounded bg-[var(--paper-inset)] px-1 py-0.5 text-[var(--accent)]">HEARTBEAT.md</code>
                         )}
-                        {' '}文件中，编辑即可定义 AI 的心跳任务
+                        {' '}里面的任务，如果为空则会跳过。你可以直接编辑心跳清单{' '}
+                        {workspacePath ? (
+                            <button
+                                type="button"
+                                onClick={handleOpenHeartbeatFile}
+                                className="rounded bg-[var(--paper-inset)] px-1 py-0.5 text-[var(--accent)] hover:underline cursor-pointer"
+                            >
+                                HEARTBEAT.md
+                            </button>
+                        ) : (
+                            <code className="rounded bg-[var(--paper-inset)] px-1 py-0.5 text-[var(--accent)]">HEARTBEAT.md</code>
+                        )}
+                        {' '}的内容。
                     </p>
                 </div>
                 <button
