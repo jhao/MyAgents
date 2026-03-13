@@ -205,7 +205,7 @@ export default function BugReportOverlay({
                 </div>
 
                 {/* Input area — matches Chat input style */}
-                <div className="bg-[var(--paper)] px-5 py-4">
+                <div className="rounded-b-[24px] bg-[var(--paper)] px-5 py-4">
                     <div
                         className={`rounded-2xl border bg-[var(--paper-elevated)] transition-colors ${isDragging ? 'border-[var(--accent)]' : 'border-[var(--line)]'}`}
                         onDragOver={handleDragOver}
