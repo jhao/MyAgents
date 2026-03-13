@@ -5170,6 +5170,28 @@ async function* messageGenerator(): AsyncGenerator<SDKUserMessage> {
       return; // generator return → SDK endInput() → stdin EOF → subprocess 退出
     }
 
+    // Transition from pre-warm to active when processing a queued message.
+    // This handles a race: if enqueueUserMessage was called during session abort
+    // (shouldAbortSession=true), the pre-warm→active transition was skipped there.
+    // A new session then starts in pre-warm mode, and the messageGenerator picks up
+    // the queued message — but nobody transitions isPreWarming to false. Setting it
+    // false HERE ensures that when system_init arrives from the SDK (after this yield),
+    // it goes through the direct-broadcast path (line ~4256) instead of being buffered.
+    // Without this, the frontend never receives system_init, so currentSessionIdRef
+    // stays as the pending placeholder and title generation sends the wrong sessionId → 404.
+    if (isPreWarming) {
+      isPreWarming = false;
+      if (systemInitInfo) {
+        sessionRegistered = true;
+        broadcast('chat:system-init', { info: systemInitInfo, sessionId });
+      }
+      if (preWarmTimer) {
+        clearTimeout(preWarmTimer);
+        preWarmTimer = null;
+      }
+      console.log(`[agent] pre-warm → active (from queued message), sessionRegistered=${sessionRegistered}`);
+    }
+
     // 排队消息的延迟渲染
     if (item.wasQueued) {
       const userMessage: MessageWire = {
