@@ -4227,6 +4227,119 @@ pub async fn cmd_uninstall_openclaw_plugin(pluginId: String) -> Result<(), Strin
     bridge::uninstall_openclaw_plugin(&pluginId).await
 }
 
+/// Restart all running channels that use the given OpenClaw plugin.
+/// Called after a plugin update to reload the new plugin code.
+/// Returns `{ restarted, failed }` so the frontend can show appropriate feedback.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn cmd_restart_channels_using_plugin(
+    app_handle: AppHandle,
+    agentState: tauri::State<'_, ManagedAgents>,
+    sidecarManager: tauri::State<'_, ManagedSidecarManager>,
+    pluginId: String,
+) -> Result<serde_json::Value, String> {
+    let running_bot_ids = bridge::get_bot_ids_using_plugin(&pluginId).await;
+    if running_bot_ids.is_empty() {
+        return Ok(json!({ "restarted": 0, "failed": 0 }));
+    }
+
+    ulog_info!(
+        "[agent] Restarting {} channel(s) using plugin {}",
+        running_bot_ids.len(),
+        pluginId
+    );
+
+    let mut restarted = 0u32;
+    let mut failed = 0u32;
+
+    for bot_id in &running_bot_ids {
+        // Find the agent_id for this bot in ManagedAgents
+        let found = {
+            let agents = agentState.lock().await;
+            agents.iter()
+                .find(|(_, agent)| agent.channels.contains_key(bot_id))
+                .map(|(agent_id, _)| agent_id.clone())
+        };
+
+        let agent_id = match found {
+            Some(id) => id,
+            None => {
+                ulog_warn!("[agent] Bot {} not found in ManagedAgents, skipping restart", bot_id);
+                continue;
+            }
+        };
+
+        // Remove channel and clone its config for restart
+        let (channel_instance, im_config) = {
+            let mut agents = agentState.lock().await;
+            let agent = match agents.get_mut(&agent_id) {
+                Some(a) => a,
+                None => continue,
+            };
+            let ch = match agent.channels.remove(bot_id) {
+                Some(c) => c,
+                None => continue,
+            };
+            let config = ch.bot_instance.config.clone();
+            (ch, config)
+        };
+
+        // Shutdown the old instance (consumes bot_instance — cannot be re-inserted on failure)
+        if let Err(e) = shutdown_bot_instance(
+            channel_instance.bot_instance,
+            &sidecarManager,
+            bot_id,
+        ).await {
+            ulog_warn!("[agent] Failed to shutdown channel {}: {}", bot_id, e);
+            failed += 1;
+            // Instance is consumed and partially cleaned up; attempt restart anyway
+        }
+
+        // Restart with the same config
+        match create_bot_instance(
+            &app_handle,
+            &sidecarManager,
+            bot_id.clone(),
+            im_config,
+            Some(agent_id.clone()),
+        ).await {
+            Ok((new_instance, _status)) => {
+                // Set agent_link before acquiring the agents lock
+                let link = AgentChannelLink {
+                    channel_id: bot_id.clone(),
+                    agent_id: agent_id.clone(),
+                    last_active_channel: {
+                        let agents = agentState.lock().await;
+                        agents.get(&agent_id)
+                            .map(|a| Arc::clone(&a.last_active_channel))
+                            .unwrap_or_else(|| Arc::new(RwLock::new(None)))
+                    },
+                };
+                *new_instance.agent_link.write().await = Some(link);
+
+                let mut agents = agentState.lock().await;
+                if let Some(agent) = agents.get_mut(&agent_id) {
+                    agent.channels.insert(bot_id.clone(), ChannelInstance {
+                        channel_id: bot_id.clone(),
+                        bot_instance: new_instance,
+                    });
+                    restarted += 1;
+                    ulog_info!("[agent] Channel {} restarted successfully", bot_id);
+                }
+            }
+            Err(e) => {
+                ulog_warn!("[agent] Failed to restart channel {}: {}", bot_id, e);
+                failed += 1;
+            }
+        }
+    }
+
+    // Always emit status change when channels were touched
+    let _ = app_handle.emit("agent:status-changed", ());
+
+    Ok(json!({ "restarted": restarted, "failed": failed }))
+}
+
 // ===== Agent Tauri Commands (v0.1.41) =====
 
 /// Start a single channel within an agent.

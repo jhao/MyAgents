@@ -145,7 +145,18 @@ export default function BotPlatformRegistry() {
       const result = await invoke<InstalledPlugin>('cmd_install_openclaw_plugin', { npmSpec });
       if (!isMountedRef.current) return;
       setInstalledPlugins(prev => prev.map(p => p.pluginId === pluginId ? result : p));
-      toastRef.current.success(`已更新至 ${result.packageVersion || '最新版'}`);
+
+      // Restart running channels that use this plugin
+      const restart = await invoke<{ restarted: number; failed: number }>('cmd_restart_channels_using_plugin', { pluginId });
+      if (!isMountedRef.current) return;
+      const ver = `v${result.packageVersion || '最新版'}`;
+      if (restart.failed > 0) {
+        toastRef.current.error(`已更新至 ${ver}，但 ${restart.failed} 个 Bot 重启失败，请手动重启`);
+      } else if (restart.restarted > 0) {
+        toastRef.current.success(`已更新至 ${ver}，已重启 ${restart.restarted} 个相关 Bot`);
+      } else {
+        toastRef.current.success(`已更新至 ${ver}`);
+      }
     } catch (err) {
       if (!isMountedRef.current) return;
       toastRef.current.error(`更新失败: ${err}`);

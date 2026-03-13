@@ -205,6 +205,7 @@ pub fn run() {
             im::cmd_install_openclaw_plugin,
             im::cmd_list_openclaw_plugins,
             im::cmd_uninstall_openclaw_plugin,
+            im::cmd_restart_channels_using_plugin,
             // Agent commands (v0.1.41)
             im::cmd_start_agent_channel,
             im::cmd_stop_agent_channel,
