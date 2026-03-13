@@ -2607,7 +2607,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                         )}
                                     </div>
                                     <p className="mt-3 text-base text-[var(--ink-secondary)]">
-                                        Your Universal AI Assistant
+                                        Your Intent, Amplified
                                     </p>
                                     {updateDownloading && propUpdateVersion && (
                                         <div className="mt-3 flex items-center gap-2 text-sm text-[var(--ink-secondary)]">
