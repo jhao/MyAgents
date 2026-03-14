@@ -215,7 +215,7 @@ export default function TaskCreateModal({ onClose, onCreated }: TaskCreateModalP
               <textarea
                 value={prompt}
                 onChange={e => setPrompt(e.target.value)}
-                rows={3}
+                rows={5}
                 placeholder="描述你希望 AI 定时执行的任务..."
                 className={`${INPUT_CLS} resize-none`}
               />
