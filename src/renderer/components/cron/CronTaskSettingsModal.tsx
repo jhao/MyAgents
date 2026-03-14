@@ -62,7 +62,6 @@ export type ExecutionTarget = 'current_session' | 'new_task';
 /** Extended config returned by onConfirm — includes executionTarget and schedule */
 export type CronSettingsResult = Omit<CronTaskConfig, 'workspacePath' | 'sessionId' | 'tabId'> & {
   executionTarget: ExecutionTarget;
-  schedule?: CronSchedule;
 };
 
 /** Configuration that can be passed to restore previous settings */
@@ -72,6 +71,7 @@ type InitialConfig = {
   endConditions: CronEndConditions;
   runMode: CronRunMode;
   notifyEnabled: boolean;
+  schedule?: CronSchedule;
 };
 
 interface CronTaskSettingsModalProps {
@@ -98,7 +98,7 @@ function CronTaskSettingsForm({
   const [executionTarget, setExecutionTarget] = useState<ExecutionTarget>('current_session');
 
   // Schedule state
-  const [schedule, setSchedule] = useState<CronSchedule | null>(initialConfig?.intervalMinutes ? null : null);
+  const [schedule, setSchedule] = useState<CronSchedule | null>(initialConfig?.schedule ?? null);
   const [intervalMinutes, setIntervalMinutes] = useState(initialConfig?.intervalMinutes ?? 30);
 
   // Run mode (only for current_session — new_task always uses new_session)

@@ -1675,9 +1675,28 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
         <CronTaskDetailPanel
           task={cronDetailTask}
           onClose={() => setCronDetailTask(null)}
-          onDelete={async () => { setCronDetailTask(null); }}
-          onResume={async () => {}}
-          onStop={async () => {}}
+          onDelete={async (taskId) => {
+            const { deleteCronTask } = await import('@/api/cronTaskClient');
+            await deleteCronTask(taskId);
+            setCronDetailTask(null);
+            toast.success('任务已删除');
+          }}
+          onResume={async (taskId) => {
+            await startCronTaskIpc(taskId);
+            await startCronScheduler(taskId);
+            const { getCronTask } = await import('@/api/cronTaskClient');
+            const updated = await getCronTask(taskId);
+            setCronDetailTask(updated);
+            toast.success('任务已恢复');
+          }}
+          onStop={async (taskId) => {
+            const { stopCronTask } = await import('@/api/cronTaskClient');
+            await stopCronTask(taskId);
+            const { getCronTask } = await import('@/api/cronTaskClient');
+            const updated = await getCronTask(taskId);
+            setCronDetailTask(updated);
+            toast.success('任务已停止');
+          }}
         />
       )}
     </div>
