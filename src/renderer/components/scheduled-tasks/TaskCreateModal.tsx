@@ -273,48 +273,51 @@ export default function TaskCreateModal({ onClose, onCreated }: TaskCreateModalP
               <SectionHeader icon={Flag}>结束条件</SectionHeader>
               <div className="mt-3 space-y-3">
                 {/* Segmented control — equal width, matches 循环设置 */}
-                {/* Segmented control — same style as ScheduleTypeTabs */}
+                {/* Segmented control — 永久运行 first (default) */}
                 <div className="flex gap-1.5 rounded-[var(--radius-md)] bg-[var(--paper-inset)] p-1">
-                  <button type="button" onClick={() => setEndConditionMode('conditional')}
-                    className={`flex flex-1 items-center justify-center rounded-[var(--radius-sm)] px-3 py-1.5 text-[13px] font-medium transition-colors ${
-                      endConditionMode === 'conditional'
-                        ? 'bg-[var(--paper-elevated)] text-[var(--ink)] shadow-xs'
-                        : 'text-[var(--ink-muted)] hover:text-[var(--ink)]'
-                    }`}>条件停止</button>
                   <button type="button" onClick={() => setEndConditionMode('forever')}
                     className={`flex flex-1 items-center justify-center rounded-[var(--radius-sm)] px-3 py-1.5 text-[13px] font-medium transition-colors ${
                       endConditionMode === 'forever'
                         ? 'bg-[var(--paper-elevated)] text-[var(--ink)] shadow-xs'
                         : 'text-[var(--ink-muted)] hover:text-[var(--ink)]'
                     }`}>永久运行</button>
+                  <button type="button" onClick={() => setEndConditionMode('conditional')}
+                    className={`flex flex-1 items-center justify-center rounded-[var(--radius-sm)] px-3 py-1.5 text-[13px] font-medium transition-colors ${
+                      endConditionMode === 'conditional'
+                        ? 'bg-[var(--paper-elevated)] text-[var(--ink)] shadow-xs'
+                        : 'text-[var(--ink-muted)] hover:text-[var(--ink)]'
+                    }`}>条件停止</button>
                 </div>
 
-                {/* Condition options — always rendered, disabled when "永久运行" */}
-                <div className={`rounded-lg border border-[var(--line)] bg-[var(--paper)] transition-opacity ${endConditionMode === 'forever' ? 'opacity-40 pointer-events-none' : ''}`}>
-                  <div className="flex cursor-pointer items-center justify-between border-b border-[var(--line)] px-3 py-2.5"
-                    onClick={() => setDeadline(deadline ? '' : toLocalDateTimeString(new Date(Date.now() + 86400000)))}>
-                    <Checkbox checked={!!deadline} onChange={v => setDeadline(v ? toLocalDateTimeString(new Date(Date.now() + 86400000)) : '')} label="截止时间" />
-                    <input type="datetime-local" value={deadline} onChange={e => setDeadline(e.target.value)}
-                      onClick={e => e.stopPropagation()}
-                      className={`w-44 rounded-md border border-[var(--line)] bg-[var(--paper)] px-2 py-1 text-sm text-[var(--ink)] focus:border-[var(--accent)] focus:outline-none ${!deadline ? 'opacity-50' : ''}`} />
-                  </div>
-                  <div className="flex cursor-pointer items-center justify-between border-b border-[var(--line)] px-3 py-2.5"
-                    onClick={() => setMaxExecutions(maxExecutions ? '' : '10')}>
-                    <Checkbox checked={!!maxExecutions} onChange={v => setMaxExecutions(v ? '10' : '')} label="执行次数" />
-                    <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
-                      <input type="number" min={1} max={999} value={maxExecutions || 10} onChange={e => setMaxExecutions(e.target.value)}
-                        className={`w-16 rounded-md border border-[var(--line)] bg-[var(--paper)] px-2 py-1 text-center text-sm text-[var(--ink)] focus:border-[var(--accent)] focus:outline-none ${!maxExecutions ? 'opacity-50' : ''}`} />
-                      <span className={`text-sm text-[var(--ink-secondary)] ${!maxExecutions ? 'opacity-50' : ''}`}>次</span>
+                {/* Condition options — only visible when "条件停止" */}
+                {endConditionMode === 'conditional' && (
+                  <>
+                    <div className="rounded-lg border border-[var(--line)] bg-[var(--paper)]">
+                      <div className="flex cursor-pointer items-center justify-between border-b border-[var(--line)] px-3 py-2.5"
+                        onClick={() => setDeadline(deadline ? '' : toLocalDateTimeString(new Date(Date.now() + 86400000)))}>
+                        <Checkbox checked={!!deadline} onChange={v => setDeadline(v ? toLocalDateTimeString(new Date(Date.now() + 86400000)) : '')} label="截止时间" />
+                        <input type="datetime-local" value={deadline} onChange={e => setDeadline(e.target.value)}
+                          onClick={e => e.stopPropagation()}
+                          className={`w-44 rounded-md border border-[var(--line)] bg-[var(--paper)] px-2 py-1 text-sm text-[var(--ink)] focus:border-[var(--accent)] focus:outline-none ${!deadline ? 'opacity-50' : ''}`} />
+                      </div>
+                      <div className="flex cursor-pointer items-center justify-between border-b border-[var(--line)] px-3 py-2.5"
+                        onClick={() => setMaxExecutions(maxExecutions ? '' : '10')}>
+                        <Checkbox checked={!!maxExecutions} onChange={v => setMaxExecutions(v ? '10' : '')} label="执行次数" />
+                        <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+                          <input type="number" min={1} max={999} value={maxExecutions || 10} onChange={e => setMaxExecutions(e.target.value)}
+                            className={`w-16 rounded-md border border-[var(--line)] bg-[var(--paper)] px-2 py-1 text-center text-sm text-[var(--ink)] focus:border-[var(--accent)] focus:outline-none ${!maxExecutions ? 'opacity-50' : ''}`} />
+                          <span className={`text-sm text-[var(--ink-secondary)] ${!maxExecutions ? 'opacity-50' : ''}`}>次</span>
+                        </div>
+                      </div>
+                      <div className="flex cursor-pointer items-center justify-between px-3 py-2.5"
+                        onClick={() => setAiCanExit(!aiCanExit)}>
+                        <Checkbox checked={aiCanExit} onChange={setAiCanExit} label="允许 AI 自主结束任务" />
+                        <div className="w-16 h-[26px]" />
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex cursor-pointer items-center justify-between px-3 py-2.5"
-                    onClick={() => setAiCanExit(!aiCanExit)}>
-                    <Checkbox checked={aiCanExit} onChange={setAiCanExit} label="允许 AI 自主结束任务" />
-                    <div className="w-16 h-[26px]" />
-                  </div>
-                </div>
-
-                <p className="text-[13px] text-[var(--ink-muted)]">可多选，满足任一条件时任务将自动停止</p>
+                    <p className="text-[13px] text-[var(--ink-muted)]">可多选，满足任一条件时任务将自动停止</p>
+                  </>
+                )}
               </div>
             </div>
           )}

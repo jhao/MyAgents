@@ -44,14 +44,6 @@ function SectionHeader({ icon: Icon, children }: { icon?: typeof Clock; children
     );
 }
 
-function DetailField({ label, value, inline }: { label: string; value: string | undefined; inline?: boolean }) {
-    if (!value) return null;
-    if (inline) {
-        return (<div><span className="text-[12px] text-[var(--ink-muted)]">{label}</span><p className="text-[13px] text-[var(--ink-secondary)]">{value}</p></div>);
-    }
-    return (<div><span className="text-[13px] text-[var(--ink-muted)]">{label}</span><p className="mt-0.5 text-sm text-[var(--ink)]">{value}</p></div>);
-}
-
 function DetailTag({ label }: { label: string }) {
     return <span className="rounded-lg border border-[var(--line)] px-2.5 py-1 text-[12px] text-[var(--ink-muted)]">{label}</span>;
 }
@@ -211,10 +203,11 @@ export default function CronTaskDetailPanel({ task, botInfo, onClose, onDelete, 
                                         <SectionHeader icon={Flag}>结束条件</SectionHeader>
                                         <div className="mt-3 space-y-3">
                                             <div className="flex gap-1.5 rounded-[var(--radius-md)] bg-[var(--paper-inset)] p-1">
-                                                <button type="button" onClick={() => setEditEndMode('conditional')} className={`flex flex-1 items-center justify-center rounded-[var(--radius-sm)] px-3 py-1.5 text-[13px] font-medium transition-colors ${editEndMode === 'conditional' ? 'bg-[var(--paper-elevated)] text-[var(--ink)] shadow-xs' : 'text-[var(--ink-muted)] hover:text-[var(--ink)]'}`}>条件停止</button>
                                                 <button type="button" onClick={() => setEditEndMode('forever')} className={`flex flex-1 items-center justify-center rounded-[var(--radius-sm)] px-3 py-1.5 text-[13px] font-medium transition-colors ${editEndMode === 'forever' ? 'bg-[var(--paper-elevated)] text-[var(--ink)] shadow-xs' : 'text-[var(--ink-muted)] hover:text-[var(--ink)]'}`}>永久运行</button>
+                                                <button type="button" onClick={() => setEditEndMode('conditional')} className={`flex flex-1 items-center justify-center rounded-[var(--radius-sm)] px-3 py-1.5 text-[13px] font-medium transition-colors ${editEndMode === 'conditional' ? 'bg-[var(--paper-elevated)] text-[var(--ink)] shadow-xs' : 'text-[var(--ink-muted)] hover:text-[var(--ink)]'}`}>条件停止</button>
                                             </div>
-                                            <div className={`rounded-lg border border-[var(--line)] bg-[var(--paper)] transition-opacity ${editEndMode === 'forever' ? 'opacity-40 pointer-events-none' : ''}`}>
+                                            {editEndMode === 'conditional' && (
+                                            <div className="rounded-lg border border-[var(--line)] bg-[var(--paper)]">
                                                 <div className="flex cursor-pointer items-center justify-between border-b border-[var(--line)] px-3 py-2.5" onClick={() => setEditDeadline(editDeadline ? '' : new Date(Date.now() + 86400000).toISOString().slice(0, 16))}>
                                                     <Checkbox checked={!!editDeadline} onChange={v => setEditDeadline(v ? new Date(Date.now() + 86400000).toISOString().slice(0, 16) : '')} label="截止时间" />
                                                     <input type="datetime-local" value={editDeadline.slice(0, 16)} onChange={e => setEditDeadline(e.target.value)} onClick={e => e.stopPropagation()}
@@ -233,6 +226,7 @@ export default function CronTaskDetailPanel({ task, botInfo, onClose, onDelete, 
                                                     <div className="w-16 h-[26px]" />
                                                 </div>
                                             </div>
+                                            )}
                                         </div>
                                     </div>
                                 )}
@@ -245,19 +239,27 @@ export default function CronTaskDetailPanel({ task, botInfo, onClose, onDelete, 
                         ) : (
                             /* ====== DETAIL MODE ====== */
                             <>
-                                {/* 基本信息 */}
+                                {/* 基本信息 — compact left-right rows */}
                                 <div>
                                     <SectionHeader icon={FolderOpen}>基本信息</SectionHeader>
-                                    <div className="mt-3 space-y-3">
-                                        <DetailField label="任务名称" value={displayName} />
-                                        <div>
+                                    <div className="mt-2 space-y-1.5">
+                                        <div className="flex items-center justify-between py-1">
+                                            <span className="text-[13px] text-[var(--ink-muted)]">任务名称</span>
+                                            <span className="text-[13px] text-[var(--ink)]">{displayName}</span>
+                                        </div>
+                                        <div className="flex items-center justify-between py-1">
                                             <span className="text-[13px] text-[var(--ink-muted)]">执行 Agent</span>
-                                            <div className="mt-0.5 flex items-center gap-2">
-                                                <WorkspaceIcon icon={project?.icon} size={16} />
-                                                <span className="text-sm text-[var(--ink)]">{getFolderName(task.workspacePath)}</span>
+                                            <div className="flex items-center gap-1.5">
+                                                <WorkspaceIcon icon={project?.icon} size={14} />
+                                                <span className="text-[13px] text-[var(--ink)]">{getFolderName(task.workspacePath)}</span>
                                             </div>
                                         </div>
-                                        {botInfo && <DetailField label="来源" value={`${botInfo.name} (${botInfo.platform})`} />}
+                                        {botInfo && (
+                                            <div className="flex items-center justify-between py-1">
+                                                <span className="text-[13px] text-[var(--ink-muted)]">来源</span>
+                                                <span className="text-[13px] text-[var(--ink)]">{botInfo.name} ({botInfo.platform})</span>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
 
@@ -311,12 +313,23 @@ export default function CronTaskDetailPanel({ task, botInfo, onClose, onDelete, 
                                 {/* 运行统计 */}
                                 <div>
                                     <SectionHeader icon={BarChart2}>运行统计</SectionHeader>
-                                    <div className="mt-2 space-y-1.5">
-                                        <DetailField label="执行次数" value={task.endConditions.maxExecutions ? `${task.executionCount} / ${task.endConditions.maxExecutions}` : `${task.executionCount} 次`} />
-                                        <DetailField label="上次执行" value={task.lastExecutedAt ? new Date(task.lastExecutedAt).toLocaleString('zh-CN') : '尚未执行'} />
-                                        {task.exitReason && <DetailField label="退出原因" value={task.exitReason} />}
+                                    <div className="mt-2 grid grid-cols-3 gap-3">
+                                        <div>
+                                            <span className="text-[12px] text-[var(--ink-muted)]">执行次数</span>
+                                            <p className="mt-0.5 text-sm font-medium text-[var(--ink)]">{task.endConditions.maxExecutions ? `${task.executionCount} / ${task.endConditions.maxExecutions}` : `${task.executionCount} 次`}</p>
+                                        </div>
+                                        <div>
+                                            <span className="text-[12px] text-[var(--ink-muted)]">上次执行</span>
+                                            <p className="mt-0.5 text-sm font-medium text-[var(--ink)]">{task.lastExecutedAt ? new Date(task.lastExecutedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}</p>
+                                        </div>
+                                        {task.exitReason && (
+                                            <div>
+                                                <span className="text-[12px] text-[var(--ink-muted)]">退出原因</span>
+                                                <p className="mt-0.5 text-sm font-medium text-[var(--ink)]">{task.exitReason}</p>
+                                            </div>
+                                        )}
                                     </div>
-                                    {task.lastError && <p className="mt-1.5 text-[12px] text-[var(--error)]">{task.lastError}</p>}
+                                    {task.lastError && <p className="mt-2 text-[12px] text-[var(--error)]">{task.lastError}</p>}
                                 </div>
 
                                 <div className="border-t border-[var(--line)]" />
