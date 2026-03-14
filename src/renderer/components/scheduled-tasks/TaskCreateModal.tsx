@@ -3,7 +3,7 @@
  * Entry: TaskCenterOverlay [+ 新建] button, RecentTasks [+ 新建] button.
  */
 
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { X, Clock, Check } from 'lucide-react';
 import { v4 as uuid } from 'uuid';
 
@@ -12,7 +12,8 @@ import CustomSelect from '@/components/CustomSelect';
 import { useConfig } from '@/hooks/useConfig';
 import { useToast } from '@/components/Toast';
 import * as cronClient from '@/api/cronTaskClient';
-import type { CronSchedule, CronEndConditions } from '@/types/cronTask';
+import { getSessions, type SessionMetadata } from '@/api/sessionClient';
+import type { CronSchedule, CronEndConditions, CronRunMode } from '@/types/cronTask';
 import { MIN_CRON_INTERVAL } from '@/types/cronTask';
 
 /** Format a Date as local YYYY-MM-DDTHH:mm for datetime-local input */
@@ -69,6 +70,31 @@ export default function TaskCreateModal({ onClose, onCreated }: TaskCreateModalP
   const [schedule, setSchedule] = useState<CronSchedule | null>(null);
   const [intervalMinutes, setIntervalMinutes] = useState(30);
   const [notifyEnabled, setNotifyEnabled] = useState(true);
+  const [runMode, setRunMode] = useState<CronRunMode>('new_session');
+  const [selectedSessionId, setSelectedSessionId] = useState<string>(''); // empty = new session
+  const [workspaceSessions, setWorkspaceSessions] = useState<SessionMetadata[]>([]);
+  const isMountedRef = useRef(true);
+
+  // Fetch recent sessions when workspace changes and runMode is single_session
+  useEffect(() => {
+    isMountedRef.current = true;
+    if (runMode !== 'single_session' || !selectedProjectPath) {
+      setWorkspaceSessions([]);
+      return;
+    }
+    getSessions(selectedProjectPath).then(sessions => {
+      if (!isMountedRef.current) return;
+      // Show recent 10, sorted by lastActiveAt desc, exclude cron-owned sessions
+      const recent = sessions
+        .filter(s => !s.cronTaskId && s.source !== 'telegram_private' && s.source !== 'feishu_private')
+        .sort((a, b) => new Date(b.lastActiveAt).getTime() - new Date(a.lastActiveAt).getTime())
+        .slice(0, 10);
+      setWorkspaceSessions(recent);
+    }).catch(() => {
+      if (isMountedRef.current) setWorkspaceSessions([]);
+    });
+    return () => { isMountedRef.current = false; };
+  }, [runMode, selectedProjectPath]);
 
   // End conditions
   const [endConditionMode, setEndConditionMode] = useState<'conditional' | 'forever'>('forever');
@@ -116,7 +142,9 @@ export default function TaskCreateModal({ onClose, onCreated }: TaskCreateModalP
     if (errors.length > 0 || isCreating) return;
     setIsCreating(true);
     try {
-      const sessionId = `cron-standalone-${uuid()}`;
+      const sessionId = (runMode === 'single_session' && selectedSessionId)
+        ? selectedSessionId
+        : `cron-standalone-${uuid()}`;
       const endConditions: CronEndConditions = isAtSchedule
         ? { aiCanExit: false }
         : endConditionMode === 'forever'
@@ -133,7 +161,7 @@ export default function TaskCreateModal({ onClose, onCreated }: TaskCreateModalP
         prompt: prompt.trim(),
         intervalMinutes: schedule?.kind === 'every' ? schedule.minutes : intervalMinutes,
         endConditions,
-        runMode: 'new_session',
+        runMode,
         notifyEnabled,
         schedule: schedule ?? undefined,
         name: name.trim() || undefined,
@@ -149,7 +177,7 @@ export default function TaskCreateModal({ onClose, onCreated }: TaskCreateModalP
     } finally {
       setIsCreating(false);
     }
-  }, [errors, isCreating, name, prompt, selectedProjectPath, schedule, intervalMinutes, endConditionMode, deadline, maxExecutions, aiCanExit, notifyEnabled, onClose, onCreated, toast, isAtSchedule]);
+  }, [errors, isCreating, name, prompt, selectedProjectPath, schedule, intervalMinutes, endConditionMode, deadline, maxExecutions, aiCanExit, notifyEnabled, runMode, selectedSessionId, onClose, onCreated, toast, isAtSchedule]);
 
   const handleBackdropClick = useCallback((e: React.MouseEvent) => {
     if (e.target === e.currentTarget) onClose();
@@ -219,6 +247,58 @@ export default function TaskCreateModal({ onClose, onCreated }: TaskCreateModalP
                 placeholder="描述你希望 AI 定时执行的任务..."
                 className={`${INPUT_CLS} resize-none`}
               />
+            </div>
+
+            {/* Run Mode */}
+            <div>
+              <label className="mb-1 block text-[13px] font-medium text-[var(--ink-secondary)]">执行模式</label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setRunMode('new_session'); setSelectedSessionId(''); }}
+                  className={`rounded-[var(--radius-sm)] border px-3 py-1.5 text-[12px] font-medium transition-colors ${
+                    runMode === 'new_session'
+                      ? 'border-[var(--accent)] bg-[var(--accent-warm-subtle)] text-[var(--accent)]'
+                      : 'border-[var(--line)] text-[var(--ink-muted)] hover:border-[var(--line-strong)]'
+                  }`}
+                >
+                  新开对话
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRunMode('single_session')}
+                  className={`rounded-[var(--radius-sm)] border px-3 py-1.5 text-[12px] font-medium transition-colors ${
+                    runMode === 'single_session'
+                      ? 'border-[var(--accent)] bg-[var(--accent-warm-subtle)] text-[var(--accent)]'
+                      : 'border-[var(--line)] text-[var(--ink-muted)] hover:border-[var(--line-strong)]'
+                  }`}
+                >
+                  连续对话
+                </button>
+              </div>
+              <p className="mt-1 text-[11px] text-[var(--ink-muted)]/50">
+                {runMode === 'new_session' ? '每次执行创建新对话，无记忆' : '所有执行共用同一对话，AI 能记住之前内容'}
+              </p>
+
+              {/* Session selector for single_session mode */}
+              {runMode === 'single_session' && (
+                <div className="mt-2.5">
+                  <label className="mb-1 block text-[12px] text-[var(--ink-muted)]">选择对话</label>
+                  <CustomSelect
+                    value={selectedSessionId}
+                    options={[
+                      { value: '', label: '新对话' },
+                      ...workspaceSessions.map(s => ({
+                        value: s.id,
+                        label: s.title || s.lastMessagePreview?.slice(0, 30) || s.id.slice(0, 8),
+                      })),
+                    ]}
+                    onChange={setSelectedSessionId}
+                    placeholder="选择对话"
+                    compact
+                  />
+                </div>
+              )}
             </div>
           </div>
 
