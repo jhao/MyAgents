@@ -264,18 +264,19 @@ export default function TaskCreateModal({ onClose, onCreated }: TaskCreateModalP
               <SectionHeader icon={Flag}>结束条件</SectionHeader>
               <div className="mt-3 space-y-3">
                 {/* Segmented control — equal width, matches 循环设置 */}
-                <div className="flex gap-2">
+                {/* Segmented control — same style as ScheduleTypeTabs */}
+                <div className="flex gap-1.5 rounded-[var(--radius-md)] bg-[var(--paper-inset)] p-1">
                   <button type="button" onClick={() => setEndConditionMode('conditional')}
-                    className={`flex-1 rounded-lg border px-4 py-2 text-sm font-medium transition ${
+                    className={`flex flex-1 items-center justify-center rounded-[var(--radius-sm)] px-3 py-1.5 text-[13px] font-medium transition-colors ${
                       endConditionMode === 'conditional'
-                        ? 'border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]'
-                        : 'border-[var(--line)] bg-[var(--paper)] text-[var(--ink)] hover:border-[var(--line-strong)] hover:bg-[var(--paper-inset)]'
+                        ? 'bg-[var(--paper-elevated)] text-[var(--ink)] shadow-xs'
+                        : 'text-[var(--ink-muted)] hover:text-[var(--ink)]'
                     }`}>条件停止</button>
                   <button type="button" onClick={() => setEndConditionMode('forever')}
-                    className={`flex-1 rounded-lg border px-4 py-2 text-sm font-medium transition ${
+                    className={`flex flex-1 items-center justify-center rounded-[var(--radius-sm)] px-3 py-1.5 text-[13px] font-medium transition-colors ${
                       endConditionMode === 'forever'
-                        ? 'border-[var(--accent)] bg-[var(--accent)]/10 text-[var(--accent)]'
-                        : 'border-[var(--line)] bg-[var(--paper)] text-[var(--ink)] hover:border-[var(--line-strong)] hover:bg-[var(--paper-inset)]'
+                        ? 'bg-[var(--paper-elevated)] text-[var(--ink)] shadow-xs'
+                        : 'text-[var(--ink-muted)] hover:text-[var(--ink)]'
                     }`}>永久运行</button>
                 </div>
 
