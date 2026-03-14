@@ -203,7 +203,7 @@ export default function TaskCreateModal({ onClose, onCreated }: TaskCreateModalP
 
           {/* Task Name */}
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-[var(--ink)]">
+            <label className="mb-1.5 block text-[13px] font-medium text-[var(--ink-secondary)]">
               任务名称<span className="ml-1 font-normal text-[var(--ink-muted)]">（可选）</span>
             </label>
             <input type="text" value={name} onChange={e => setName(e.target.value)} maxLength={50}
@@ -212,21 +212,21 @@ export default function TaskCreateModal({ onClose, onCreated }: TaskCreateModalP
 
           {/* Agent */}
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-[var(--ink)]">执行 Agent</label>
+            <label className="mb-1.5 block text-[13px] font-medium text-[var(--ink-secondary)]">执行 Agent</label>
             <CustomSelect value={selectedProjectPath} options={projectOptions} onChange={setSelectedProjectPath} placeholder="选择工作区" />
             <p className="mt-1.5 text-[13px] text-[var(--ink-muted)]">使用该 Agent 的默认模型与权限配置</p>
           </div>
 
           {/* Prompt */}
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-[var(--ink)]">AI 指令</label>
+            <label className="mb-1.5 block text-[13px] font-medium text-[var(--ink-secondary)]">AI 指令</label>
             <textarea value={prompt} onChange={e => setPrompt(e.target.value)} rows={5}
               placeholder="描述你希望 AI 定时执行的任务..." className={`${INPUT_CLS} resize-none`} />
           </div>
 
           {/* Run Mode */}
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-[var(--ink)]">执行模式</label>
+            <label className="mb-1.5 block text-[13px] font-medium text-[var(--ink-secondary)]">执行模式</label>
             <div className="flex gap-2">
               <PillButton selected={runMode === 'new_session'} onClick={() => { setRunMode('new_session'); setSelectedSessionId(''); }}>新开对话</PillButton>
               <PillButton selected={runMode === 'single_session'} onClick={() => setRunMode('single_session')}>连续对话</PillButton>

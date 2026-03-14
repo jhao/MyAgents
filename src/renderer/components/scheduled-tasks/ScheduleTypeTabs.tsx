@@ -143,10 +143,10 @@ export default function ScheduleTypeTabs({ value, intervalMinutes, onChange, err
                   key={preset.value}
                   type="button"
                   onClick={() => handlePresetClick(preset.value)}
-                  className={`rounded-[var(--radius-sm)] border px-3 py-1.5 text-[13px] font-medium transition-colors ${
+                  className={`rounded-lg px-3 py-1.5 text-[13px] font-medium transition ${
                     !isCustom && intervalMinutes === preset.value
-                      ? 'border-[var(--accent)] bg-[var(--accent-warm-subtle)] text-[var(--accent)]'
-                      : 'border-[var(--line)] text-[var(--ink-muted)] hover:border-[var(--line-strong)] hover:text-[var(--ink)]'
+                      ? 'bg-[var(--accent)] text-white'
+                      : 'bg-[var(--paper)] text-[var(--ink)] hover:bg-[var(--paper-inset)]'
                   }`}
                 >
                   {preset.label}
@@ -158,10 +158,10 @@ export default function ScheduleTypeTabs({ value, intervalMinutes, onChange, err
                   setIsCustom(true);
                   setCustomMinutes(String(intervalMinutes));
                 }}
-                className={`rounded-[var(--radius-sm)] border px-3 py-1.5 text-[13px] font-medium transition-colors ${
+                className={`rounded-lg px-3 py-1.5 text-[13px] font-medium transition ${
                   isCustom
-                    ? 'border-[var(--accent)] bg-[var(--accent-warm-subtle)] text-[var(--accent)]'
-                    : 'border-[var(--line)] text-[var(--ink-muted)] hover:border-[var(--line-strong)] hover:text-[var(--ink)]'
+                    ? 'bg-[var(--accent)] text-white'
+                    : 'bg-[var(--paper)] text-[var(--ink)] hover:bg-[var(--paper-inset)]'
                 }`}
               >
                 自定义
@@ -192,10 +192,10 @@ export default function ScheduleTypeTabs({ value, intervalMinutes, onChange, err
                     setStartAt('');
                     onChange(null, intervalMinutes);
                   }}
-                  className={`rounded-[var(--radius-sm)] border px-3 py-1.5 text-[13px] font-medium transition-colors ${
+                  className={`rounded-lg px-3 py-1.5 text-[13px] font-medium transition ${
                     startMode === 'now'
-                      ? 'border-[var(--accent)] bg-[var(--accent-warm-subtle)] text-[var(--accent)]'
-                      : 'border-[var(--line)] text-[var(--ink-muted)] hover:border-[var(--line-strong)] hover:text-[var(--ink)]'
+                      ? 'bg-[var(--accent)] text-white'
+                      : 'bg-[var(--paper)] text-[var(--ink)] hover:bg-[var(--paper-inset)]'
                   }`}
                 >
                   立刻
@@ -208,10 +208,10 @@ export default function ScheduleTypeTabs({ value, intervalMinutes, onChange, err
                     setStartAt(defaultStart);
                     onChange({ kind: 'every', minutes: intervalMinutes, startAt: new Date(defaultStart).toISOString() }, intervalMinutes);
                   }}
-                  className={`rounded-[var(--radius-sm)] border px-3 py-1.5 text-[13px] font-medium transition-colors ${
+                  className={`rounded-lg px-3 py-1.5 text-[13px] font-medium transition ${
                     startMode === 'scheduled'
-                      ? 'border-[var(--accent)] bg-[var(--accent-warm-subtle)] text-[var(--accent)]'
-                      : 'border-[var(--line)] text-[var(--ink-muted)] hover:border-[var(--line-strong)] hover:text-[var(--ink)]'
+                      ? 'bg-[var(--accent)] text-white'
+                      : 'bg-[var(--paper)] text-[var(--ink)] hover:bg-[var(--paper-inset)]'
                   }`}
                 >
                   指定时间
