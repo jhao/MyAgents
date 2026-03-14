@@ -84,6 +84,23 @@ export default memo(function SortableTabItem({
                 {displayTitle}
             </span>
 
+            {/* Status dot indicator — streaming (pulsing green) or unread (static warm) */}
+            {!isActive && tab.isGenerating && (
+                <>
+                    <span className="relative ml-1 flex h-2 w-2 flex-shrink-0" aria-hidden="true">
+                        <span className="absolute inset-0 rounded-full bg-[var(--success)]" />
+                        <span className="absolute inset-0 rounded-full bg-[var(--success)] animate-[tab-dot-pulse_1.6s_cubic-bezier(.22,.61,.36,1)_infinite]" />
+                    </span>
+                    <span className="sr-only">AI 正在输出</span>
+                </>
+            )}
+            {!isActive && !tab.isGenerating && tab.hasUnread && (
+                <>
+                    <span className="ml-1 h-2 w-2 flex-shrink-0 rounded-full bg-[var(--accent-warm)]" aria-hidden="true" />
+                    <span className="sr-only">有未读消息</span>
+                </>
+            )}
+
             {/* Close button — enlarged hit area (24×24) with visual icon (12×12) */}
             <button
                 className={`
