@@ -145,14 +145,18 @@ export default function ChannelWizard({
                     // Pre-populate custom fields from requiredFields if no schema
                     const hasSchema = found.manifest?.configSchema?.properties
                         && Object.keys(found.manifest.configSchema.properties).length > 0;
-                    if (!hasSchema && found.requiredFields?.length) {
-                        setOpenclawCustomFields(found.requiredFields.map(k => ({ key: k, value: '' })));
+                    // Try plugin's extracted requiredFields first, fallback to promoted plugin's hardcoded list
+                    const reqFields = found.requiredFields?.length
+                        ? found.requiredFields
+                        : promoted?.requiredFields;
+                    if (!hasSchema && reqFields?.length) {
+                        setOpenclawCustomFields(reqFields.map(k => ({ key: k, value: '' })));
                     }
                 }
             } catch { /* ignore */ }
         })();
         return () => { cancelled = true; };
-    }, [isOpenClaw, openclawPluginId]);
+    }, [isOpenClaw, openclawPluginId, promoted?.requiredFields]);
 
     // OpenClaw config schema helpers
     const openclawSchemaProps = installedPlugin?.manifest?.configSchema?.properties as

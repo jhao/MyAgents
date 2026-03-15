@@ -57,9 +57,8 @@ export default memo(function SortableTabItem({
             ref={setNodeRef}
             style={style}
             data-tab-id={tab.id}
-            title={tooltipTitle}
             className={`
-                group relative flex h-8 min-w-[100px] max-w-[200px] cursor-default items-center
+                group/tab relative flex h-8 min-w-[100px] max-w-[200px] cursor-default items-center
                 rounded-lg px-3 transition-colors duration-150 flex-shrink-0
                 ${isDragging ? 'shadow-lg ring-2 ring-[var(--accent)]/30' : ''}
                 ${isActive
@@ -108,7 +107,7 @@ export default memo(function SortableTabItem({
                     transition-all duration-150
                     ${isActive
                         ? 'opacity-60 hover:bg-[var(--ink)]/10 hover:opacity-100'
-                        : 'opacity-0 group-hover:opacity-60 hover:!bg-[var(--ink)]/10 hover:!opacity-100'
+                        : 'opacity-0 group-hover/tab:opacity-60 hover:!bg-[var(--ink)]/10 hover:!opacity-100'
                     }
                 `}
                 onClick={(e) => {
@@ -123,6 +122,15 @@ export default memo(function SortableTabItem({
             {/* Active indicator */}
             {isActive && (
                 <div className="absolute bottom-0.5 left-3 right-3 h-0.5 rounded-full bg-[var(--accent)]" />
+            )}
+
+            {/* Custom tooltip — instant on hover, no delay */}
+            {tooltipTitle && (
+                <div className="pointer-events-none absolute left-1/2 top-full z-50 mt-1 -translate-x-1/2 opacity-0 transition-opacity duration-100 group-hover/tab:opacity-100">
+                    <div className="whitespace-nowrap rounded-md bg-[var(--ink)] px-2 py-1 text-[11px] text-[var(--paper)]">
+                        {tooltipTitle}
+                    </div>
+                </div>
             )}
         </div>
     );

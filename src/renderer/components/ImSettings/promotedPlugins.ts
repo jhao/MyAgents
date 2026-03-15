@@ -29,6 +29,8 @@ export interface PromotedPlugin {
     platformColor: string;
     /** Optional badge type for promoted plugins */
     badge?: 'official' | 'community';
+    /** Required config field keys (pre-populate in wizard if plugin's isConfigured pattern is non-standard) */
+    requiredFields?: string[];
     /** Custom setup guidance for the wizard config step */
     setupGuide?: {
         /** Section title in config panel (e.g. "QQ Bot 应用凭证") */
@@ -62,6 +64,7 @@ export const PROMOTED_PLUGINS: PromotedPlugin[] = [
         icon: feishuIcon,
         platformColor: '#3370FF',
         badge: 'official',
+        requiredFields: ['appId', 'appSecret'],
         setupGuide: {
             credentialTitle: '飞书应用凭证',
             credentialHint: '前往飞书开放平台创建自建应用，获取 App ID 和 App Secret',

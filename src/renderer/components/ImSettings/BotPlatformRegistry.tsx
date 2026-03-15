@@ -208,7 +208,7 @@ export default function BotPlatformRegistry() {
                 <div className="flex items-center justify-center gap-1.5">
                   <p className="text-sm font-medium text-[var(--ink)]">{p.name}</p>
                   {p.platformBadge === 'deprecated' && (
-                    <span className="rounded-full border border-dashed border-[var(--ink-subtle)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--ink-subtle)]">
+                    <span className="rounded-full bg-[var(--error)]/10 px-1.5 py-0.5 text-[10px] font-medium text-[var(--error)]">
                       即将下线
                     </span>
                   )}
