@@ -83,17 +83,25 @@ export function extractPlatformDisplay(sessionKey: string): string {
             const promoted = findPromotedPlugin(parts[3]);
             return promoted?.name ?? (parts[3].charAt(0).toUpperCase() + parts[3].slice(1));
         }
-        return channelType.charAt(0).toUpperCase() + channelType.slice(1);
+        return PLATFORM_DISPLAY_NAMES[channelType] ?? (channelType.charAt(0).toUpperCase() + channelType.slice(1));
     }
     // Legacy format: im:{platform}:{type}:{id}
     const platform = parts[1] ?? 'unknown';
     if (platform === 'openclaw' && parts[2]) {
         const channelId = parts[2];
         const promoted = findPromotedPlugin(channelId);
-        return promoted?.name ?? (channelId.charAt(0).toUpperCase() + channelId.slice(1));
+        return promoted?.name ?? (PLATFORM_DISPLAY_NAMES[channelId] ?? (channelId.charAt(0).toUpperCase() + channelId.slice(1)));
     }
-    return platform.charAt(0).toUpperCase() + platform.slice(1);
+    return PLATFORM_DISPLAY_NAMES[platform] ?? (platform.charAt(0).toUpperCase() + platform.slice(1));
 }
+
+/** Chinese display names for known platforms */
+const PLATFORM_DISPLAY_NAMES: Record<string, string> = {
+    feishu: '飞书',
+    telegram: 'Telegram',
+    dingtalk: '钉钉',
+    qqbot: 'QQ Bot',
+};
 
 /**
  * Format message count suffix (e.g., "3 条消息")
