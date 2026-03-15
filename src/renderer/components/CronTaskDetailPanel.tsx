@@ -224,12 +224,13 @@ export default function CronTaskDetailPanel({ task, botInfo, onClose, onDelete, 
                                                         <span className={`text-sm text-[var(--ink-secondary)] ${!editMaxExec ? 'opacity-50' : ''}`}>次</span>
                                                     </div>
                                                 </div>
-                                                <div className="flex cursor-pointer items-center justify-between px-3 py-2.5" onClick={() => setEditAiCanExit(!editAiCanExit)}>
-                                                    <Checkbox checked={editAiCanExit} onChange={setEditAiCanExit} label="允许 AI 自主结束任务" />
-                                                    <div className="w-16 h-[26px]" />
-                                                </div>
                                             </div>
                                             )}
+
+                                            {/* AI 自主结束 — 在永久运行和条件停止模式下都显示 */}
+                                            <div className="flex cursor-pointer items-center justify-between rounded-lg border border-[var(--line)] bg-[var(--paper)] px-3 py-2.5" onClick={() => setEditAiCanExit(!editAiCanExit)}>
+                                                <Checkbox checked={editAiCanExit} onChange={setEditAiCanExit} label="允许 AI 自主结束任务" />
+                                            </div>
                                         </div>
                                     </div>
                                 )}

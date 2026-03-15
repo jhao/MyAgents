@@ -322,14 +322,17 @@ export default function TaskCreateModal({ onClose, onCreated }: TaskCreateModalP
                           <span className={`text-sm text-[var(--ink-secondary)] ${!maxExecutions ? 'opacity-50' : ''}`}>次</span>
                         </div>
                       </div>
-                      <div className="flex cursor-pointer items-center justify-between px-3 py-2.5"
-                        onClick={() => setAiCanExit(!aiCanExit)}>
-                        <Checkbox checked={aiCanExit} onChange={setAiCanExit} label="允许 AI 自主结束任务" />
-                        <div className="w-16 h-[26px]" />
-                      </div>
                     </div>
                     <p className="text-[13px] text-[var(--ink-muted)]">可多选，满足任一条件时任务将自动停止</p>
                   </>
+                )}
+
+                {/* AI 自主结束 — 在永久运行和条件停止模式下都显示 */}
+                {!isAtSchedule && (
+                  <div className="flex cursor-pointer items-center justify-between rounded-lg border border-[var(--line)] bg-[var(--paper)] px-3 py-2.5"
+                    onClick={() => setAiCanExit(!aiCanExit)}>
+                    <Checkbox checked={aiCanExit} onChange={setAiCanExit} label="允许 AI 自主结束任务" />
+                  </div>
                 )}
               </div>
             </div>
