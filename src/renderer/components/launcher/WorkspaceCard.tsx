@@ -19,7 +19,7 @@ import WorkspaceIcon from './WorkspaceIcon';
 
 type ProactiveState = 'basic' | 'pending' | 'active' | 'paused' | 'error';
 
-const CH_LABEL: Record<string, string> = { telegram: 'Telegram', feishu: '飞书', dingtalk: '钉钉', qqbot: 'QQ' };
+const CH_LABEL: Record<string, string> = { telegram: 'Telegram', feishu: '飞书', dingtalk: '钉钉', qqbot: 'QQ', 'openclaw-lark': '飞书' };
 function chLabel(t: string) {
     const key = t.startsWith('openclaw:') ? t.slice(9) : t;
     return CH_LABEL[key] || key;
