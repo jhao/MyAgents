@@ -76,17 +76,26 @@ export function useTrayEvents(options: TrayEventsOptions) {
         const window = getCurrentWindow();
 
         // Listen for window focus changes (including when window is shown from tray)
+        // Track previous visibility to detect hidden→visible transitions
+        let wasHidden = false;
         unlistenFocusChanged = await window.onFocusChanged(({ payload: focused }) => {
           console.debug('[useTrayEvents] Window focus changed:', focused);
           if (focused) {
+            // Only consume pending navigation when window transitions from hidden to visible
+            // (not on every focus event, which would hijack navigation on alt-tab)
+            const shouldConsumeNav = wasHidden;
+            wasHidden = false;
+
             // Window is now visible and focused
             setWindowVisible(true);
 
-            // Check if a notification was recently sent — auto-navigate to that tab
-            const targetTabId = consumePendingNavigation();
-            if (targetTabId) {
-              console.log('[useTrayEvents] Auto-navigating to tab from notification:', targetTabId);
-              optionsRef.current.onNavigateToTab?.(targetTabId);
+            if (shouldConsumeNav) {
+              // Check if a notification was recently sent — auto-navigate to that tab
+              const targetTabId = consumePendingNavigation();
+              if (targetTabId) {
+                console.log('[useTrayEvents] Auto-navigating to tab from notification:', targetTabId);
+                optionsRef.current.onNavigateToTab?.(targetTabId);
+              }
             }
           }
         });
@@ -100,6 +109,7 @@ export function useTrayEvents(options: TrayEventsOptions) {
             // Hide to tray instead of closing
             const window = getCurrentWindow();
             await window.hide();
+            wasHidden = true;
             setWindowVisible(false); // Update notification service state
             console.log('[useTrayEvents] Window hidden to tray');
           } else {

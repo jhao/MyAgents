@@ -147,6 +147,18 @@ export default function TaskCreateModal({ onClose, onCreated }: TaskCreateModalP
     if (!prompt.trim()) errs.push('请输入 AI 指令');
     if (!selectedProjectPath) errs.push('请选择工作区');
     if (!schedule && intervalMinutes < MIN_CRON_INTERVAL) errs.push(`间隔不能小于 ${MIN_CRON_INTERVAL} 分钟`);
+    if (schedule?.kind === 'cron') {
+      const parts = schedule.expr.trim().split(/\s+/);
+      if (parts.length !== 5) {
+        errs.push('无效的 Cron 表达式');
+      } else {
+        // Validate each field has valid cron characters
+        const cronFieldRegex = /^[\d,\-*/]+$/;
+        if (!parts.every(p => cronFieldRegex.test(p))) {
+          errs.push('无效的 Cron 表达式');
+        }
+      }
+    }
     if (schedule?.kind === 'at') {
       const atTime = new Date(schedule.at).getTime();
       if (isNaN(atTime) || atTime <= Date.now()) errs.push('执行时间必须在未来');

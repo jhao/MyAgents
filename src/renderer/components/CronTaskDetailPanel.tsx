@@ -3,7 +3,7 @@
  * Design language aligned with CronTaskSettingsModal and Agent Settings panels.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BarChart2, Bell, Check, Clock, FileText, Flag, FolderOpen, History, MessageSquare, Pencil, Play, Square, Trash2, X } from 'lucide-react';
 
 import type { CronTask, CronSchedule, CronEndConditions } from '@/types/cronTask';
@@ -71,6 +71,8 @@ function Checkbox({ checked, onChange, label }: { checked: boolean; onChange: (v
 export default function CronTaskDetailPanel({ task, botInfo, onClose, onDelete, onResume, onStop }: CronTaskDetailPanelProps) {
     const toast = useToast();
     const { projects } = useConfig();
+    const isMountedRef = useRef(true);
+    useEffect(() => () => { isMountedRef.current = false; }, []);
     const project = useMemo(() => projects.find(p => p.path === task.workspacePath), [projects, task.workspacePath]);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [showStopConfirm, setShowStopConfirm] = useState(false);
@@ -121,16 +123,17 @@ export default function CronTaskDetailPanel({ task, botInfo, onClose, onDelete, 
                 schedule: editSchedule ?? undefined, intervalMinutes: editSchedule?.kind === 'every' ? editSchedule.minutes : editInterval,
                 endConditions, notifyEnabled: editNotify,
             });
+            if (!isMountedRef.current) return;
             toast.success('任务已更新'); onClose(); // Close to refresh — cron:task-updated event triggers parent list reload
-        } catch (err) { toast.error(`更新失败: ${err instanceof Error ? err.message : String(err)}`); }
-        finally { setIsSaving(false); }
+        } catch (err) { if (!isMountedRef.current) return; toast.error(`更新失败: ${err instanceof Error ? err.message : String(err)}`); }
+        finally { if (isMountedRef.current) setIsSaving(false); }
     }, [task.id, editName, editPrompt, editSchedule, editInterval, editEndMode, editDeadline, editMaxExec, editAiCanExit, editNotify, isAtSchedule, toast, onClose]);
 
     const handleDelete = useCallback(async () => {
-        setIsDeleting(true); try { await onDelete(task.id); onClose(); } catch { /* caller handles */ } finally { setIsDeleting(false); setShowDeleteConfirm(false); }
+        setIsDeleting(true); try { await onDelete(task.id); onClose(); } catch { /* caller handles */ } finally { if (isMountedRef.current) { setIsDeleting(false); setShowDeleteConfirm(false); } }
     }, [task.id, onDelete, onClose]);
-    const handleResume = useCallback(async () => { setIsResuming(true); try { await onResume(task.id); } finally { setIsResuming(false); } }, [task.id, onResume]);
-    const handleStop = useCallback(async () => { if (!onStop) return; setIsStopping(true); try { await onStop(task.id); } catch { /* caller handles */ } finally { setIsStopping(false); setShowStopConfirm(false); } }, [task.id, onStop]);
+    const handleResume = useCallback(async () => { setIsResuming(true); try { await onResume(task.id); } finally { if (isMountedRef.current) setIsResuming(false); } }, [task.id, onResume]);
+    const handleStop = useCallback(async () => { if (!onStop) return; setIsStopping(true); try { await onStop(task.id); } catch { /* caller handles */ } finally { if (isMountedRef.current) { setIsStopping(false); setShowStopConfirm(false); } } }, [task.id, onStop]);
 
     const resumeCheck = checkCanResume(task);
     const displayName = task.name || task.prompt.slice(0, 40) + (task.prompt.length > 40 ? '...' : '');

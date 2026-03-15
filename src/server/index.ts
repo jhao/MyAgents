@@ -1517,7 +1517,7 @@ async function main() {
           return jsonResponse({ success: false, error: 'Invalid JSON payload.' }, 400);
         }
 
-        const { taskId, prompt, aiCanExit, permissionMode, model, providerEnv, intervalMinutes, executionNumber } = payload;
+        const { taskId, prompt, aiCanExit, model, providerEnv, intervalMinutes, executionNumber } = payload;
 
         if (!taskId || !prompt) {
           return jsonResponse({ success: false, error: 'taskId and prompt are required.' }, 400);
@@ -1541,7 +1541,9 @@ async function main() {
         try {
           console.log(`[cron] execute taskId=${taskId} sessionId=${currentSessionId} interval=${intervalMinutes}min exec#=${executionNumber} aiCanExit=${aiCanExit ?? false} prompt="${prompt.slice(0, 100)}..."`);
           // Send the user's original prompt (clean, without wrapper templates)
-          await enqueueUserMessage(prompt, [], permissionMode ?? 'auto', model, providerEnv);
+          // Cron tasks are unattended — force fullAgency so tool permission requests
+          // don't block indefinitely waiting for a user who isn't present.
+          await enqueueUserMessage(prompt, [], 'fullAgency', model, providerEnv);
           // Reset scenario after enqueue — already consumed by startStreamingSession()
           resetInteractionScenario();
           return jsonResponse({ success: true });
@@ -1571,7 +1573,7 @@ async function main() {
           return jsonResponse({ success: false, error: 'Invalid JSON payload.' }, 400);
         }
 
-        const { taskId, prompt, sessionId, aiCanExit, permissionMode, model, providerEnv, runMode, intervalMinutes, executionNumber } = payload;
+        const { taskId, prompt, sessionId, aiCanExit, model, providerEnv, runMode, intervalMinutes, executionNumber } = payload;
 
         if (!taskId || !prompt) {
           return jsonResponse({ success: false, error: 'taskId and prompt are required.' }, 400);
@@ -1647,7 +1649,9 @@ async function main() {
           // Enqueue the message (this starts the async execution)
           // Send the user's original prompt (clean, without wrapper templates)
           console.log('[cron] execute-sync: about to enqueue user message');
-          const enqueueResult = await enqueueUserMessage(prompt, [], permissionMode ?? 'auto', model, providerEnv);
+          // Cron tasks are unattended — force fullAgency so tool permission requests
+          // (e.g. Bash) don't block forever waiting for human approval.
+          const enqueueResult = await enqueueUserMessage(prompt, [], 'fullAgency', model, providerEnv);
           console.log('[cron] execute-sync: user message enqueued, queued:', enqueueResult.queued, 'queueId:', enqueueResult.queueId);
 
           // Wait for session to become idle (execution complete)

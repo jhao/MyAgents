@@ -336,6 +336,7 @@ export default memo(function RecentTasks({
             {showCreateModal && (
                 <TaskCreateModal
                     onClose={() => setShowCreateModal(false)}
+                    onCreated={refresh}
                 />
             )}
         </div>

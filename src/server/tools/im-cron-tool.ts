@@ -87,6 +87,42 @@ async function managementApi(path: string, method: 'GET' | 'POST' = 'GET', body?
   return resp.json();
 }
 
+// ===== Ownership verification =====
+
+/**
+ * Verify that a task belongs to the current session's workspace (or IM bot).
+ * Prevents cross-session/cross-workspace task manipulation.
+ * Returns an error CallToolResult if verification fails, or null if OK.
+ */
+async function verifyTaskOwnership(taskId: string, action: string): Promise<CallToolResult | null> {
+  const ctx = imCronContext || sessionCronContext;
+  if (!ctx) {
+    return {
+      content: [{ type: 'text', text: `Error: No cron context available. Cannot ${action} tasks without session context.` }],
+      isError: true,
+    };
+  }
+
+  // Build query: IM sessions filter by botId, desktop sessions by workspace
+  const query = imCronContext
+    ? `?sourceBotId=${encodeURIComponent(imCronContext.botId)}`
+    : `?workspacePath=${encodeURIComponent(ctx.workspacePath)}`;
+
+  const result = await managementApi(`/api/cron/list${query}`) as {
+    tasks: Array<{ id: string }>;
+  };
+
+  const taskBelongsToContext = result.tasks.some(t => t.id === taskId);
+  if (!taskBelongsToContext) {
+    return {
+      content: [{ type: 'text', text: `Error: Task ${taskId} does not belong to this workspace. You can only ${action} tasks within the current workspace.` }],
+      isError: true,
+    };
+  }
+
+  return null; // ownership verified
+}
+
 // ===== Tool handler =====
 
 const scheduleSchema = z.discriminatedUnion('kind', [
@@ -243,6 +279,10 @@ async function imCronToolHandler(args: {
           };
         }
 
+        // Verify task belongs to current workspace
+        const updateOwnershipError = await verifyTaskOwnership(args.taskId, 'update');
+        if (updateOwnershipError) return updateOwnershipError;
+
         // Normalize patch: map "message" → "prompt" (tool schema uses "message", backend uses "prompt")
         // Also defensively handle AI nesting fields inside "job" (matching "add" schema structure)
         const rawPatch: Record<string, unknown> = { ...args.patch };
@@ -275,6 +315,11 @@ async function imCronToolHandler(args: {
             isError: true,
           };
         }
+
+        // Verify task belongs to current workspace
+        const removeOwnershipError = await verifyTaskOwnership(args.taskId, 'remove');
+        if (removeOwnershipError) return removeOwnershipError;
+
         const result = await managementApi('/api/cron/delete', 'POST', {
           taskId: args.taskId,
         }) as { ok: boolean; error?: string };
@@ -291,6 +336,11 @@ async function imCronToolHandler(args: {
             isError: true,
           };
         }
+
+        // Verify task belongs to current workspace
+        const runOwnershipError = await verifyTaskOwnership(args.taskId, 'trigger');
+        if (runOwnershipError) return runOwnershipError;
+
         const result = await managementApi('/api/cron/run', 'POST', {
           taskId: args.taskId,
         }) as { ok: boolean; error?: string };
@@ -307,6 +357,11 @@ async function imCronToolHandler(args: {
             isError: true,
           };
         }
+
+        // Verify task belongs to current workspace
+        const runsOwnershipError = await verifyTaskOwnership(args.taskId, 'view execution history of');
+        if (runsOwnershipError) return runsOwnershipError;
+
         const limit = args.limit || 20;
         const resp = await managementApi(
           `/api/cron/runs?taskId=${encodeURIComponent(args.taskId)}&limit=${limit}`,

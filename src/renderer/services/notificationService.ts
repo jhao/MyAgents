@@ -23,7 +23,7 @@ let isWindowVisible = true;
 
 // Pending navigation: when a notification is sent, store tabId + timestamp
 // so that on window focus-regain we can auto-switch to the relevant tab
-const PENDING_NAV_TIMEOUT_MS = 10_000; // 10 second window
+const PENDING_NAV_TIMEOUT_MS = 2_000; // 2 second window
 let pendingNavigation: { tabId: string; timestamp: number } | null = null;
 
 /**

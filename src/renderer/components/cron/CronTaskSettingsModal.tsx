@@ -72,6 +72,7 @@ type InitialConfig = {
   runMode: CronRunMode;
   notifyEnabled: boolean;
   schedule?: CronSchedule;
+  executionTarget?: ExecutionTarget;
 };
 
 interface CronTaskSettingsModalProps {
@@ -95,7 +96,7 @@ function CronTaskSettingsForm({
   onConfirm,
 }: Omit<CronTaskSettingsModalProps, 'isOpen'>) {
   // Execution target: current session (legacy behavior) or new standalone task
-  const [executionTarget, setExecutionTarget] = useState<ExecutionTarget>('current_session');
+  const [executionTarget, setExecutionTarget] = useState<ExecutionTarget>(initialConfig?.executionTarget ?? 'current_session');
 
   // Schedule state
   const [schedule, setSchedule] = useState<CronSchedule | null>(initialConfig?.schedule ?? null);
@@ -137,6 +138,17 @@ function CronTaskSettingsForm({
   const validationErrors = useMemo(() => {
     const errors: string[] = [];
     if (!schedule && intervalMinutes < MIN_CRON_INTERVAL) errors.push(`间隔不能小于 ${MIN_CRON_INTERVAL} 分钟`);
+    if (schedule?.kind === 'cron') {
+      const parts = schedule.expr.trim().split(/\s+/);
+      if (parts.length !== 5) {
+        errors.push('无效的 Cron 表达式');
+      } else {
+        const cronFieldRegex = /^[\d,\-*/]+$/;
+        if (!parts.every(p => cronFieldRegex.test(p))) {
+          errors.push('无效的 Cron 表达式');
+        }
+      }
+    }
     if (schedule?.kind === 'at') {
       const atTime = new Date(schedule.at).getTime();
       // Validate at confirm time, not render time — just check if parseable here

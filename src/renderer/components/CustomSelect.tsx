@@ -44,8 +44,8 @@ export default function CustomSelect({
     const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
 
     // Compute dropdown position from trigger's bounding rect
-    useEffect(() => {
-        if (!isOpen || !triggerRef.current) return;
+    const updatePosition = useCallback(() => {
+        if (!triggerRef.current) return;
         const rect = triggerRef.current.getBoundingClientRect();
         setDropdownStyle({
             position: 'fixed',
@@ -53,7 +53,24 @@ export default function CustomSelect({
             left: rect.left,
             width: rect.width,
         });
-    }, [isOpen]);
+    }, []);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        updatePosition();
+    }, [isOpen, updatePosition]);
+
+    // Reposition dropdown on scroll/resize to prevent detachment from trigger
+    useEffect(() => {
+        if (!isOpen) return;
+        const handleRepositionOrClose = () => updatePosition();
+        window.addEventListener('scroll', handleRepositionOrClose, true);
+        window.addEventListener('resize', handleRepositionOrClose);
+        return () => {
+            window.removeEventListener('scroll', handleRepositionOrClose, true);
+            window.removeEventListener('resize', handleRepositionOrClose);
+        };
+    }, [isOpen, updatePosition]);
 
     // Close on click outside
     useEffect(() => {
