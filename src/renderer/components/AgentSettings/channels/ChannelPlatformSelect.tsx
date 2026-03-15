@@ -9,7 +9,6 @@ import type { ChannelType } from '../../../../shared/types/agent';
 import type { InstalledPlugin } from '../../../../shared/types/im';
 import { PROMOTED_PLUGINS } from '../../ImSettings/promotedPlugins';
 import telegramIcon from '../../ImSettings/assets/telegram.png';
-import feishuIcon from '../../ImSettings/assets/feishu.jpeg';
 import dingtalkIcon from '../../ImSettings/assets/dingtalk.svg';
 
 interface PlatformEntry {
@@ -23,7 +22,7 @@ interface PlatformEntry {
 
 const STATIC_PLATFORMS: PlatformEntry[] = [
   { id: 'telegram', name: 'Telegram', description: '通过 Telegram Bot 远程使用 AI Agent', icon: telegramIcon },
-  { id: 'feishu', name: '飞书', description: '通过飞书自建应用 Bot 远程使用 AI Agent', icon: feishuIcon },
+  // 内置飞书已被官方 OpenClaw 插件替代（在 PROMOTED_PLUGINS 中），新用户不再显示
   { id: 'dingtalk', name: '钉钉', description: '通过钉钉自建应用 Bot 远程使用 AI Agent', icon: dingtalkIcon },
 ];
 
