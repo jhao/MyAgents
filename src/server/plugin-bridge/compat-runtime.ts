@@ -102,6 +102,13 @@ export function createCompatRuntime(rustPort: number, botId: string, pluginId: s
       },
     },
 
+    // ===== System events =====
+    // Plugins call core.system.enqueueSystemEvent() during message dispatch
+    system: {
+      enqueueSystemEvent(_event: unknown) {},
+      getSystemEvents() { return []; },
+    },
+
     channel: {
       // ===== Activity tracking =====
       // No-op — MyAgents doesn't need OpenClaw activity tracking.
