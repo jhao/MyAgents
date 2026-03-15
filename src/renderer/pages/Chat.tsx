@@ -1679,7 +1679,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
             const { deleteCronTask } = await import('@/api/cronTaskClient');
             await deleteCronTask(taskId);
             setCronDetailTask(null);
-            toast.success('任务已删除');
+            toastRef.current?.success('任务已删除');
           }}
           onResume={async (taskId) => {
             await startCronTaskIpc(taskId);
@@ -1687,7 +1687,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
             const { getCronTask } = await import('@/api/cronTaskClient');
             const updated = await getCronTask(taskId);
             setCronDetailTask(updated);
-            toast.success('任务已恢复');
+            toastRef.current?.success('任务已恢复');
           }}
           onStop={async (taskId) => {
             const { stopCronTask } = await import('@/api/cronTaskClient');
@@ -1695,7 +1695,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
             const { getCronTask } = await import('@/api/cronTaskClient');
             const updated = await getCronTask(taskId);
             setCronDetailTask(updated);
-            toast.success('任务已停止');
+            toastRef.current?.success('任务已停止');
           }}
         />
       )}
