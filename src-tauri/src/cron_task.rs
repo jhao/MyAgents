@@ -804,15 +804,15 @@ impl CronTaskManager {
                             let target_utc = target.with_timezone(&Utc);
                             let now = Utc::now();
                             if target_utc > now {
-                                log::info!("[CronTask] Task {} delayed start at {}, waiting {} seconds", task_id_owned, sa, (target_utc - now).num_seconds());
+                                ulog_info!("[CronTask] Task {} delayed start at {}, waiting {} seconds", task_id_owned, sa, (target_utc - now).num_seconds());
                                 Some(target_utc)
                             } else {
-                                log::info!("[CronTask] Task {} start time {} already passed, executing in 2 seconds", task_id_owned, sa);
+                                ulog_info!("[CronTask] Task {} start time {} already passed, executing in 2 seconds", task_id_owned, sa);
                                 Some(now + chrono::Duration::seconds(2))
                             }
                         }
                         Err(_) => {
-                            log::warn!("[CronTask] Task {} invalid start_at '{}', starting in 2 seconds", task_id_owned, sa);
+                            ulog_warn!("[CronTask] Task {} invalid start_at '{}', starting in 2 seconds", task_id_owned, sa);
                             Some(Utc::now() + chrono::Duration::seconds(2))
                         }
                     }
@@ -2084,6 +2084,13 @@ pub async fn cmd_update_cron_task_fields(
 
     if was_running {
         manager.stop_task(&task_id, None).await?;
+        // Clear active_schedulers to prevent start_task_scheduler from short-circuiting
+        // (stop_task sets status=Stopped but the old scheduler tokio task may not have
+        // polled the status change and removed itself from the set yet)
+        {
+            let mut active = manager.active_schedulers.write().await;
+            active.remove(&task_id);
+        }
     }
 
     // Apply updates

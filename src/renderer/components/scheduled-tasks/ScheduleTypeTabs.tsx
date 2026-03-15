@@ -100,7 +100,10 @@ export default function ScheduleTypeTabs({ value, intervalMinutes, onChange, err
 
   const handleAtChange = useCallback((dateTime: string) => {
     setAtDateTime(dateTime);
-    onChange({ kind: 'at', at: new Date(dateTime).toISOString() }, intervalMinutes);
+    if (!dateTime) return; // Guard empty datetime-local (would throw RangeError)
+    const d = new Date(dateTime);
+    if (isNaN(d.getTime())) return; // Guard invalid date
+    onChange({ kind: 'at', at: d.toISOString() }, intervalMinutes);
   }, [onChange, intervalMinutes]);
 
   // Min datetime for "at" type (now + 1 minute)

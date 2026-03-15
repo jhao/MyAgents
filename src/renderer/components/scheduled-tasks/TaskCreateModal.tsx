@@ -114,7 +114,8 @@ export default function TaskCreateModal({ onClose, onCreated }: TaskCreateModalP
 
   useEffect(() => {
     isMountedRef.current = true;
-    if (runMode !== 'single_session' || !selectedProjectPath) { setWorkspaceSessions([]); return; }
+    if (runMode !== 'single_session' || !selectedProjectPath) { setWorkspaceSessions([]); setSelectedSessionId(''); return; }
+    setSelectedSessionId(''); // Reset on project change
     getSessions(selectedProjectPath).then(sessions => {
       if (!isMountedRef.current) return;
       setWorkspaceSessions(

@@ -121,10 +121,10 @@ export default function CronTaskDetailPanel({ task, botInfo, onClose, onDelete, 
                 schedule: editSchedule ?? undefined, intervalMinutes: editSchedule?.kind === 'every' ? editSchedule.minutes : editInterval,
                 endConditions, notifyEnabled: editNotify,
             });
-            toast.success('任务已更新'); setIsEditing(false);
+            toast.success('任务已更新'); onClose(); // Close to refresh — cron:task-updated event triggers parent list reload
         } catch (err) { toast.error(`更新失败: ${err instanceof Error ? err.message : String(err)}`); }
         finally { setIsSaving(false); }
-    }, [task.id, editName, editPrompt, editSchedule, editInterval, editEndMode, editDeadline, editMaxExec, editAiCanExit, editNotify, isAtSchedule, toast]);
+    }, [task.id, editName, editPrompt, editSchedule, editInterval, editEndMode, editDeadline, editMaxExec, editAiCanExit, editNotify, isAtSchedule, toast, onClose]);
 
     const handleDelete = useCallback(async () => {
         setIsDeleting(true); try { await onDelete(task.id); onClose(); } catch { /* caller handles */ } finally { setIsDeleting(false); setShowDeleteConfirm(false); }
