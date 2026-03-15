@@ -1605,7 +1605,11 @@ async fn create_bot_instance<R: Runtime>(
                     }
 
                     // ── Group access control (v0.1.28) ──────────
-                    if msg.source_type == ImSourceType::Group {
+                    // OpenClaw (Bridge) plugins handle their own access control
+                    // (dmPolicy/groupPolicy/allowFrom/requireMention) internally —
+                    // skip MyAgents whitelist + mention checks for Bridge platforms.
+                    let is_bridge_platform = matches!(msg.platform, ImPlatform::OpenClaw(_));
+                    if msg.source_type == ImSourceType::Group && !is_bridge_platform {
                         // Check if sender is a whitelisted user OR group is approved
                         let is_allowed_user = {
                             let users = allowed_users_for_loop.read().await;
