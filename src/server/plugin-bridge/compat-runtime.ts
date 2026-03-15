@@ -174,6 +174,8 @@ export function createCompatRuntime(rustPort: number, botId: string, pluginId: s
           if (typeof run === 'function') {
             await run();
           }
+          // Plugin destructures { queuedFinal, counts } from the return value
+          return { queuedFinal: 0, counts: {} };
         },
 
         /**
