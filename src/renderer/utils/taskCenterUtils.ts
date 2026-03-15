@@ -77,11 +77,12 @@ export function extractPlatformDisplay(sessionKey: string): string {
         if (channelType.startsWith('openclaw:')) {
             const pluginId = channelType.slice('openclaw:'.length);
             const promoted = findPromotedPlugin(pluginId);
-            return promoted?.name ?? (pluginId.charAt(0).toUpperCase() + pluginId.slice(1));
+            return promoted?.name ?? PLATFORM_DISPLAY_NAMES[pluginId] ?? (pluginId.charAt(0).toUpperCase() + pluginId.slice(1));
         }
         if (channelType === 'openclaw' && parts[3]) {
-            const promoted = findPromotedPlugin(parts[3]);
-            return promoted?.name ?? (parts[3].charAt(0).toUpperCase() + parts[3].slice(1));
+            const pluginChannelId = parts[3];
+            const promoted = findPromotedPlugin(pluginChannelId);
+            return promoted?.name ?? PLATFORM_DISPLAY_NAMES[pluginChannelId] ?? (pluginChannelId.charAt(0).toUpperCase() + pluginChannelId.slice(1));
         }
         return PLATFORM_DISPLAY_NAMES[channelType] ?? (channelType.charAt(0).toUpperCase() + channelType.slice(1));
     }
@@ -95,12 +96,13 @@ export function extractPlatformDisplay(sessionKey: string): string {
     return PLATFORM_DISPLAY_NAMES[platform] ?? (platform.charAt(0).toUpperCase() + platform.slice(1));
 }
 
-/** Chinese display names for known platforms */
+/** Platform display names — MUST match WorkspaceCard's CH_LABEL */
 const PLATFORM_DISPLAY_NAMES: Record<string, string> = {
     feishu: '飞书',
     telegram: 'Telegram',
     dingtalk: '钉钉',
-    qqbot: 'QQ Bot',
+    qqbot: 'QQ',
+    'openclaw-lark': '飞书',
 };
 
 /**
