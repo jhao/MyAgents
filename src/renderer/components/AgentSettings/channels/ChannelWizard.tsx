@@ -243,6 +243,8 @@ export default function ChannelWizard({
     const buildChannelConfig = useCallback((): ChannelConfig => {
         if (isOpenClaw) {
             const pluginConfig = buildOpenclawConfig();
+            // Merge promoted plugin defaults (e.g. dmPolicy: 'open') under user values
+            const mergedConfig = { ...(promoted?.defaultConfig ?? {}), ...pluginConfig };
             const pluginName = promoted?.name || installedPlugin?.manifest?.name || openclawPluginId || 'Plugin Bot';
             return {
                 id: channelId,
@@ -253,7 +255,7 @@ export default function ChannelWizard({
                 setupCompleted: false,
                 openclawPluginId: openclawPluginId,
                 openclawNpmSpec: installedPlugin?.npmSpec,
-                openclawPluginConfig: Object.keys(pluginConfig).length > 0 ? pluginConfig : undefined,
+                openclawPluginConfig: Object.keys(mergedConfig).length > 0 ? mergedConfig : undefined,
             };
         }
         return {
