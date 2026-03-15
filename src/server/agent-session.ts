@@ -5149,8 +5149,12 @@ async function startStreamingSession(preWarm = false): Promise<void> {
 
     clearCronTaskContext();
     clearSessionCronContext();
-    clearImMediaContext();
-    clearImBridgeToolsContext();
+    // NOTE: Do NOT clear im-media / im-bridge-tools here.
+    // These are Sidecar-scoped contexts (set by Rust IM router via /api/im/chat),
+    // not session-scoped. Clearing them on session end (including /new resets)
+    // causes pre-warm to rebuild MCP servers without bridge tools, leaving the
+    // AI with no feishu/plugin capabilities until the next IM message arrives.
+    // They are cleared when the Sidecar Owner is fully released (IM Bot stops).
     resolveTermination!();
 
     if (wasPreWarming) {
