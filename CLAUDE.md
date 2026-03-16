@@ -110,6 +110,7 @@ Agent 配置通过 Rust 命令 `cmd_update_agent_config` 写盘，写盘后 MUST
 | CronTask 新增字段不加 `#[serde(default)]` | 旧版 JSON 反序列化失败 | 非核心字段 MUST 加 `#[serde(default)]` |
 | Rust 子进程日志用 `log::info!` | 不进统一日志 | MUST 用 `ulog_info!` / `ulog_error!` |
 | 裸 `std::process::Command::new()` | Windows 弹出黑色控制台窗口 | `crate::process_cmd::new()` |
+| 前端 `@tauri-apps/plugin-fs` 读写工作区文件 | Tauri fs scope 仅覆盖 `~/.myagents/**`，工作区路径写入必失败 | `invoke('cmd_read_workspace_file')` / `invoke('cmd_write_workspace_file')` 走 Rust 原生 I/O |
 
 ---
 
