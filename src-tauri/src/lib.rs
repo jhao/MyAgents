@@ -7,6 +7,7 @@ pub mod im;
 pub mod local_http;
 pub mod logger;
 pub mod management_api;
+pub mod process_cmd;
 mod proxy_config;
 mod sidecar;
 mod sse_proxy;
