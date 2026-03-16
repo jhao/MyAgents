@@ -6449,7 +6449,7 @@ async function main() {
               const defaultHeartbeat = `---
 description: >
   心跳清单 — Agent 按心跳间隔定时苏醒时会读取本文件的正文部分作为指令执行。
-  正文为空时心跳会静默跳过（回复 HEARTBEAT_OK）。
+  正文为空时心跳会直接跳过，不请求 AI（节省 token）。
   你可以在正文中写入需要 Agent 定期检查的任务、监控项或提醒事项。
 ---
 `;
