@@ -148,7 +148,7 @@ export default function QueryNavigator({
 
   return (
     <div
-      className="absolute right-0 top-0 bottom-0 z-20 hidden md:flex items-center"
+      className="absolute right-0 top-0 bottom-0 z-30 hidden md:flex items-center"
       onMouseEnter={() => setIsExpanded(true)}
       onMouseLeave={() => setIsExpanded(false)}
     >
@@ -188,7 +188,7 @@ export default function QueryNavigator({
                 type="button"
                 tabIndex={isExpanded ? 0 : -1}
                 onClick={() => isExpanded && handleQueryClick(q.id)}
-                className={`flex w-full items-center gap-1.5 py-[3px] text-left transition-colors ${
+                className={`flex w-full items-center gap-1.5 py-[5px] text-left transition-colors ${
                   isExpanded
                     ? `px-2 cursor-pointer rounded-lg ${isActive ? 'bg-[var(--hover-bg)]' : 'hover:bg-[var(--hover-bg)]'}`
                     : 'px-0 cursor-default justify-end'
@@ -196,7 +196,7 @@ export default function QueryNavigator({
               >
                 {/* Query text — only visible when expanded */}
                 <span
-                  className={`flex-1 truncate text-xs leading-5 transition-opacity duration-200 ${
+                  className={`flex-1 truncate text-[13px] leading-6 transition-opacity duration-200 ${
                     isExpanded ? 'opacity-100' : 'opacity-0 w-0 overflow-hidden'
                   } ${isActive ? 'text-[var(--accent)] font-medium' : 'text-[var(--ink-muted)]'}`}
                 >
@@ -208,7 +208,9 @@ export default function QueryNavigator({
                   className={`flex-shrink-0 rounded-full transition-all duration-150 ${
                     isActive
                       ? 'w-[10px] h-[3px] bg-[var(--accent)]'
-                      : 'w-[8px] h-[2px] bg-[var(--ink-faint)]'
+                      : isExpanded
+                        ? 'w-[8px] h-[2px] bg-[var(--ink-faint)]'
+                        : 'w-[8px] h-[2px] bg-[var(--ink-faint)] opacity-40'
                   } ${isExpanded ? 'mr-1' : 'mr-1.5'}`}
                 />
               </button>
