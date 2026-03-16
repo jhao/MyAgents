@@ -380,7 +380,7 @@ export default function ChatInput({
               className={`flex h-9 w-9 items-center justify-center rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                 isLoading && onStopStreaming ?
                   'bg-[var(--paper-inset)] text-[var(--ink)] hover:bg-[var(--hover-bg)]'
-                : 'bg-[var(--ink)] text-[var(--paper)] hover:opacity-80'
+                : 'bg-[var(--button-dark-bg)] text-[var(--button-primary-text)] hover:opacity-80'
               }`}
             >
               {isLoading ?

@@ -2017,7 +2017,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                                     placeholder="输入 API Key"
                                                     value={apiKeys[provider.id] || ''}
                                                     onChange={(e) => handleSaveApiKey(provider, e.target.value)}
-                                                    className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper)] py-2.5 pl-10 pr-4 text-sm text-[var(--ink)] placeholder-[var(--ink-muted)] transition-colors focus:border-[var(--ink)] focus:outline-none"
+                                                    className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper)] py-2.5 pl-10 pr-4 text-sm text-[var(--ink)] placeholder-[var(--ink-muted)] transition-colors focus:border-[var(--focus-border)] focus:outline-none"
                                                 />
                                             </div>
                                             {renderVerifyStatus(provider)}
@@ -2484,7 +2484,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                                     }
                                                 }}
                                                 placeholder={PROXY_DEFAULTS.host}
-                                                className="flex-1 rounded-lg border border-[var(--line)] bg-[var(--paper)] px-3 py-1.5 text-xs text-[var(--ink)] placeholder:text-[var(--ink-faint)] focus:border-[var(--ink)] focus:outline-none"
+                                                className="flex-1 rounded-lg border border-[var(--line)] bg-[var(--paper)] px-3 py-1.5 text-xs text-[var(--ink)] placeholder:text-[var(--ink-faint)] focus:border-[var(--focus-border)] focus:outline-none"
                                             />
                                         </div>
 
@@ -2518,7 +2518,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                                     }
                                                 }}
                                                 placeholder={String(PROXY_DEFAULTS.port)}
-                                                className="flex-1 rounded-lg border border-[var(--line)] bg-[var(--paper)] px-3 py-1.5 text-xs text-[var(--ink)] placeholder:text-[var(--ink-faint)] focus:border-[var(--ink)] focus:outline-none"
+                                                className="flex-1 rounded-lg border border-[var(--line)] bg-[var(--paper)] px-3 py-1.5 text-xs text-[var(--ink)] placeholder:text-[var(--ink-faint)] focus:border-[var(--focus-border)] focus:outline-none"
                                             />
                                         </div>
 
@@ -3725,7 +3725,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                         onChange={(e) => setMcpForm((p) => ({ ...p, id: e.target.value.toLowerCase().replace(/\s/g, '-') }))}
                                         placeholder="例如: my-mcp-server"
                                         disabled={!!editingMcpId}
-                                        className={`w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm font-mono transition-colors focus:border-[var(--ink)] focus:outline-none ${editingMcpId ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                        className={`w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm font-mono transition-colors focus:border-[var(--focus-border)] focus:outline-none ${editingMcpId ? 'opacity-50 cursor-not-allowed' : ''}`}
                                     />
                                     <p className="mt-1 text-xs text-[var(--ink-muted)]">唯一标识符，用于在配置中引用</p>
                                 </div>
@@ -3740,7 +3740,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                         value={mcpForm.name}
                                         onChange={(e) => setMcpForm((p) => ({ ...p, name: e.target.value }))}
                                         placeholder="例如: 我的 MCP 服务器"
-                                        className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm transition-colors focus:border-[var(--ink)] focus:outline-none"
+                                        className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm transition-colors focus:border-[var(--focus-border)] focus:outline-none"
                                     />
                                 </div>
 
@@ -3756,7 +3756,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                                 value={mcpForm.command}
                                                 onChange={(e) => setMcpForm((p) => ({ ...p, command: e.target.value }))}
                                                 placeholder="例如: npx, uvx, node, python"
-                                                className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm font-mono transition-colors focus:border-[var(--ink)] focus:outline-none"
+                                                className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm font-mono transition-colors focus:border-[var(--focus-border)] focus:outline-none"
                                             />
                                             <p className="mt-1 text-xs text-[var(--ink-muted)]">启动服务器的命令</p>
                                         </div>
@@ -3796,7 +3796,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                                     value={mcpForm.newArg}
                                                     onChange={(e) => setMcpForm((p) => ({ ...p, newArg: e.target.value }))}
                                                     placeholder="例如: @playwright/mcp@latest"
-                                                    className="flex-1 rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2 text-sm font-mono transition-colors focus:border-[var(--ink)] focus:outline-none"
+                                                    className="flex-1 rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2 text-sm font-mono transition-colors focus:border-[var(--focus-border)] focus:outline-none"
                                                     onKeyDown={(e) => {
                                                         if (e.key === 'Enter') {
                                                             e.preventDefault();
@@ -3848,7 +3848,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                                             env: { ...p.env, [key]: e.target.value }
                                                         }))}
                                                         placeholder="值"
-                                                        className="flex-1 rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2 text-sm transition-colors focus:border-[var(--ink)] focus:outline-none"
+                                                        className="flex-1 rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2 text-sm transition-colors focus:border-[var(--focus-border)] focus:outline-none"
                                                     />
                                                     <button
                                                         onClick={() => {
@@ -3870,7 +3870,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                                     value={mcpForm.newEnvKey}
                                                     onChange={(e) => setMcpForm((p) => ({ ...p, newEnvKey: e.target.value.toUpperCase().replace(/\s/g, '_') }))}
                                                     placeholder="变量名（如 API_KEY）"
-                                                    className="flex-1 rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2 text-sm font-mono transition-colors focus:border-[var(--ink)] focus:outline-none"
+                                                    className="flex-1 rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2 text-sm font-mono transition-colors focus:border-[var(--focus-border)] focus:outline-none"
                                                     onKeyDown={(e) => {
                                                         if (e.key === 'Enter') {
                                                             e.preventDefault();
@@ -3917,7 +3917,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                                 value={mcpForm.url}
                                                 onChange={(e) => setMcpForm((p) => ({ ...p, url: e.target.value }))}
                                                 placeholder={mcpForm.type === 'sse' ? "例如: https://example.com/sse" : "例如: https://example.com/mcp"}
-                                                className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm font-mono transition-colors focus:border-[var(--ink)] focus:outline-none"
+                                                className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm font-mono transition-colors focus:border-[var(--focus-border)] focus:outline-none"
                                             />
                                             <p className="mt-1 text-xs text-[var(--ink-muted)]">
                                                 {mcpForm.type === 'sse' ? 'SSE 事件流端点地址' : 'MCP 服务器的 HTTP 端点地址'}
@@ -3942,7 +3942,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                                             headers: { ...p.headers, [key]: e.target.value }
                                                         }))}
                                                         placeholder="值"
-                                                        className="flex-1 rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2 text-sm transition-colors focus:border-[var(--ink)] focus:outline-none"
+                                                        className="flex-1 rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2 text-sm transition-colors focus:border-[var(--focus-border)] focus:outline-none"
                                                     />
                                                     <button
                                                         onClick={() => {
@@ -3964,7 +3964,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                                     value={mcpForm.newHeaderKey}
                                                     onChange={(e) => setMcpForm((p) => ({ ...p, newHeaderKey: e.target.value }))}
                                                     placeholder="头名称（如 Authorization）"
-                                                    className="flex-1 rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2 text-sm font-mono transition-colors focus:border-[var(--ink)] focus:outline-none"
+                                                    className="flex-1 rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2 text-sm font-mono transition-colors focus:border-[var(--focus-border)] focus:outline-none"
                                                     onKeyDown={(e) => {
                                                         if (e.key === 'Enter') {
                                                             e.preventDefault();
@@ -4086,7 +4086,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                     value={customForm.name}
                                     onChange={(e) => setCustomForm((p) => ({ ...p, name: e.target.value }))}
                                     placeholder="例如: My Custom Provider"
-                                    className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm transition-colors focus:border-[var(--ink)] focus:outline-none"
+                                    className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm transition-colors focus:border-[var(--focus-border)] focus:outline-none"
                                 />
                             </div>
 
@@ -4097,7 +4097,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                     value={customForm.cloudProvider}
                                     onChange={(e) => setCustomForm((p) => ({ ...p, cloudProvider: e.target.value }))}
                                     placeholder="例如: 云服务商"
-                                    className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm transition-colors focus:border-[var(--ink)] focus:outline-none"
+                                    className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm transition-colors focus:border-[var(--focus-border)] focus:outline-none"
                                 />
                             </div>
 
@@ -4143,7 +4143,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                     value={customForm.baseUrl}
                                     onChange={(e) => setCustomForm((p) => ({ ...p, baseUrl: e.target.value }))}
                                     placeholder={customForm.apiProtocol === 'openai' ? 'https://api.openai.com/v1' : 'https://api.example.com/anthropic'}
-                                    className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm transition-colors focus:border-[var(--ink)] focus:outline-none"
+                                    className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm transition-colors focus:border-[var(--focus-border)] focus:outline-none"
                                 />
                             </div>
 
@@ -4156,7 +4156,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                             value={customForm.maxOutputTokens}
                                             onChange={(e) => setCustomForm((p) => ({ ...p, maxOutputTokens: e.target.value }))}
                                             placeholder="8192"
-                                            className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm transition-colors focus:border-[var(--ink)] focus:outline-none"
+                                            className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm transition-colors focus:border-[var(--focus-border)] focus:outline-none"
                                         />
                                     </div>
                                     <div>
@@ -4246,7 +4246,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                             }
                                         }}
                                         placeholder="输入模型 ID，按 Enter 添加"
-                                        className="flex-1 rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm transition-colors focus:border-[var(--ink)] focus:outline-none"
+                                        className="flex-1 rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm transition-colors focus:border-[var(--focus-border)] focus:outline-none"
                                     />
                                     <button
                                         type="button"
@@ -4351,7 +4351,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                         value={editingProvider.editName || ''}
                                         onChange={(e) => setEditingProvider((p) => p ? { ...p, editName: e.target.value } : null)}
                                         placeholder="输入供应商名称"
-                                        className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm transition-colors focus:border-[var(--ink)] focus:outline-none"
+                                        className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm transition-colors focus:border-[var(--focus-border)] focus:outline-none"
                                     />
                                 )}
                             </div>
@@ -4365,7 +4365,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                         value={editingProvider.editCloudProvider || ''}
                                         onChange={(e) => setEditingProvider((p) => p ? { ...p, editCloudProvider: e.target.value } : null)}
                                         placeholder="例如：自定义、代理"
-                                        className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm transition-colors focus:border-[var(--ink)] focus:outline-none"
+                                        className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm transition-colors focus:border-[var(--focus-border)] focus:outline-none"
                                     />
                                 </div>
                             )}
@@ -4421,7 +4421,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                         value={editingProvider.editBaseUrl || ''}
                                         onChange={(e) => setEditingProvider((p) => p ? { ...p, editBaseUrl: e.target.value } : null)}
                                         placeholder={editingProvider.editApiProtocol === 'openai' ? 'https://api.openai.com/v1' : 'https://api.example.com'}
-                                        className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm font-mono transition-colors focus:border-[var(--ink)] focus:outline-none"
+                                        className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm font-mono transition-colors focus:border-[var(--focus-border)] focus:outline-none"
                                     />
                                 )}
                             </div>
@@ -4436,7 +4436,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                             value={editingProvider.editMaxOutputTokens || ''}
                                             onChange={(e) => setEditingProvider((p) => p ? { ...p, editMaxOutputTokens: e.target.value } : null)}
                                             placeholder="8192"
-                                            className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm transition-colors focus:border-[var(--ink)] focus:outline-none"
+                                            className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm transition-colors focus:border-[var(--focus-border)] focus:outline-none"
                                         />
                                     </div>
                                     <div>
@@ -4536,7 +4536,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                             }
                                         }}
                                         placeholder="输入模型 ID，按 Enter 添加"
-                                        className="flex-1 rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm transition-colors focus:border-[var(--ink)] focus:outline-none"
+                                        className="flex-1 rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2.5 text-sm transition-colors focus:border-[var(--focus-border)] focus:outline-none"
                                     />
                                     <button
                                         type="button"

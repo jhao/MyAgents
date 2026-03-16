@@ -218,6 +218,9 @@
   --shadow-lg: 0 16px 40px rgb(28 22 18 / 0.16);
   --shadow-xl: 0 24px 48px rgb(28 22 18 / 0.20);
 
+  /* ========== Focus ========== */
+  --focus-border: #1c1612;
+
   /* ========== Toggle ========== */
   --toggle-thumb: #ffffff;
   --toggle-off-bg: rgb(28 22 18 / 0.18);
@@ -298,6 +301,9 @@
   --shadow-md: 0 8px 24px rgb(0 0 0 / 0.28);
   --shadow-lg: 0 16px 40px rgb(0 0 0 / 0.35);
   --shadow-xl: 0 24px 48px rgb(0 0 0 / 0.42);
+
+  /* ========== Focus ========== */
+  --focus-border: var(--accent);
 
   /* ========== Toggle ========== */
   --toggle-thumb: #e4dcd4;
