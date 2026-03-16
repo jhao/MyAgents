@@ -86,11 +86,9 @@ export default function AgentSettingsPanel({ agentId }: AgentSettingsPanelProps)
       </div>
 
       {/* Memory Auto-Update (v0.1.43) */}
-      {agent.heartbeat?.enabled && (
-        <div className="border-b border-[var(--line)] pb-6 pt-6">
-          <AgentMemoryUpdateSection agent={agent} onAgentChanged={handleAgentChanged} />
-        </div>
-      )}
+      <div className="border-b border-[var(--line)] pb-6 pt-6">
+        <AgentMemoryUpdateSection agent={agent} onAgentChanged={handleAgentChanged} />
+      </div>
 
       {/* Tasks (read-only) */}
       <div className="pt-6">

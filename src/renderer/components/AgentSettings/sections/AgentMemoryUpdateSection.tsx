@@ -52,7 +52,6 @@ description: >
 
 export default function AgentMemoryUpdateSection({ agent, onAgentChanged }: AgentMemoryUpdateSectionProps) {
   const config = agent.memoryAutoUpdate;
-  const heartbeatEnabled = agent.heartbeat?.enabled ?? false;
 
   const toast = useToast();
   const toastRef = useRef(toast);
@@ -126,9 +125,6 @@ export default function AgentMemoryUpdateSection({ agent, onAgentChanged }: Agen
     const { open } = await import('@tauri-apps/plugin-shell');
     await open(parentDir);
   }, [previewFile]);
-
-  // Don't show if heartbeat is disabled
-  if (!heartbeatEnabled) return null;
 
   const enabled = config?.enabled ?? false;
   const intervalHours = config?.intervalHours ?? 24;

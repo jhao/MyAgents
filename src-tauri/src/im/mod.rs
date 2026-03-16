@@ -3673,7 +3673,29 @@ pub fn schedule_agent_auto_start<R: Runtime>(app_handle: AppHandle<R>) {
 
                         let is_high_priority = reason.is_high_priority();
 
-                        // Gate: enabled check
+                        // Memory auto-update check (v0.1.43) — runs independently of heartbeat enabled
+                        // Placed BEFORE heartbeat gate so memory update works even when heartbeat is off
+                        {
+                            let hb_tz = {
+                                let cfg = hb_config_for_loop.read().await;
+                                cfg.active_hours.as_ref().map(|ah| ah.timezone.clone())
+                            };
+                            memory_update::check_and_spawn(
+                                &mau_agent_id,
+                                &mau_workspace,
+                                &mau_config_for_loop,
+                                &mau_running_for_loop,
+                                &mau_permission_mode,
+                                &mau_sidecar_mgr,
+                                &mau_app_handle,
+                                &mau_model,
+                                &mau_provider_env,
+                                &mau_mcp_json,
+                                hb_tz.as_deref(),
+                            ).await;
+                        }
+
+                        // Gate: heartbeat enabled check
                         let config = hb_config_for_loop.read().await.clone();
                         if !config.enabled {
                             ulog_debug!("[agent-heartbeat] Skipped: disabled");
@@ -3784,21 +3806,6 @@ pub fn schedule_agent_auto_start<R: Runtime>(app_handle: AppHandle<R>) {
                             interval.reset();
                         }
 
-                        // Memory auto-update check (v0.1.43)
-                        // Runs at agent level (not per-channel) because memory files are workspace-scoped
-                        memory_update::check_and_spawn(
-                            &mau_agent_id,
-                            &mau_workspace,
-                            &mau_config_for_loop,
-                            &mau_running_for_loop,
-                            &mau_permission_mode,
-                            &mau_sidecar_mgr,
-                            &mau_app_handle,
-                            &mau_model,
-                            &mau_provider_env,
-                            &mau_mcp_json,
-                            config.active_hours.as_ref().map(|ah| ah.timezone.as_str()),
-                        ).await;
                     }
 
                     ulog_info!("[agent-heartbeat] Runner stopped for agent {}", agent_label);
