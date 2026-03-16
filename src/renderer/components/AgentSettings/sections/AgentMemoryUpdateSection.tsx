@@ -174,7 +174,7 @@ export default function AgentMemoryUpdateSection({ agent, onAgentChanged }: Agen
           <div className="space-y-4 pl-0">
             {/* Interval */}
             <div>
-              <label className="block text-xs font-medium text-[var(--ink-subtle)] mb-1.5">更新间隔</label>
+              <label className="block text-sm font-semibold text-[var(--ink)] mb-1.5">更新间隔</label>
               <div className="flex gap-2">
                 {INTERVAL_OPTIONS.map(opt => (
                   <button
@@ -195,7 +195,7 @@ export default function AgentMemoryUpdateSection({ agent, onAgentChanged }: Agen
 
             {/* Update Window */}
             <div>
-              <label className="block text-xs font-medium text-[var(--ink-subtle)] mb-1.5">更新时间窗口</label>
+              <label className="block text-sm font-semibold text-[var(--ink)] mb-1.5">更新时间窗口</label>
               <div className="flex items-center gap-2">
                 <input
                   type="time"
@@ -218,7 +218,7 @@ export default function AgentMemoryUpdateSection({ agent, onAgentChanged }: Agen
 
             {/* Threshold */}
             <div>
-              <label className="block text-xs font-medium text-[var(--ink-subtle)] mb-1.5">触发阈值</label>
+              <label className="block text-sm font-semibold text-[var(--ink)] mb-1.5">触发阈值</label>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-[var(--ink-subtle)]">自上次更新后至少</span>
                 <input
