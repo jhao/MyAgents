@@ -104,9 +104,8 @@ function isProviderAvailable(
         const status = verifyStatus[provider.id];
         return status?.status === 'valid' && !!status.accountEmail;
     }
-    const hasKey = !!apiKeys[provider.id];
-    const isInvalid = verifyStatus[provider.id]?.status === 'invalid';
-    return hasKey && !isInvalid;
+    // Validation status is informational, not gatekeeping — having a key is enough
+    return !!apiKeys[provider.id];
 }
 
 const EMPTY_CUSTOM_FORM: CustomProviderForm = {
