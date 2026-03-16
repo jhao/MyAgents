@@ -6591,10 +6591,10 @@ async function main() {
           // Inject as user message
           await enqueueUserMessage(prompt);
 
-          // Wait synchronously for AI completion (10 min timeout).
-          // Rust needs to know when the AI finishes before releasing temp sidecars
-          // and moving to the next session in the serial batch.
-          const completed = await waitForSessionIdle(600000, 500);
+          // Wait synchronously for AI completion (60 min timeout — same as background tasks).
+          // Memory update can be slow for large sessions: loading 100K+ token context,
+          // reading multiple log/topic files, writing updates, git commit+push.
+          const completed = await waitForSessionIdle(3600000, 1000);
 
           if (completed) {
             console.log(`[memory-update] AI completed memory update (source=${payload.source})`);

@@ -195,7 +195,7 @@ async fn run_batch<R: Runtime>(
     current_provider_env: &Arc<RwLock<Option<serde_json::Value>>>,
     mcp_servers_json: &Arc<RwLock<Option<String>>>,
 ) -> u32 {
-    let http_client = crate::local_http::json_client(Duration::from_secs(660)); // 11 min timeout
+    let http_client = crate::local_http::json_client(Duration::from_secs(3660)); // 61 min (Bun waits 60 min internally)
     let mut updated = 0u32;
 
     for session_id in sessions {
