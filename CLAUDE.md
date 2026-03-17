@@ -37,6 +37,12 @@ npm run typecheck && npm run lint  # 代码质量检查
 
 ## 核心架构约束
 
+### 开发前置要求
+
+进行新功能开发或模块重构时，MUST 先阅读整体架构文档 @specs/tech_docs/architecture.md ，从宏观视角理解系统分层、模块边界和数据流，避免局部修改破坏全局设计。对接外部 SDK/插件时，MUST 先读源码确认接口约定（函数签名、config schema、返回值格式），再写适配层。
+
+开发前端界面时，MUST 先阅读项目设计系统（Token/组件/页面规范）：@specs/guides/design_guide.md ，遵循设计系统，并参考行业最佳交互方式进行设计开发。
+
 ### Tab-scoped 隔离
 
 每个 Chat Tab 拥有独立的 Bun Sidecar 进程（Tab/CronTask/BackgroundCompletion/Agent 四种 Owner 共享 SidecarManager）。MUST 在 Tab 内使用 `useTabState()` 返回的 `apiGet`/`apiPost`，**禁止**在 Tab 内使用全局 `apiPostJson`/`apiGetJson`（会发到 Global Sidecar）。
