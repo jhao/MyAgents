@@ -37,7 +37,7 @@ interface ResolvedTool {
   description: string;
   group: string;
   parameters: Record<string, unknown>;
-  execute: (args: Record<string, unknown>, userId?: string) => Promise<unknown>;
+  execute: (toolCallIdOrArgs: unknown, paramsOrUserId?: unknown) => Promise<unknown>;
 }
 
 export function createMcpHandler(
@@ -124,7 +124,9 @@ export function createMcpHandler(
     if (!tool) {
       throw new Error(`Tool not found: ${toolName}`);
     }
-    return tool.execute(args, userId);
+    // OpenClaw plugin execute signature: execute(toolCallId, params)
+    // First arg is a call ID (plugins ignore it with _), second is actual parameters
+    return tool.execute(userId || '', args);
   }
 
   /**

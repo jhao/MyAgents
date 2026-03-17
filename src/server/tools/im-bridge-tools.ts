@@ -101,9 +101,20 @@ export async function setImBridgeToolsContext(ctx: ImBridgeToolsContext): Promis
               };
             }
 
-            const resultText = typeof result.result === 'string'
-              ? result.result
-              : (result.result != null ? JSON.stringify(result.result, null, 2) : 'OK (no data returned)');
+            // OpenClaw tools return {content: [{type:'text', text:'...'}], details: ...}
+            // Extract content[0].text directly to avoid double-encoding JSON
+            const raw = result.result as Record<string, unknown> | string | null | undefined;
+            let resultText: string;
+            if (typeof raw === 'string') {
+              resultText = raw;
+            } else if (raw != null && Array.isArray((raw as Record<string, unknown>).content)) {
+              const content = (raw as { content: Array<{ type: string; text?: string }> }).content;
+              resultText = content.map(c => c.text ?? '').join('\n') || 'OK (empty result)';
+            } else if (raw != null) {
+              resultText = JSON.stringify(raw, null, 2);
+            } else {
+              resultText = 'OK (no data returned)';
+            }
             return { content: [{ type: 'text', text: resultText }] };
           } catch (err) {
             return {
