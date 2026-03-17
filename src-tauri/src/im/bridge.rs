@@ -458,7 +458,7 @@ impl ImStreamAdapter for BridgeAdapter {
     }
 
     fn preferred_throttle_ms(&self) -> u64 {
-        1000
+        300
     }
 
     fn bridge_context(&self) -> Option<(u16, String, Vec<String>)> {

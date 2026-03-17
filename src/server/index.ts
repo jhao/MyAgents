@@ -6217,8 +6217,9 @@ async function main() {
             });
 
             // Set Bridge tools context if this is an OpenClaw plugin session with tools
+            // Async: fetches tool definitions from Bridge and creates dynamic MCP server
             if (payload.bridgePort && payload.bridgePluginId) {
-              setImBridgeToolsContext({
+              await setImBridgeToolsContext({
                 bridgePort: payload.bridgePort,
                 pluginId: payload.bridgePluginId,
                 enabledToolGroups: payload.bridgeEnabledToolGroups || [],

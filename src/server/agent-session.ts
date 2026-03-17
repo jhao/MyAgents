@@ -9,7 +9,7 @@ import { resizeImageIfNeeded, resizeToolImageContent } from './utils/imageResize
 import { cronToolsServer, getCronTaskContext, clearCronTaskContext } from './tools/cron-tools';
 import { imCronToolServer, getImCronContext, setSessionCronContext, clearSessionCronContext } from './tools/im-cron-tool';
 import { imMediaToolServer, getImMediaContext } from './tools/im-media-tool';
-import { imBridgeToolServer, getImBridgeToolsContext } from './tools/im-bridge-tools';
+import { getImBridgeToolsContext, getImBridgeToolServer } from './tools/im-bridge-tools';
 import { getBuiltinMcp } from './tools/builtin-mcp-registry';
 // Side-effect imports: each registers itself in the builtin MCP registry
 import './tools/gemini-image-tool';
@@ -1027,14 +1027,13 @@ function buildSdkMcpServers(): Record<string, SdkMcpServerConfig | typeof cronTo
     console.log(`[agent] Added im-media MCP server for bot ${imMediaCtx.botId}`);
   }
 
-  // Add Bridge tools proxy if we're in an IM context with a plugin bridge that has tools
+  // Add Bridge tools if we're in an IM context with a plugin bridge that has tools
+  // Dynamic server is created from actual plugin tool definitions — transparent passthrough
   const bridgeToolsCtx = getImBridgeToolsContext();
-  if (bridgeToolsCtx) {
-    result['im-bridge-tools'] = imBridgeToolServer;
-    const groups = bridgeToolsCtx.enabledToolGroups.length > 0
-      ? bridgeToolsCtx.enabledToolGroups.join(',')
-      : 'all (no filter)';
-    console.log(`[agent] Added im-bridge-tools MCP server for plugin ${bridgeToolsCtx.pluginId} (groups: ${groups})`);
+  const bridgeServer = getImBridgeToolServer();
+  if (bridgeToolsCtx && bridgeServer) {
+    result['im-bridge-tools'] = bridgeServer;
+    console.log(`[agent] Added im-bridge-tools MCP server for plugin ${bridgeToolsCtx.pluginId}`);
   }
 
   // --- Pattern 2: Builtin registry MCPs (in-process, user-toggled) ---
@@ -4024,6 +4023,12 @@ async function startStreamingSession(preWarm = false): Promise<void> {
       });
     }
 
+    // Build disallowed tools list: group deny + IM-incompatible UI tools
+    const disallowedToolsList = [...currentGroupToolsDeny];
+    if (currentScenario.type === 'im') {
+      disallowedToolsList.push('AskUserQuestion', 'EnterPlanMode', 'ExitPlanMode');
+    }
+
     // Build common query options (shared between normal start and "already in use" fallback)
     const commonQueryOptions = {
       enableFileCheckpointing: true,
@@ -4071,9 +4076,9 @@ async function startStreamingSession(preWarm = false): Promise<void> {
       // When agents are injected, ensure 'Task' tool is in allowedTools so the model can delegate
       ...(currentAgentDefinitions && Object.keys(currentAgentDefinitions).length > 0
         ? { agents: currentAgentDefinitions, allowedTools: ['Task'] } : {}),
-      // Group chat tool deny list (v0.1.28): use SDK disallowedTools instead of canUseTool
-      // because canUseTool is skipped in bypassPermissions mode (IM Bot default: fullAgency)
-      ...(currentGroupToolsDeny.length > 0 ? { disallowedTools: [...currentGroupToolsDeny] } : {}),
+      // disallowedTools: group chat deny list + IM-incompatible UI-interaction tools
+      // Uses SDK disallowedTools because canUseTool is skipped in bypassPermissions mode
+      ...(disallowedToolsList.length > 0 ? { disallowedTools: disallowedToolsList } : {}),
       // Custom permission handling - check rules and prompt user for unknown tools
       // Effective when permissionMode is 'default' or 'acceptEdits' (not 'bypassPermissions')
       canUseTool: async (toolName: string, input: unknown, options: { signal: AbortSignal }) => {

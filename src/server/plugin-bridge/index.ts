@@ -60,13 +60,7 @@ let mcpHandler: ReturnType<typeof createMcpHandler> | null = null;
 let getCapturedToolsFn: (() => CapturedTool[]) | null = null;
 
 async function loadPlugin() {
-  // Create compat API and runtime for plugin registration
-  const compatApi = createCompatApi(pluginConfig);
-  // Runtime must be created early — plugins call setRuntime(api.runtime) during register()
-  const runtime = createCompatRuntime(rustPort, botId, 'unknown');
-  compatApi.runtime = runtime;
-
-  // Find the plugin entry point
+  // Find the plugin entry point FIRST — we need the module name to infer the channel brand
   const pkgJsonPath = `${pluginDir}/package.json`;
   const pkgJson = await Bun.file(pkgJsonPath).json().catch(() => ({}));
 
@@ -93,6 +87,39 @@ async function loadPlugin() {
   }
 
   console.log(`[plugin-bridge] Loading plugin: ${entryModule}`);
+
+  // Infer channel brand from module name — needed to build OpenClaw-format config
+  // before register(). Plugin tools (e.g. getEnabledLarkAccounts) look for
+  // cfg.channels.feishu, not a flat {appId, appSecret} object.
+  let channelKey = entryModule.replace(/^@[^/]+\//, ''); // strip scope
+  if (/lark|feishu/i.test(entryModule)) {
+    channelKey = 'feishu';
+  } else if (/qqbot|qq/i.test(entryModule)) {
+    channelKey = 'qqbot';
+  } else if (/dingtalk/i.test(entryModule)) {
+    channelKey = 'dingtalk';
+  } else if (/telegram/i.test(entryModule)) {
+    channelKey = 'telegram';
+  }
+
+  // Build OpenClaw-format config BEFORE register() so plugin tools can discover accounts.
+  // The flat pluginConfig {appId, appSecret, ...} must be nested under channels.<brand>.
+  const openclawConfig: Record<string, unknown> = {
+    channels: {
+      [channelKey]: {
+        enabled: true,
+        ...pluginConfig,
+        dmPolicy: 'open',
+        groupPolicy: 'open',
+      },
+    },
+  };
+
+  // Create compat API with properly structured config
+  const compatApi = createCompatApi(openclawConfig);
+  // Runtime must be created early — plugins call setRuntime(api.runtime) during register()
+  const runtime = createCompatRuntime(rustPort, botId, 'unknown');
+  compatApi.runtime = runtime;
 
   // CRITICAL: Patch axios BEFORE importing the plugin.
   // @larksuiteoapi/node-sdk creates `defaultHttpInstance = axios.create()` at import time.
@@ -146,29 +173,21 @@ async function loadPlugin() {
     (runtime as Record<string, unknown> & { setPluginId: (id: string) => void }).setPluginId(capturedPlugin.id);
   }
 
-  // Set up MCP handler with captured tools
+  // Set up MCP handler with captured tools (use openclawConfig so tools resolve accounts)
   getCapturedToolsFn = () => compatApi.getCapturedTools();
-  mcpHandler = createMcpHandler(getCapturedToolsFn, pluginConfig);
+  mcpHandler = createMcpHandler(getCapturedToolsFn, openclawConfig);
   const toolCount = compatApi.getCapturedTools().length;
   if (toolCount > 0) {
     console.log(`[plugin-bridge] MCP handler initialized with ${toolCount} captured tool factories`);
   }
 
-  // Build OpenClaw-format config from our flat pluginConfig
-  // QQBot expects: cfg.channels.qqbot.appId, cfg.channels.qqbot.clientSecret, etc.
-  const openclawCfg: Record<string, unknown> = {
-    channels: {
-      [capturedPlugin.id]: {
-        enabled: true,
-        ...pluginConfig,
-        // Force open policies — MyAgents handles access control at the Rust layer
-        // via BIND_xxx codes + allowedUsers whitelist. OpenClaw's pairing mechanism
-        // requires an external dashboard that MyAgents doesn't have.
-        dmPolicy: 'open',
-        groupPolicy: 'open',
-      },
-    },
-  };
+  // Add plugin ID as additional channel key if it differs from inferred brand
+  // (e.g., plugin.id="openclaw-lark" but tools need channels.feishu)
+  const openclawCfg = openclawConfig;
+  if (capturedPlugin.id !== channelKey) {
+    (openclawCfg.channels as Record<string, unknown>)[capturedPlugin.id] =
+      (openclawCfg.channels as Record<string, unknown>)[channelKey];
+  }
 
   // Resolve account using the plugin's own config.resolveAccount if available
   const configAccessor = capturedPlugin.raw?.config as Record<string, unknown> | undefined;
@@ -566,7 +585,9 @@ const server = Bun.serve({
 
       try {
         const result = await mcpHandler.callTool(body.toolName, body.args || {}, body.userId);
-        return Response.json({ ok: true, result });
+        // Ensure result is never undefined — JSON.stringify omits undefined keys,
+        // causing downstream MCP SDK validation to fail (text: undefined)
+        return Response.json({ ok: true, result: result ?? null });
       } catch (err) {
         return Response.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, { status: 500 });
       }

@@ -15,14 +15,17 @@ export interface McpToolDefinition {
 }
 
 // ===== Tool group resolution =====
-// Priority: tool.group (plugin-declared) > name-based heuristic > 'other'
+// Generic protocol: trust plugin-declared group. Feishu-specific fallback when undeclared.
 
-/** Feishu-specific fallback: derive group from tool name when plugin doesn't declare one. */
-function inferToolGroup(toolName: string): string {
+/**
+ * Feishu-specific fallback: derive group from tool name when the plugin
+ * doesn't declare a `group` field. Other plugins should declare their own groups.
+ */
+function inferToolGroupFeishu(toolName: string): string {
   if (toolName.startsWith('feishu_bitable_')) return 'bitable';
   if (toolName.startsWith('feishu_chat')) return 'chat';
   if (toolName.startsWith('feishu_wiki') || toolName.startsWith('feishu_drive')) return 'wiki_drive';
-  if (toolName.startsWith('feishu_doc') || toolName.endsWith('_doc') || toolName === 'feishu_app_scopes') return 'doc';
+  if (toolName.startsWith('feishu_doc') || (toolName.startsWith('feishu_') && toolName.endsWith('_doc')) || toolName === 'feishu_app_scopes') return 'doc';
   if (toolName.startsWith('feishu_perm')) return 'perm';
   return 'other';
 }
@@ -70,12 +73,13 @@ export function createMcpHandler(
             ? (tool.execute as ResolvedTool['execute'])
             : async () => ({ error: 'Tool has no execute method' });
 
-          // Use plugin-declared group if present, otherwise infer from tool name
-          const declaredGroup = typeof tool.group === 'string' ? tool.group : '';
+          // Generic protocol: use plugin-declared group if present.
+          // Feishu fallback: infer group from tool name when plugin doesn't declare one.
+          const declaredGroup = typeof tool.group === 'string' ? tool.group.trim() : '';
           resolved.push({
             name,
             description,
-            group: declaredGroup || inferToolGroup(name),
+            group: declaredGroup || inferToolGroupFeishu(name),
             parameters,
             execute,
           });
