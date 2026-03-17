@@ -1668,6 +1668,32 @@ async fn create_bot_instance<R: Runtime>(
                         text.len(),
                     );
 
+                    // Bridge plugin commands: check if text matches a registered command
+                    // Must be checked AFTER standard commands (/help, /model, etc.)
+                    if is_bridge_platform {
+                        if let AnyAdapter::Bridge(ref bridge) = *adapter_for_reply {
+                            if let Some((cmd_name, cmd_args)) = bridge.match_command(&text) {
+                                ulog_info!("[im] Plugin command /{} from {} (args: {:?})", cmd_name, msg.sender_id, cmd_args);
+                                let bridge_clone = adapter_for_reply.clone();
+                                let chat_id_clone = chat_id.clone();
+                                let sender_id = msg.sender_id.clone();
+                                tokio::spawn(async move {
+                                    if let AnyAdapter::Bridge(ref b) = *bridge_clone {
+                                        match b.execute_command(&cmd_name, &cmd_args, &sender_id, &chat_id_clone).await {
+                                            Ok(result) => {
+                                                let _ = bridge_clone.send_message(&chat_id_clone, &result).await;
+                                            }
+                                            Err(e) => {
+                                                let _ = bridge_clone.send_message(&chat_id_clone, &format!("❌ 命令执行失败: {}", e)).await;
+                                            }
+                                        }
+                                    }
+                                });
+                                continue;
+                            }
+                        }
+                    }
+
                     // Clone shared state for the spawned task
                     let task_router = Arc::clone(&router_clone);
                     let task_adapter = Arc::clone(&adapter_for_reply);
