@@ -580,15 +580,16 @@ export default function TabProvider({
                 }
 
                 // Sync isLoading with backend state on SSE connect/reconnect
-                // This catches cases where message-complete was lost during connection issues
+                // When backend reports 'idle', unconditionally reset frontend loading state.
+                // This catches: (1) message-complete lost during connection issues,
+                // (2) Tab joining a sidecar whose query already finished (no streaming ref set).
                 const initPayload = data as { sessionState?: SessionState } | null;
                 if (initPayload?.sessionState) {
                     setSessionState(initPayload.sessionState);
-                    if (initPayload.sessionState === 'idle' && isStreamingRef.current) {
-                        console.debug(`[TabProvider ${tabId}] chat:init state=idle, syncing isLoading`);
+                    if (initPayload.sessionState === 'idle') {
                         isStreamingRef.current = false;
                         setIsLoading(false);
-                        setSystemStatus(null);  // Also clear system status when syncing to idle
+                        setSystemStatus(null);
                     }
                 }
                 break;
@@ -646,13 +647,11 @@ export default function TabProvider({
                 const payload = data as { sessionState: SessionState } | null;
                 if (payload?.sessionState) {
                     setSessionState(payload.sessionState);
-                    // Sync isLoading with sessionState - defensive fix for when message-complete event is lost
-                    // When backend reports 'idle', ensure frontend isLoading is also false
-                    if (payload.sessionState === 'idle' && isStreamingRef.current) {
-                        console.debug(`[TabProvider ${tabId}] chat:status=idle, syncing isLoading`);
+                    // When backend reports 'idle', unconditionally reset frontend loading state.
+                    if (payload.sessionState === 'idle') {
                         isStreamingRef.current = false;
                         setIsLoading(false);
-                        setSystemStatus(null);  // Also clear system status when syncing to idle
+                        setSystemStatus(null);
                     }
                 }
                 break;
