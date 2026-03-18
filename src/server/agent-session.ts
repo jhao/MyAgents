@@ -3620,7 +3620,16 @@ export async function enqueueUserMessage(
   // Images are resized/sliced server-side to stay within API limits (≤1568px, long images → 1:2 tiles)
   if (hasImages) {
     for (const img of images) {
-      const tiles = await processImage(img);
+      let tiles: Awaited<ReturnType<typeof processImage>>;
+      try {
+        tiles = await processImage(img);
+      } catch (err) {
+        // Image too large or processing failed — skip with inline error text
+        const errMsg = err instanceof Error ? err.message : 'Image processing failed';
+        console.warn(`[agent] processImage error for ${img.name}: ${errMsg}`);
+        contentBlocks.push({ type: 'text', text: `[${errMsg}]` });
+        continue;
+      }
       if (tiles.length > 1) {
         contentBlocks.push({
           type: 'text',

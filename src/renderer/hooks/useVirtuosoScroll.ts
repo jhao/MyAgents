@@ -66,7 +66,9 @@ export function useVirtuosoScroll(
         }
     }, [isLoading]);
 
-    // ── Data changed: if pending, snap to bottom ──
+    // ── Data changed (or session switched): if pending, snap to bottom ──
+    // sessionId is in deps so the effect fires even when two sessions have
+    // the same messagesLength (otherwise the pending flag is never consumed).
     useEffect(() => {
         if (pendingScrollRef.current && messagesLength > 0) {
             pendingScrollRef.current = false;
@@ -77,7 +79,7 @@ export function useVirtuosoScroll(
             }, 50);
             return () => clearTimeout(timer);
         }
-    }, [messagesLength]);
+    }, [messagesLength, sessionId]);
 
     // ── Public API ──
 

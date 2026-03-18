@@ -67,12 +67,14 @@ const MAX_TILES = 8;
  *   so that text remains readable after scaling, then return multiple image payloads.
  */
 export async function processImage(img: ImagePayload): Promise<ImagePayload[]> {
-  // Fast-reject: prevent OOM from extremely large user uploads (same guard as resizeToolImageContent)
+  // Fast-reject: prevent OOM from extremely large user uploads (same guard as resizeToolImageContent).
+  // Returning an empty array strips the image — the caller should surface an error to the user.
+  // Previously this returned [img] which avoided OOM but still sent the oversized payload to the
+  // API, resulting in an opaque API rejection error instead of a clear user-facing message.
   if (img.data.length > MAX_BASE64_LENGTH) {
-    console.warn(
-      `[image-resize] User image too large (${(img.data.length / 1024 / 1024).toFixed(1)} MB base64), skipping`
-    );
-    return [img];
+    const sizeMB = (img.data.length / 1024 / 1024).toFixed(1);
+    console.warn(`[image-resize] User image too large (${sizeMB} MB base64), stripping`);
+    throw new Error(`图片过大（${sizeMB} MB），请压缩后重试`);
   }
 
   try {

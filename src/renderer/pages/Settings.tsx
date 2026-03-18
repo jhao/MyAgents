@@ -1287,7 +1287,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
             }
 
             try {
-                const result = await apiPostJson<{ success: boolean; error?: string }>('/api/subscription/verify', {});
+                const result = await apiPostJson<{ success: boolean; error?: string; detail?: string }>('/api/subscription/verify', {});
                 const newStatus = result.success ? 'valid' : 'invalid';
 
                 if (result.success) {
@@ -1297,10 +1297,14 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                 // Don't cache failures - they will be retried next time
 
                 if (isMounted) {
+                    // Include detail for diagnosis if available and different from error
+                    const errorMsg = result.error && result.detail && result.detail !== result.error
+                        ? `${result.error} (${result.detail.slice(0, 100)})`
+                        : result.error;
                     setSubscriptionStatus((prev: SubscriptionStatus | null) => prev ? {
                         ...prev,
                         verifyStatus: newStatus,
-                        verifyError: result.error
+                        verifyError: errorMsg
                     } : prev);
                 }
             } catch (err) {
