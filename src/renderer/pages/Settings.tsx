@@ -340,7 +340,8 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
 
     // UI-only loading state (not persisted)
     const [verifyLoading, setVerifyLoading] = useState<Record<string, boolean>>({});
-    const [verifyError, setVerifyError] = useState<Record<string, string>>({});
+    const [verifyError, setVerifyError] = useState<Record<string, { error: string; detail?: string }>>({});
+    const [errorDetailOpenId, setErrorDetailOpenId] = useState<string | null>(null);
 
     // Dev-only: Logs panel
     const [showLogs, setShowLogs] = useState(false);
@@ -1410,10 +1411,10 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
         console.log('[verifyProvider] apiKey:', apiKey.slice(0, 10) + '...');
 
         setVerifyLoading((prev) => ({ ...prev, [provider.id]: true }));
-        setVerifyError((prev) => ({ ...prev, [provider.id]: '' }));
+        setVerifyError((prev) => { const next = { ...prev }; delete next[provider.id]; return next; });
 
         try {
-            const result = await apiPostJson<{ success: boolean; error?: string; debug?: unknown }>('/api/provider/verify', {
+            const result = await apiPostJson<{ success: boolean; error?: string; detail?: string }>('/api/provider/verify', {
                 baseUrl: provider.config.baseUrl,
                 apiKey,
                 model: provider.primaryModel,
@@ -1436,9 +1437,8 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                 await saveProviderVerifyStatus(provider.id, 'valid');
             } else {
                 await saveProviderVerifyStatus(provider.id, 'invalid');
-                // Extract error message and show as toast
                 const errorMsg = result.error || '验证失败';
-                setVerifyError((prev) => ({ ...prev, [provider.id]: errorMsg }));
+                setVerifyError((prev) => ({ ...prev, [provider.id]: { error: errorMsg, detail: result.detail } }));
                 toastRef.current.error(`${provider.name}: ${errorMsg}`);
             }
         } catch (err) {
@@ -1448,10 +1448,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
             console.error('[verifyProvider] Exception:', err);
             await saveProviderVerifyStatus(provider.id, 'invalid');
             const errorMsg = err instanceof Error ? err.message : '验证失败';
-            setVerifyError((prev) => ({
-                ...prev,
-                [provider.id]: errorMsg
-            }));
+            setVerifyError((prev) => ({ ...prev, [provider.id]: { error: errorMsg } }));
             toastRef.current.error(`${provider.name}: ${errorMsg}`);
         } finally {
             // Only clear loading if this is still the latest generation
@@ -1470,6 +1467,10 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
             clearTimeout(verifyTimeoutRef.current[provider.id]);
         }
 
+        // Clear stale error and popover immediately on any key change
+        setVerifyError((prev) => { const next = { ...prev }; delete next[provider.id]; return next; });
+        if (errorDetailOpenId === provider.id) setErrorDetailOpenId(null);
+
         // Clear verification status when key changes - will re-verify
         if (key) {
             // Debounce verification
@@ -1477,7 +1478,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                 verifyProvider(provider, key);
             }, 500);
         }
-    }, [saveApiKey, verifyProvider]);
+    }, [saveApiKey, verifyProvider, errorDetailOpenId]);
 
     // Cleanup timeouts on unmount
     useEffect(() => {
@@ -1776,12 +1777,31 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
         return () => clearTimeout(timer);
     }, []); // Only run on mount - refs handle the latest values
 
-    // Render verification status indicator
+    // Error detail popover ref (state is declared near verifyError)
+    const errorDetailPopoverRef = useRef<HTMLDivElement>(null);
+
+    // Close error detail popover on outside click or when the error is cleared
+    useEffect(() => {
+        if (!errorDetailOpenId) return;
+        // If the error for the open popover has been cleared, close the popover
+        if (!verifyError[errorDetailOpenId]) {
+            setErrorDetailOpenId(null);
+            return;
+        }
+        const handleClick = (e: MouseEvent) => {
+            if (errorDetailPopoverRef.current && !errorDetailPopoverRef.current.contains(e.target as Node)) {
+                setErrorDetailOpenId(null);
+            }
+        };
+        document.addEventListener('mousedown', handleClick);
+        return () => document.removeEventListener('mousedown', handleClick);
+    }, [errorDetailOpenId, verifyError]);
+
+    // Render verification status indicator (icon row)
     const renderVerifyStatus = (provider: Provider) => {
         const isLoading = verifyLoading[provider.id];
         const cached = providerVerifyStatus[provider.id];
         const verifyStatus = cached?.status; // 'valid' | 'invalid' | undefined
-        const error = verifyError[provider.id];
         const hasKey = !!apiKeys[provider.id];
 
         if (!hasKey) {
@@ -1801,10 +1821,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                     </div>
                 )}
                 {!isLoading && verifyStatus === 'invalid' && (
-                    <div
-                        className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--error-bg)]"
-                        title={error || '验证失败'}
-                    >
+                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--error-bg)]">
                         <AlertCircle className="h-4 w-4 text-[var(--error)]" />
                     </div>
                 )}
@@ -1824,6 +1841,41 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                     >
                         <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
                     </button>
+                )}
+            </div>
+        );
+    };
+
+    // Render inline error line below the API key input row
+    const renderVerifyError = (provider: Provider) => {
+        const errObj = verifyError[provider.id];
+        if (!errObj) return null;
+
+        return (
+            <div className="flex items-start gap-1.5 pt-1.5 text-xs text-[var(--error)]">
+                <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
+                <span className="min-w-0 break-words">{errObj.error}</span>
+                {errObj.detail && errObj.detail !== errObj.error && (
+                    <div className="relative shrink-0">
+                        <button
+                            type="button"
+                            onClick={() => setErrorDetailOpenId(
+                                errorDetailOpenId === provider.id ? null : provider.id
+                            )}
+                            className="whitespace-nowrap text-[var(--ink-muted)] underline decoration-dotted transition-colors hover:text-[var(--ink)]"
+                        >
+                            详情
+                        </button>
+                        {errorDetailOpenId === provider.id && (
+                            <div
+                                ref={errorDetailPopoverRef}
+                                className="absolute right-0 top-6 z-50 w-80 max-w-[90vw] rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] p-3 shadow-lg"
+                            >
+                                <p className="mb-1 text-[10px] font-medium uppercase tracking-wider text-[var(--ink-muted)]">错误详情</p>
+                                <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] text-[var(--ink-secondary)]">{errObj.detail}</pre>
+                            </div>
+                        )}
+                    </div>
                 )}
             </div>
         );
@@ -2009,18 +2061,21 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
 
                                     {/* API Key input */}
                                     {provider.type === 'api' && (
-                                        <div className="flex items-center gap-2">
-                                            <div className="relative flex-1">
-                                                <KeyRound className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--ink-muted)]" />
-                                                <input
-                                                    type="password"
-                                                    placeholder="输入 API Key"
-                                                    value={apiKeys[provider.id] || ''}
-                                                    onChange={(e) => handleSaveApiKey(provider, e.target.value)}
-                                                    className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper)] py-2.5 pl-10 pr-4 text-sm text-[var(--ink)] placeholder-[var(--ink-muted)] transition-colors focus:border-[var(--focus-border)] focus:outline-none"
-                                                />
+                                        <div>
+                                            <div className="flex items-center gap-2">
+                                                <div className="relative flex-1">
+                                                    <KeyRound className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--ink-muted)]" />
+                                                    <input
+                                                        type="password"
+                                                        placeholder="输入 API Key"
+                                                        value={apiKeys[provider.id] || ''}
+                                                        onChange={(e) => handleSaveApiKey(provider, e.target.value)}
+                                                        className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper)] py-2.5 pl-10 pr-4 text-sm text-[var(--ink)] placeholder-[var(--ink-muted)] transition-colors focus:border-[var(--focus-border)] focus:outline-none"
+                                                    />
+                                                </div>
+                                                {renderVerifyStatus(provider)}
                                             </div>
-                                            {renderVerifyStatus(provider)}
+                                            {renderVerifyError(provider)}
                                         </div>
                                     )}
 

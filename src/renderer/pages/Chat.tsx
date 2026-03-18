@@ -1474,7 +1474,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
           )}
 
           {agentError && (
-            <div className="flex-shrink-0 border-b border-[var(--line)] bg-[var(--paper-inset)]/80 px-4 py-2 text-[11px] text-[var(--ink)]">
+            <div className="relative z-10 flex-shrink-0 border-b border-[var(--line)] bg-[var(--paper-inset)] px-4 py-2 text-[11px] text-[var(--ink)]">
               <div className="mx-auto flex max-w-3xl items-start gap-2">
                 <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-[var(--accent)]" />
                 <div className="flex-1">
