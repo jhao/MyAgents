@@ -4631,22 +4631,63 @@ pub async fn cmd_remove_im_bot_config(
 // ===== Group Permission Commands (v0.1.28) =====
 // Pattern: extract Arc clones under the ManagedImBots lock, drop the lock,
 // then do I/O (disk persist, network send) to avoid blocking other Tauri commands.
+//
+// v0.1.41+: Channels may live in ManagedAgents instead of ManagedImBots.
+// Helper resolves from both containers.
+
+/// Resolve group-related Arcs from either ManagedImBots (legacy) or ManagedAgents (v0.1.41+).
+/// Returns (group_permissions, group_history, adapter, platform_str) or "Bot not running" error.
+async fn resolve_group_context(
+    im_state: &ManagedImBots,
+    agent_state: &ManagedAgents,
+    bot_id: &str,
+) -> Result<(
+    Arc<tokio::sync::RwLock<Vec<GroupPermission>>>,
+    Arc<Mutex<GroupHistoryBuffer>>,
+    Arc<AnyAdapter>,
+    String,
+), String> {
+    // 1. Check ManagedAgents first (new Agent architecture)
+    {
+        let agents = agent_state.lock().await;
+        for (_agent_id, agent) in agents.iter() {
+            if let Some(ch) = agent.channels.get(bot_id) {
+                let inst = &ch.bot_instance;
+                return Ok((
+                    Arc::clone(&inst.group_permissions),
+                    Arc::clone(&inst.group_history),
+                    Arc::clone(&inst.adapter),
+                    inst.platform.to_string(),
+                ));
+            }
+        }
+    }
+    // 2. Fallback: legacy ManagedImBots
+    {
+        let bots = im_state.lock().await;
+        let inst = bots.get(bot_id).ok_or_else(|| "Bot not running".to_string())?;
+        Ok((
+            Arc::clone(&inst.group_permissions),
+            Arc::clone(&inst.group_history),
+            Arc::clone(&inst.adapter),
+            inst.platform.to_string(),
+        ))
+    }
+}
 
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn cmd_approve_group(
     app_handle: AppHandle,
     imState: tauri::State<'_, ManagedImBots>,
+    agentState: tauri::State<'_, ManagedAgents>,
     botId: String,
     groupId: String,
 ) -> Result<(), String> {
     use adapter::ImAdapter;
 
-    let (group_perms, adapter) = {
-        let bots = imState.lock().await;
-        let inst = bots.get(&botId).ok_or_else(|| "Bot not running".to_string())?;
-        (Arc::clone(&inst.group_permissions), Arc::clone(&inst.adapter))
-    }; // ManagedImBots lock released here
+    let (group_perms, _group_history, adapter, _platform) =
+        resolve_group_context(&imState, &agentState, &botId).await?;
 
     // Update permission status to Approved
     {
@@ -4684,14 +4725,12 @@ pub async fn cmd_approve_group(
 pub async fn cmd_reject_group(
     app_handle: AppHandle,
     imState: tauri::State<'_, ManagedImBots>,
+    agentState: tauri::State<'_, ManagedAgents>,
     botId: String,
     groupId: String,
 ) -> Result<(), String> {
-    let (group_perms, group_history, platform) = {
-        let bots = imState.lock().await;
-        let inst = bots.get(&botId).ok_or_else(|| "Bot not running".to_string())?;
-        (Arc::clone(&inst.group_permissions), Arc::clone(&inst.group_history), inst.platform.clone())
-    }; // ManagedImBots lock released here
+    let (group_perms, group_history, _adapter, platform) =
+        resolve_group_context(&imState, &agentState, &botId).await?;
 
     // Remove pending permission
     {
@@ -4725,14 +4764,12 @@ pub async fn cmd_reject_group(
 pub async fn cmd_remove_group(
     app_handle: AppHandle,
     imState: tauri::State<'_, ManagedImBots>,
+    agentState: tauri::State<'_, ManagedAgents>,
     botId: String,
     groupId: String,
 ) -> Result<(), String> {
-    let (group_perms, group_history, platform) = {
-        let bots = imState.lock().await;
-        let inst = bots.get(&botId).ok_or_else(|| "Bot not running".to_string())?;
-        (Arc::clone(&inst.group_permissions), Arc::clone(&inst.group_history), inst.platform.clone())
-    }; // ManagedImBots lock released here
+    let (group_perms, group_history, _adapter, platform) =
+        resolve_group_context(&imState, &agentState, &botId).await?;
 
     // Remove approved permission
     {
