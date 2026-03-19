@@ -327,7 +327,7 @@ const MessageList = memo(function MessageList({
       const sm = streamingMessageRef.current;
       const isStreamingMsg = !!sm && message === sm;
       return (
-        <div className="py-1">
+        <div className="py-1 overflow-hidden">
           <Message
             message={message}
             isLoading={isStreamingMsg && isLoadingRef.current}
@@ -399,8 +399,9 @@ const MessageList = memo(function MessageList({
         followOutput={handleFollowOutput}
         skipAnimationFrameInResizeObserver
         atBottomThreshold={50}
-        defaultItemHeight={50}
-        increaseViewportBy={{ top: 20000, bottom: 2000 }}
+        defaultItemHeight={200}
+        increaseViewportBy={{ top: 800, bottom: 600 }}
+        minOverscanItemCount={4}
         className="h-full"
         components={components}
         itemContent={renderItem}
