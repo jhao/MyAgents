@@ -28,9 +28,7 @@ interface MessageListProps {
   virtuosoRef: React.RefObject<VirtuosoHandle | null>;
   onScrollerRef?: (el: HTMLElement | Window | null) => void;
   followEnabledRef: React.MutableRefObject<boolean | 'force'>;
-  /** Pass to Virtuoso's atBottomStateChange — manages follow state transitions */
   handleAtBottomChange: (atBottom: boolean) => void;
-  bottomPadding?: number;
   pendingPermission?: PermissionRequest | null;
   onPermissionDecision?: (decision: 'deny' | 'allow_once' | 'always_allow') => void;
   pendingAskUserQuestion?: AskUserQuestionRequest | null;
@@ -84,11 +82,44 @@ function hasExitPlanModeTool(message: MessageType): boolean {
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// MINIMAL Virtuoso test — stripped all custom Scroller/List/Footer.
-// Goal: isolate whether the phantom-content bug is caused by our
-// customizations or by Virtuoso itself with our data/content.
-// ═══════════════════════════════════════════════════════════════════════
+// ── Virtuoso Footer — memo'd component that reads dynamic values from refs ──
+// Must NOT be recreated on every render (inline arrow in `components` causes Virtuoso
+// to remount the footer, resetting StatusTimer and forcing extra remeasurement).
+const VirtuosoFooter = memo(function VirtuosoFooter({
+  pendingPermission, onPermissionDecision,
+  pendingAskUserQuestion, onAskUserQuestionSubmit, onAskUserQuestionCancel,
+  showStatus, statusMessage,
+}: {
+  pendingPermission?: PermissionRequest | null;
+  onPermissionDecision?: (decision: 'deny' | 'allow_once' | 'always_allow') => void;
+  pendingAskUserQuestion?: AskUserQuestionRequest | null;
+  onAskUserQuestionSubmit?: (requestId: string, answers: Record<string, string>) => void;
+  onAskUserQuestionCancel?: (requestId: string) => void;
+  showStatus: boolean;
+  statusMessage: string;
+}) {
+  return (
+    <div className="mx-auto max-w-3xl px-3">
+      {pendingPermission && onPermissionDecision && (
+        <div className="py-2">
+          <PermissionPrompt request={pendingPermission} onDecision={(_id, d) => onPermissionDecision(d)} />
+        </div>
+      )}
+      {pendingAskUserQuestion && onAskUserQuestionSubmit && onAskUserQuestionCancel && (
+        <div className="py-2">
+          <AskUserQuestionPrompt request={pendingAskUserQuestion} onSubmit={onAskUserQuestionSubmit} onCancel={onAskUserQuestionCancel} />
+        </div>
+      )}
+      {showStatus && <StatusTimer message={statusMessage} />}
+      <div style={{ height: 280 }} aria-hidden="true" />
+    </div>
+  );
+});
+
+// ── No custom Scroller/List components ──
+// Tested: custom Scroller (py-3 padding) and List (mx-auto max-w-3xl) break Virtuoso's
+// internal height tracking — scrollHeight diverges from totalListHeight by 12,000+ px,
+// causing phantom repeated content. Styling is applied inside itemContent instead.
 
 const MessageList = memo(function MessageList({
   historyMessages,
@@ -100,7 +131,6 @@ const MessageList = memo(function MessageList({
   onScrollerRef,
   followEnabledRef,
   handleAtBottomChange,
-  bottomPadding: _bottomPadding,
   pendingPermission,
   onPermissionDecision,
   pendingAskUserQuestion,
@@ -120,7 +150,6 @@ const MessageList = memo(function MessageList({
     [historyMessages, streamingMessage]
   );
 
-  // Streaming status
   const streamingStatusMessage = useMemo(
     () => getRandomStreamingMessage(),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -156,7 +185,7 @@ const MessageList = memo(function MessageList({
     else if (wasSessionLoadingRef.current) { wasSessionLoadingRef.current = false; setFadeIn(true); }
   }, [isSessionLoading]);
 
-  // Scroll to bottom after load
+  // Scroll to bottom after session load
   const lastScrolledSessionRef = useRef<string | null>(null);
   useEffect(() => {
     if (allMessages.length > 0 && sessionId && sessionId !== lastScrolledSessionRef.current) {
@@ -169,16 +198,21 @@ const MessageList = memo(function MessageList({
     }
   }, [allMessages.length, sessionId, virtuosoRef, followEnabledRef]);
 
-  // ── Auto-scroll during streaming (content height grows without item count change) ──
-  // followOutput only fires on count change. During streaming, the last message keeps
-  // growing taller. autoscrollToBottom() handles this — it scrolls only if already at bottom.
+  // ── Auto-scroll during streaming — throttled to ~20fps via RAF ──
+  // followOutput only fires on count change. During streaming the last message keeps
+  // growing taller. autoscrollToBottom() handles this (scrolls only if already at bottom).
+  const scrollRafRef = useRef(0);
   useEffect(() => {
     if (streamingMessage && followEnabledRef.current) {
-      virtuosoRef.current?.autoscrollToBottom();
+      cancelAnimationFrame(scrollRafRef.current);
+      scrollRafRef.current = requestAnimationFrame(() => {
+        virtuosoRef.current?.autoscrollToBottom();
+      });
     }
+    return () => cancelAnimationFrame(scrollRafRef.current);
   }, [streamingMessage, followEnabledRef, virtuosoRef]);
 
-  // Refs for stable renderItem
+  // ── Refs for stable callbacks — avoid recreating itemContent/Footer on every render ──
   const streamingMessageRef = useRef(streamingMessage);
   streamingMessageRef.current = streamingMessage;
   const isLoadingRef = useRef(isLoading);
@@ -187,6 +221,12 @@ const MessageList = memo(function MessageList({
   exitPlanModeAnchorIdRef.current = exitPlanModeAnchorId;
   const exitPlanModeSlotRef = useRef(exitPlanModeSlot);
   exitPlanModeSlotRef.current = exitPlanModeSlot;
+  const onRewindRef = useRef(onRewind);
+  onRewindRef.current = onRewind;
+  const onRetryRef = useRef(onRetry);
+  onRetryRef.current = onRetry;
+  const onForkRef = useRef(onFork);
+  onForkRef.current = onFork;
 
   const handleFollowOutput = useMemo(
     () => (isAtBottom: boolean) => {
@@ -197,6 +237,48 @@ const MessageList = memo(function MessageList({
     },
     [followEnabledRef]
   );
+
+  // ── Stable itemContent — reads ALL dynamic values from refs, never recreated ──
+  // eslint-disable-next-line react/display-name
+  const renderItem = useMemo(() => (index: number, message: MessageType) => {
+    const sm = streamingMessageRef.current;
+    const isStreamingMsg = !!sm && message === sm;
+    return (
+      <div className="mx-auto max-w-3xl px-3 py-1 overflow-hidden">
+        <Message
+          message={message}
+          isLoading={isStreamingMsg && isLoadingRef.current}
+          onRewind={onRewindRef.current}
+          onRetry={onRetryRef.current}
+          onFork={onForkRef.current}
+          exitPlanModeSlot={message.id === exitPlanModeAnchorIdRef.current ? exitPlanModeSlotRef.current : undefined}
+        />
+      </div>
+    );
+  }, []);
+
+  // ── Stable computeItemKey ──
+  const computeItemKey = useMemo(() => (_i: number, m: MessageType) => m.id, []);
+
+  // ── Stable Footer wrapper — useMemo keeps component identity stable for Virtuoso ──
+  const FooterComponent = useMemo(() => {
+    return function Footer() {
+      return (
+        <VirtuosoFooter
+          pendingPermission={pendingPermission}
+          onPermissionDecision={onPermissionDecision}
+          pendingAskUserQuestion={pendingAskUserQuestion}
+          onAskUserQuestionSubmit={onAskUserQuestionSubmit}
+          onAskUserQuestionCancel={onAskUserQuestionCancel}
+          showStatus={showStatus}
+          statusMessage={statusMessage}
+        />
+      );
+    };
+  }, [pendingPermission, onPermissionDecision, pendingAskUserQuestion, onAskUserQuestionSubmit, onAskUserQuestionCancel, showStatus, statusMessage]);
+
+  // ── Stable components object ──
+  const components = useMemo(() => ({ Footer: FooterComponent }), [FooterComponent]);
 
   return (
     <div
@@ -219,54 +301,15 @@ const MessageList = memo(function MessageList({
         ref={virtuosoRef}
         scrollerRef={onScrollerRef}
         data={allMessages}
-        computeItemKey={(_i, m) => m.id}
+        computeItemKey={computeItemKey}
         followOutput={handleFollowOutput}
         atBottomStateChange={handleAtBottomChange}
         atBottomThreshold={50}
         defaultItemHeight={200}
         className="h-full"
         style={{ overscrollBehavior: 'none' }}
-        itemContent={(index, message) => {
-          const sm = streamingMessageRef.current;
-          const isStreamingMsg = !!sm && message === sm;
-          return (
-            <div className="mx-auto max-w-3xl px-3 py-1 overflow-hidden">
-              <Message
-                message={message}
-                isLoading={isStreamingMsg && isLoadingRef.current}
-                onRewind={onRewind}
-                onRetry={onRetry}
-                onFork={onFork}
-                exitPlanModeSlot={message.id === exitPlanModeAnchorIdRef.current ? exitPlanModeSlotRef.current : undefined}
-              />
-            </div>
-          );
-        }}
-        components={{
-          // Footer renders StatusTimer + prompts in the scroll flow (after last message).
-          // CRITICAL: NO large fixed-height divs here — the 140px input clearance is on
-          // the scroller via CSS, not as a Footer child (that polluted scroller height).
-          Footer: () => (
-            <div className="mx-auto max-w-3xl px-3">
-              {pendingPermission && onPermissionDecision && (
-                <div className="py-2">
-                  <PermissionPrompt request={pendingPermission} onDecision={(_id, d) => onPermissionDecision(d)} />
-                </div>
-              )}
-              {pendingAskUserQuestion && onAskUserQuestionSubmit && onAskUserQuestionCancel && (
-                <div className="py-2">
-                  <AskUserQuestionPrompt request={pendingAskUserQuestion} onSubmit={onAskUserQuestionSubmit} onCancel={onAskUserQuestionCancel} />
-                </div>
-              )}
-              {showStatus && <StatusTimer message={statusMessage} />}
-              {/* Bottom clearance for fixed input area — small fixed div, won't cause
-                  the scrollHeight divergence that the old 140px Footer div caused because
-                  Virtuoso's totalListHeight tracks Footer height changes correctly when
-                  the Footer content is stable (not dynamically growing). */}
-              <div style={{ height: 280 }} aria-hidden="true" />
-            </div>
-          ),
-        }}
+        components={components}
+        itemContent={renderItem}
       />
     </div>
   );

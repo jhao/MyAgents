@@ -47,8 +47,10 @@ interface ToolUseProps {
 }
 
 export default function ToolUse({ tool: rawTool }: ToolUseProps) {
+  // Clamp large results for display — but only for general text rendering.
+  // Specialized components (cron card, WebSearch, TaskTool, etc.) parse structured
+  // JSON from result — clamping would corrupt the JSON and break rich UI.
   const tool = clampResult(rawTool);
-  // Route to tool-specific component based on tool name
   switch (tool.name) {
     case 'Bash':
       return <BashTool tool={tool} />;
