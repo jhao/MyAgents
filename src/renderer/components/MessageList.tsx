@@ -1,7 +1,7 @@
 import { Loader2 } from 'lucide-react';
 import React, { memo, useMemo, useState, useEffect, useRef } from 'react';
 import { Virtuoso } from 'react-virtuoso';
-import type { VirtuosoHandle, StateSnapshot } from 'react-virtuoso';
+import type { VirtuosoHandle } from 'react-virtuoso';
 
 import Message from '@/components/Message';
 import { PermissionPrompt, type PermissionRequest } from '@/components/PermissionPrompt';
@@ -107,11 +107,6 @@ function hasExitPlanModeTool(message: MessageType): boolean {
   );
 }
 
-// ── Virtuoso state snapshot cache — module-level so it persists across component remounts ──
-// Stores measured item heights + scroll position per sessionId. When the user revisits a
-// session, restoreStateFrom provides real heights → zero scroll jumping.
-const stateSnapshotCache = new Map<string, StateSnapshot>();
-
 // ── Stable custom Virtuoso sub-components (defined outside to prevent re-creation) ──
 
 /** Scroller: the actual overflow:auto element */
@@ -212,23 +207,21 @@ const MessageList = memo(function MessageList({
     [historyMessages, streamingMessage]
   );
 
-  // ── Virtuoso state snapshot cache — persist measured item heights across session switches ──
-  // Without this, every session switch (key={sessionId} → Virtuoso remount) loses all measured
-  // heights, forcing Virtuoso to re-estimate with defaultItemHeight. With the cache, the second
-  // visit to a session restores real heights instantly — zero jumping.
-  const savedStateRef = useRef(stateSnapshotCache.get(sessionId || ''));
-  // Save state before Virtuoso unmounts (session switch / tab close)
+  // ── Scroll to bottom after session load ──
+  // initialTopMostItemIndex is unreliable with variable-height items (Virtuoso can't calculate
+  // the exact scroll position without measuring). Instead, we scroll to LAST after Virtuoso has
+  // mounted and rendered. The fadeIn animation (600ms opacity:0) hides this correction.
+  const lastScrolledSessionRef = useRef<string | null>(null);
   useEffect(() => {
-    const sid = sessionId;
-    const ref = virtuosoRef.current;
-    return () => {
-      if (sid && ref) {
-        ref.getState((snapshot) => {
-          stateSnapshotCache.set(sid, snapshot);
-        });
-      }
-    };
-  }, [sessionId, virtuosoRef]);
+    if (allMessages.length > 0 && sessionId && sessionId !== lastScrolledSessionRef.current) {
+      lastScrolledSessionRef.current = sessionId;
+      // Delay ensures Virtuoso has rendered initial items and measured their heights
+      const timer = setTimeout(() => {
+        virtuosoRef.current?.scrollToIndex({ index: 'LAST' });
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [allMessages.length, sessionId, virtuosoRef]);
 
   // ── Streaming status ──
   const streamingStatusMessage = useMemo(
@@ -399,7 +392,6 @@ const MessageList = memo(function MessageList({
         data={allMessages}
         computeItemKey={computeItemKey}
         initialTopMostItemIndex={allMessages.length > 0 ? allMessages.length - 1 : 0}
-        restoreStateFrom={savedStateRef.current}
         followOutput={handleFollowOutput}
         atBottomThreshold={50}
         defaultItemHeight={300}
