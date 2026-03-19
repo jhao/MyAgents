@@ -202,7 +202,6 @@ const MessageList = memo(function MessageList({
         </div>
       )}
 
-      {/* ═══ MINIMAL Virtuoso — NO custom Scroller/List/Footer ═══ */}
       <Virtuoso
         key={sessionId || 'pending'}
         ref={virtuosoRef}
@@ -230,24 +229,32 @@ const MessageList = memo(function MessageList({
             </div>
           );
         }}
+        components={{
+          // Footer renders StatusTimer + prompts in the scroll flow (after last message).
+          // CRITICAL: NO large fixed-height divs here — the 140px input clearance is on
+          // the scroller via CSS, not as a Footer child (that polluted scroller height).
+          Footer: () => (
+            <div className="mx-auto max-w-3xl px-3">
+              {pendingPermission && onPermissionDecision && (
+                <div className="py-2">
+                  <PermissionPrompt request={pendingPermission} onDecision={(_id, d) => onPermissionDecision(d)} />
+                </div>
+              )}
+              {pendingAskUserQuestion && onAskUserQuestionSubmit && onAskUserQuestionCancel && (
+                <div className="py-2">
+                  <AskUserQuestionPrompt request={pendingAskUserQuestion} onSubmit={onAskUserQuestionSubmit} onCancel={onAskUserQuestionCancel} />
+                </div>
+              )}
+              {showStatus && <StatusTimer message={statusMessage} />}
+              {/* Bottom clearance for fixed input area — small fixed div, won't cause
+                  the scrollHeight divergence that the old 140px Footer div caused because
+                  Virtuoso's totalListHeight tracks Footer height changes correctly when
+                  the Footer content is stable (not dynamically growing). */}
+              <div style={{ height: 140 }} aria-hidden="true" />
+            </div>
+          ),
+        }}
       />
-
-      {/* Footer OUTSIDE Virtuoso — avoids polluting its height calculation */}
-      <div className="pointer-events-none absolute bottom-0 left-0 right-0">
-        <div className="pointer-events-auto mx-auto max-w-3xl px-3">
-          {pendingPermission && onPermissionDecision && (
-            <div className="py-2">
-              <PermissionPrompt request={pendingPermission} onDecision={(_id, d) => onPermissionDecision(d)} />
-            </div>
-          )}
-          {pendingAskUserQuestion && onAskUserQuestionSubmit && onAskUserQuestionCancel && (
-            <div className="py-2">
-              <AskUserQuestionPrompt request={pendingAskUserQuestion} onSubmit={onAskUserQuestionSubmit} onCancel={onAskUserQuestionCancel} />
-            </div>
-          )}
-          {showStatus && <StatusTimer message={statusMessage} />}
-        </div>
-      </div>
     </div>
   );
 });
