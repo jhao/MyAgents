@@ -250,7 +250,7 @@ const MessageList = memo(function MessageList({
                   the scrollHeight divergence that the old 140px Footer div caused because
                   Virtuoso's totalListHeight tracks Footer height changes correctly when
                   the Footer content is stable (not dynamically growing). */}
-              <div style={{ height: 140 }} aria-hidden="true" />
+              <div style={{ height: 280 }} aria-hidden="true" />
             </div>
           ),
         }}
