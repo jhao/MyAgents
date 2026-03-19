@@ -396,11 +396,10 @@ const MessageList = memo(function MessageList({
         scrollerRef={onScrollerRef}
         data={allMessages}
         computeItemKey={computeItemKey}
-        alignToBottom
         followOutput={handleFollowOutput}
         skipAnimationFrameInResizeObserver
         atBottomThreshold={50}
-        defaultItemHeight={300}
+        defaultItemHeight={50}
         increaseViewportBy={{ top: 20000, bottom: 2000 }}
         className="h-full"
         components={components}
