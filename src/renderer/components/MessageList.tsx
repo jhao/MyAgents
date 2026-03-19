@@ -207,6 +207,34 @@ const MessageList = memo(function MessageList({
     [historyMessages, streamingMessage]
   );
 
+  // ── Dynamic defaultItemHeight — estimate average rendered height from content structure ──
+  // Critical for scroll stability: if the estimate is too high, upward scrolling causes items
+  // to measure SHORTER → total height shrinks → viewport snaps back to bottom (items "follow you").
+  // If too low, items measure TALLER → gaps appear. Closer to reality = less jumping.
+  const estimatedItemHeight = useMemo(() => {
+    if (historyMessages.length === 0) return 300;
+    let totalEstimate = 0;
+    for (const msg of historyMessages) {
+      if (msg.role === 'user') {
+        const textLen = typeof msg.content === 'string' ? msg.content.length : 0;
+        totalEstimate += Math.max(60, Math.min(300, 60 + textLen * 0.3));
+      } else if (Array.isArray(msg.content)) {
+        let h = 20; // padding
+        for (const block of msg.content) {
+          if (block.type === 'text') {
+            h += Math.max(40, Math.min(2000, (block.text?.length || 0) * 0.015));
+          } else {
+            h += 45; // collapsed tool/thinking header
+          }
+        }
+        totalEstimate += Math.max(100, Math.min(5000, h));
+      } else {
+        totalEstimate += 200;
+      }
+    }
+    return Math.max(100, Math.round(totalEstimate / historyMessages.length));
+  }, [historyMessages]);
+
   // ── Streaming status ──
   const streamingStatusMessage = useMemo(
     () => getRandomStreamingMessage(),
@@ -366,7 +394,7 @@ const MessageList = memo(function MessageList({
         initialTopMostItemIndex={allMessages.length > 0 ? allMessages.length - 1 : 0}
         followOutput={handleFollowOutput}
         atBottomThreshold={50}
-        defaultItemHeight={400}
+        defaultItemHeight={estimatedItemHeight}
         increaseViewportBy={{ top: 600, bottom: 400 }}
         className="h-full"
         components={components}
