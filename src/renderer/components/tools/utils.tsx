@@ -173,9 +173,12 @@ interface ExpandableResultProps {
   className?: string;
   /** Additional wrapper className (e.g. for terminal-style bg) */
   wrapperClassName?: string;
+  /** Gradient fade color — must match the actual background for smooth fade.
+   *  Defaults to paper-inset; BashTool passes code-bg or error-bg. */
+  gradientFrom?: string;
 }
 
-export function ExpandableResult({ content: rawContent, className = '', wrapperClassName = '' }: ExpandableResultProps) {
+export function ExpandableResult({ content: rawContent, className = '', wrapperClassName = '', gradientFrom = 'from-[var(--paper-inset)]' }: ExpandableResultProps) {
   // Auto-unwrap SDK JSON wrappers so all tools display clean text
   const content = unwrapSdkResult(rawContent);
   const [isResultExpanded, setIsResultExpanded] = useState(false);
@@ -197,7 +200,7 @@ export function ExpandableResult({ content: rawContent, className = '', wrapperC
         {content}
       </pre>
       {isOverflowing && !isResultExpanded && (
-        <div className="absolute bottom-0 left-0 right-0 flex justify-center bg-gradient-to-t from-[var(--paper-inset)] to-transparent pb-2 pt-8">
+        <div className={`absolute bottom-0 left-0 right-0 flex justify-center bg-gradient-to-t ${gradientFrom} to-transparent pb-2 pt-8`}>
           <button
             type="button"
             onClick={() => setIsResultExpanded(true)}
