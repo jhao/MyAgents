@@ -3624,10 +3624,11 @@ export async function enqueueUserMessage(
       try {
         tiles = await processImage(img);
       } catch (err) {
-        // Image too large or processing failed — skip with inline error text
+        // Image too large or processing failed — notify user and inform Claude
         const errMsg = err instanceof Error ? err.message : 'Image processing failed';
         console.warn(`[agent] processImage error for ${img.name}: ${errMsg}`);
-        contentBlocks.push({ type: 'text', text: `[${errMsg}]` });
+        broadcast('chat:message-error', `图片 "${img.name}" 处理失败：${errMsg}`);
+        contentBlocks.push({ type: 'text', text: `[Image "${img.name}" omitted: ${errMsg}]` });
         continue;
       }
       if (tiles.length > 1) {

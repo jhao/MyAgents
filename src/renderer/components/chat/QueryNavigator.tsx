@@ -129,13 +129,21 @@ export default function QueryNavigator({
 
     observeUserElements();
 
-    // Re-observe when virtuoso mounts/unmounts elements (DOM subtree changes)
+    // Re-observe when virtuoso mounts/unmounts elements (DOM subtree changes).
+    // Debounce: streaming causes 100+ mutations/sec (token appends, markdown renders).
+    // Batch into a single querySelectorAll scan per 100ms window.
+    let debounceTimer: ReturnType<typeof setTimeout> | undefined;
     const mutationObserver = new MutationObserver(() => {
-      observeUserElements();
+      if (debounceTimer) return; // Already scheduled
+      debounceTimer = setTimeout(() => {
+        debounceTimer = undefined;
+        observeUserElements();
+      }, 100);
     });
     mutationObserver.observe(container, { childList: true, subtree: true });
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       intersectionObserver.disconnect();
       mutationObserver.disconnect();
     };
