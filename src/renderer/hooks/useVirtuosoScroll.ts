@@ -1,11 +1,11 @@
 /**
  * useVirtuosoScroll — thin wrapper around react-virtuoso's scroll API.
  *
- * Replaces the 490-line useAutoScroll.ts with ~80 lines:
+ * Replaces the 490-line useAutoScroll.ts:
  *  - followOutput:         managed by Virtuoso's built-in followOutput callback
  *  - scrollToBottom:       virtuosoRef.scrollToIndex({ index: 'LAST' }) + force-follow
  *  - pauseAutoScroll:      temporarily disables followOutput via ref
- *  - session switch:       pendingScrollRef → instant scroll on next data change
+ *  - session switch:       Virtuoso remounts via key={sessionId}, initialTopMostItemIndex handles position
  *  - user scroll-up:       followOutput returns false when not at bottom (Virtuoso manages)
  */
 
@@ -31,55 +31,22 @@ export interface VirtuosoScrollControls {
 
 export function useVirtuosoScroll(
     isLoading: boolean,
-    messagesLength: number,
-    sessionId?: string | null,
+    _messagesLength: number,
+    _sessionId?: string | null,
 ): VirtuosoScrollControls {
     const virtuosoRef = useRef<VirtuosoHandle>(null);
     const scrollerRef = useRef<HTMLElement | null>(null);
     const followEnabledRef = useRef<boolean | 'force'>(true);
     const pauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const pendingScrollRef = useRef(false);
-    const lastSessionIdRef = useRef<string | null | undefined>(undefined);
 
-    // ── Session switch: mark pending instant-scroll ──
-    useEffect(() => {
-        const prev = lastSessionIdRef.current;
-        lastSessionIdRef.current = sessionId;
-
-        const isSwitch = prev !== undefined && sessionId !== prev;
-        const isInitial = prev === undefined && sessionId != null;
-
-        if (isSwitch || isInitial) {
-            pendingScrollRef.current = true;
-            followEnabledRef.current = true;
-        }
-    }, [sessionId]);
-
-    // ── Streaming starts: clear pending flag and force-follow, normal follow handles the rest ──
+    // ── Streaming starts: downgrade force-follow to normal follow ──
     useEffect(() => {
         if (isLoading) {
-            pendingScrollRef.current = false;
-            // Downgrade from 'force' to true — streaming is underway, normal follow suffices
             if (followEnabledRef.current === 'force') {
                 followEnabledRef.current = true;
             }
         }
     }, [isLoading]);
-
-    // ── Data changed (or session switched): if pending, snap to bottom ──
-    // sessionId is in deps so the effect fires even when two sessions have
-    // the same messagesLength (otherwise the pending flag is never consumed).
-    useEffect(() => {
-        if (pendingScrollRef.current && messagesLength > 0) {
-            pendingScrollRef.current = false;
-            // Short timeout ensures Virtuoso has measured and rendered the new data
-            // before we scroll. More reliable than double-RAF which is timing-dependent.
-            const timer = setTimeout(() => {
-                virtuosoRef.current?.scrollToIndex({ index: 'LAST' });
-            }, 50);
-            return () => clearTimeout(timer);
-        }
-    }, [messagesLength, sessionId]);
 
     // ── Public API ──
 
@@ -89,7 +56,6 @@ export function useVirtuosoScroll(
         // SSE replay appends user message later → followOutput must keep tracking
         // even though Virtuoso doesn't yet consider us "at bottom".
         followEnabledRef.current = 'force';
-        pendingScrollRef.current = false;
         virtuosoRef.current?.scrollToIndex({ index: 'LAST', behavior: 'smooth' });
     }, []);
 

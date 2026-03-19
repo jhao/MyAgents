@@ -1588,6 +1588,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
               streamingMessage={streamingMessage}
               isLoading={isLoading}
               isSessionLoading={isSessionLoading}
+              sessionId={sessionId}
               virtuosoRef={virtuosoRef}
               onScrollerRef={handleScrollerRef}
               followEnabledRef={followEnabledRef}

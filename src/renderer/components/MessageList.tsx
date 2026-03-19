@@ -32,6 +32,8 @@ interface MessageListProps {
   streamingMessage: MessageType | null;
   isLoading: boolean;
   isSessionLoading?: boolean;
+  /** Session ID — used as Virtuoso key to force remount on session switch (clean height cache) */
+  sessionId?: string | null;
   /** VirtuosoHandle ref — scroll API for session switch / send message */
   virtuosoRef: React.RefObject<VirtuosoHandle | null>;
   /** Callback to capture virtuoso's internal scroll element (for QueryNavigator) */
@@ -178,6 +180,7 @@ const MessageList = memo(function MessageList({
   streamingMessage,
   isLoading,
   isSessionLoading,
+  sessionId,
   virtuosoRef,
   onScrollerRef,
   followEnabledRef,
@@ -355,6 +358,7 @@ const MessageList = memo(function MessageList({
       )}
 
       <Virtuoso
+        key={sessionId || 'pending'}
         ref={virtuosoRef}
         scrollerRef={onScrollerRef}
         data={allMessages}
@@ -363,7 +367,6 @@ const MessageList = memo(function MessageList({
         followOutput={handleFollowOutput}
         atBottomThreshold={50}
         increaseViewportBy={{ top: 600, bottom: 400 }}
-        defaultItemHeight={120}
         className="h-full"
         components={components}
         itemContent={renderItem}
