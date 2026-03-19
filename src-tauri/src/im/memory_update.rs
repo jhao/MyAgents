@@ -179,7 +179,11 @@ pub async fn check_and_spawn<R: Runtime>(
     });
 }
 
-/// Run the batch: serially process each qualifying session
+/// Cooldown: skip sessions with user activity in the last N minutes, retry once after waiting.
+const ACTIVE_SESSION_COOLDOWN_MINUTES: i64 = 15;
+
+/// Run the batch: serially process each qualifying session.
+/// Sessions with recent user activity are deferred and retried after a cooldown.
 async fn run_batch<R: Runtime>(
     sessions: &[String],
     agent_id: &str,
@@ -192,18 +196,28 @@ async fn run_batch<R: Runtime>(
 ) -> u32 {
     let http_client = crate::local_http::json_client(Duration::from_secs(3660)); // 61 min (Bun waits 60 min internally)
     let mut updated = 0u32;
+    let mut deferred: Vec<String> = Vec::new();
+
+    // Phase 1: process idle sessions, defer recently active ones
+    let active_map = read_session_last_active_map();
+    let cutoff = Utc::now() - chrono::Duration::minutes(ACTIVE_SESSION_COOLDOWN_MINUTES);
 
     for session_id in sessions {
+        if let Some(last_active) = active_map.get(session_id.as_str()) {
+            if *last_active > cutoff {
+                let ago = (Utc::now() - *last_active).num_minutes();
+                ulog_info!(
+                    "[memory-update] Session {} active {}min ago (cooldown {}min), deferring",
+                    session_id, ago, ACTIVE_SESSION_COOLDOWN_MINUTES
+                );
+                deferred.push(session_id.clone());
+                continue;
+            }
+        }
+
         match update_single_session(
-            session_id,
-            agent_id,
-            workspace_path,
-            sidecar_manager,
-            app_handle,
-            &http_client,
-            current_model,
-            current_provider_env,
-            mcp_servers_json,
+            session_id, agent_id, workspace_path, sidecar_manager,
+            app_handle, &http_client, current_model, current_provider_env, mcp_servers_json,
         ).await {
             Ok(()) => {
                 updated += 1;
@@ -211,6 +225,41 @@ async fn run_batch<R: Runtime>(
             }
             Err(e) => {
                 ulog_error!("[memory-update] Session {} failed: {}", session_id, e);
+            }
+        }
+    }
+
+    // Phase 2: retry deferred sessions after cooldown
+    if !deferred.is_empty() {
+        ulog_info!(
+            "[memory-update] {} session(s) deferred, retrying in {}min",
+            deferred.len(), ACTIVE_SESSION_COOLDOWN_MINUTES
+        );
+        tokio::time::sleep(Duration::from_secs(ACTIVE_SESSION_COOLDOWN_MINUTES as u64 * 60)).await;
+
+        // Re-read fresh timestamps
+        let fresh_map = read_session_last_active_map();
+        let fresh_cutoff = Utc::now() - chrono::Duration::minutes(ACTIVE_SESSION_COOLDOWN_MINUTES);
+
+        for session_id in &deferred {
+            if let Some(last_active) = fresh_map.get(session_id.as_str()) {
+                if *last_active > fresh_cutoff {
+                    ulog_info!("[memory-update] Session {} still active after wait, skipping", session_id);
+                    continue;
+                }
+            }
+
+            match update_single_session(
+                session_id, agent_id, workspace_path, sidecar_manager,
+                app_handle, &http_client, current_model, current_provider_env, mcp_servers_json,
+            ).await {
+                Ok(()) => {
+                    updated += 1;
+                    ulog_info!("[memory-update] Session {} updated successfully (deferred)", session_id);
+                }
+                Err(e) => {
+                    ulog_error!("[memory-update] Session {} failed (deferred): {}", session_id, e);
+                }
             }
         }
     }
@@ -324,6 +373,42 @@ async fn sync_ai_config_to_port(
             .send()
             .await;
     }
+}
+
+/// Read lastActiveAt for all sessions into a lookup map.
+/// Used to detect recently active sessions that should not be interrupted by memory updates.
+fn read_session_last_active_map() -> std::collections::HashMap<String, DateTime<Utc>> {
+    let myagents_dir = match dirs::home_dir() {
+        Some(home) => home.join(".myagents"),
+        None => return Default::default(),
+    };
+
+    let sessions_path = myagents_dir.join("sessions.json");
+    let content = match std::fs::read_to_string(&sessions_path) {
+        Ok(c) => c,
+        Err(e) => {
+            ulog_warn!("[memory-update] Failed to read sessions.json for activity check: {}", e);
+            return Default::default();
+        }
+    };
+
+    let sessions: Vec<SessionMeta> = match serde_json::from_str(&content) {
+        Ok(s) => s,
+        Err(e) => {
+            ulog_warn!("[memory-update] Failed to parse sessions.json for activity check: {}", e);
+            return Default::default();
+        }
+    };
+
+    let mut map = std::collections::HashMap::new();
+    for session in sessions {
+        if let Some(ref last_active) = session.last_active_at {
+            if let Ok(dt) = last_active.parse::<DateTime<Utc>>() {
+                map.insert(session.id.clone(), dt);
+            }
+        }
+    }
+    map
 }
 
 /// Collect session IDs that qualify for memory update
