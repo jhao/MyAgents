@@ -441,6 +441,13 @@ let pendingResumeSessionAt: string | undefined;
 // 时间回溯进行中 — 阻止 enqueueUserMessage 并发写入
 let rewindPromise: Promise<unknown> | null = null;
 
+// 当前 SDK session 分配的 UUID 集合（区分「本 session 分配」vs「从磁盘加载的旧 UUID」）。
+// rewindSession 使用此集合校验 lastAssistantUuid 是否属于当前 session：
+// - 属于 → 可安全用于 resumeSessionAt（SDK 一定认识该 UUID）
+// - 不属于 → session 被重建过（如换机、No conversation found 恢复），旧 UUID 对 SDK 无意义，
+//   强行传 resumeSessionAt 会导致 SDK 报错、session 启动失败、用户消息丢失。
+const currentSessionUuids = new Set<string>();
+
 // ===== 持久 Session 门控 =====
 // 消息交付：事件驱动替代轮询，generator 阻塞在 waitForMessage 直到新消息到达
 let messageResolver: ((item: MessageQueueItem | null) => void) | null = null;
@@ -3090,6 +3097,7 @@ function clearMessageState(): void {
   imTextBlockIndices.clear();
 
   strippedToolResultIds.clear();
+  currentSessionUuids.clear();
   isStreamingMessage = false;
   messageSequence = 0;
   pendingConfigRestart = false;
@@ -3942,7 +3950,16 @@ export async function interruptCurrentResponse(): Promise<boolean> {
  */
 export function cancelQueueItem(queueId: string): string | null {
   const index = messageQueue.findIndex(item => item.id === queueId);
-  if (index === -1) return null;
+  if (index === -1) {
+    // 消息可能已被 wakeGenerator 直接投递 → 在 pendingMidTurnQueue 中（已 yield 给 SDK stdin）。
+    // SDK 已收到无法撤回，但从 pending 队列移除可防止 queue:started 触发和 messages[] 污染。
+    const pmIdx = pendingMidTurnQueue.findIndex(p => p.queueId === queueId);
+    if (pmIdx === -1) return null;
+    const [removed] = pendingMidTurnQueue.splice(pmIdx, 1);
+    broadcast('queue:cancelled', { queueId });
+    console.log(`[agent] Queue item ${queueId} cancelled from pendingMidTurnQueue (already yielded to SDK, AI may still respond)`);
+    return typeof removed.userMessage.content === 'string' ? removed.userMessage.content : '';
+  }
 
   const [item] = messageQueue.splice(index, 1);
   // Only resolve if this was a non-blocking queued item (wasQueued: true has no-op resolve).
@@ -3959,9 +3976,15 @@ export function cancelQueueItem(queueId: string): string | null {
  */
 export async function forceExecuteQueueItem(queueId: string): Promise<boolean> {
   const index = messageQueue.findIndex(item => item.id === queueId);
-  if (index === -1) return false;
 
-  // Move to front of queue
+  // 消息可能已被 wakeGenerator 直接投递给 generator（跳过 messageQueue），
+  // 此时它在 pendingMidTurnQueue 中（已 yield 给 SDK stdin，等待 AI 消费）。
+  // 这种情况下中断当前响应即可让 SDK 更快处理该消息。
+  const inPendingMidTurn = index === -1 && pendingMidTurnQueue.some(p => p.queueId === queueId);
+
+  if (index === -1 && !inPendingMidTurn) return false;
+
+  // Move to front of queue (only if still in messageQueue)
   if (index > 0) {
     const [item] = messageQueue.splice(index, 1);
     messageQueue.unshift(item);
@@ -3969,6 +3992,7 @@ export async function forceExecuteQueueItem(queueId: string): Promise<boolean> {
 
   if (isSessionActive()) {
     // Session 存活：中断当前响应，generator 会自然消费队列头部
+    // （或 pendingMidTurnQueue 中的消息在中断后被 SDK 立即处理）
     await interruptCurrentResponse();
   } else {
     // Session 已死：generator 不存在，无人消费队列。
@@ -4026,7 +4050,8 @@ export async function rewindSession(userMessageId: string): Promise<{
 
     // 3. 在活跃 session 上直接执行 rewindFiles（subprocess 存活，即时调用！）
     //    跳过已被 force-abort 的 session：subprocess 正在死亡，发 IPC 会阻塞到超时（~100s）。
-    if (querySession && lastAssistantUuid && !shouldAbortSession) {
+    //    跳过不属于当前 session 的 UUID：SDK 不认识，调用必定失败且日志噪声。
+    if (querySession && lastAssistantUuid && !shouldAbortSession && currentSessionUuids.has(lastAssistantUuid)) {
       try {
         const REWIND_FILES_TIMEOUT_MS = 5_000;
         const result = await Promise.race([
@@ -4062,9 +4087,16 @@ export async function rewindSession(userMessageId: string): Promise<{
     persistMessagesToStorage();
 
     // 7. 设置下次 query 的对话截断点
-    if (lastAssistantUuid) {
+    //    仅当 UUID 属于当前 SDK session 时才使用 resumeSessionAt。
+    //    旧 UUID（从磁盘加载、来自其他机器/已重建的 session）对当前 SDK 无意义，
+    //    强行传入会导致 SDK 报错 → session 启动失败 → 用户消息丢失。
+    const uuidIsCurrentSession = lastAssistantUuid && currentSessionUuids.has(lastAssistantUuid);
+    if (uuidIsCurrentSession) {
       pendingResumeSessionAt = lastAssistantUuid;
     } else {
+      if (lastAssistantUuid) {
+        console.warn(`[agent] rewind: skipping resumeSessionAt — UUID ${lastAssistantUuid} not in current session (stale from disk/previous session)`);
+      }
       pendingResumeSessionAt = undefined;
       sessionRegistered = false;
       sessionId = randomUUID();
@@ -4102,6 +4134,9 @@ export function forkSession(assistantMessageId: string): {
   if (targetIndex < 0) return { success: false, error: 'Assistant message not found' };
   const targetMsg = messages[targetIndex];
   if (!targetMsg.sdkUuid) return { success: false, error: 'Message has no SDK UUID (cannot fork)' };
+  if (!currentSessionUuids.has(targetMsg.sdkUuid)) {
+    return { success: false, error: 'SDK UUID 已过期（当前 SDK session 不包含此消息），请重新发送后再 fork' };
+  }
 
   // 2. Get current session info for the fork source
   const sourceSessionId = sessionId; // unifiedSession: id === SDK session ID
@@ -4171,6 +4206,7 @@ async function startStreamingSession(preWarm = false): Promise<void> {
   shouldAbortSession = false;
   resetAbortFlag();
   isProcessing = true;
+  currentSessionUuids.clear(); // 新 session 实例，旧 UUID 不再有效
   let preWarmStartedOk = false; // Tracks whether pre-warm received system_init
   let abortedByTimeout = false; // Distinguishes timeout abort from config-change abort
   let detectedAlreadyInUse = false; // stderr reported "Session ID already in use"
@@ -4899,6 +4935,7 @@ async function startStreamingSession(preWarm = false): Promise<void> {
       } else if (sdkMessage.type === 'user') {
         // Track SDK user UUID — only for non-synthetic messages
         if (!(sdkMessage as { isSynthetic?: boolean }).isSynthetic && sdkMessage.uuid) {
+          currentSessionUuids.add(sdkMessage.uuid);
           for (let i = messages.length - 1; i >= 0; i--) {
             if (messages[i].role === 'user' && !messages[i].sdkUuid) {
               messages[i].sdkUuid = sdkMessage.uuid;
@@ -4986,6 +5023,7 @@ async function startStreamingSession(preWarm = false): Promise<void> {
         // 始终更新为最新的 UUID — SDK 一个回合可能输出多条 assistant 消息
         // （thinking → text），resumeSessionAt 需要最后一条的 UUID 才能保留完整回答
         if (sdkMessage.uuid) {
+          currentSessionUuids.add(sdkMessage.uuid);
           currentAssistant.sdkUuid = sdkMessage.uuid;
           // Broadcast to frontend so fork button appears during streaming
           // (user messages already broadcast this; assistant messages were missing it)

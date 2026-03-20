@@ -1014,7 +1014,11 @@ pub async fn install_openclaw_plugin<R: tauri::Runtime>(
         let path_for_add = augmented_path;
         let add_output = tokio::task::spawn_blocking(move || {
             let mut cmd = crate::process_cmd::new(&node_for_add);
-            cmd.args([cli_str_add.as_str(), "install", npm_spec_owned.as_str()])
+            // --omit=peer: openclaw 插件声明 peerDependencies: { openclaw: '*' }，
+            // npm 会自动安装原始 openclaw 包的 400+ 传递依赖（larksuite、playwright-core、aws-sdk 等）。
+            // 我们的 shim 会在后续覆盖 openclaw，但已安装的垃圾依赖不会被清除。
+            // --omit=peer 阻止这一行为，节省安装时间/体积/安全攻击面。
+            cmd.args([cli_str_add.as_str(), "install", npm_spec_owned.as_str(), "--omit=peer"])
                 .current_dir(&base_for_add)
                 .env("PATH", &path_for_add);
             apply_proxy_env(&mut cmd);

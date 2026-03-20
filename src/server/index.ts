@@ -1058,7 +1058,9 @@ function buildCronEventPrompt(
 function startupBeacon(step: string): void {
   // Write to stderr — captured by Rust drain thread → unified log
   try { process.stderr.write(`[startup] ${step}\n`); } catch { /* ignore */ }
-  // Also write directly to unified log file
+  // Also write directly to unified log file.
+  // NOTE: 内联时间戳格式而非 import localTimestamp()，因为此函数在 initLogger() 之前运行，
+  // 需保持零依赖以诊断 Windows 上 initLogger 未到达的 hang 问题。
   try {
     const now = new Date();
     const y = now.getFullYear();
@@ -1067,7 +1069,11 @@ function startupBeacon(step: string): void {
     const logsDir = join(homedir(), '.myagents', 'logs');
     if (!existsSync(logsDir)) mkdirSync(logsDir, { recursive: true });
     const filePath = join(logsDir, `unified-${y}-${m}-${d}.log`);
-    const ts = now.toISOString();
+    const h = String(now.getHours()).padStart(2, '0');
+    const mi = String(now.getMinutes()).padStart(2, '0');
+    const s = String(now.getSeconds()).padStart(2, '0');
+    const ms = String(now.getMilliseconds()).padStart(3, '0');
+    const ts = `${y}-${m}-${d} ${h}:${mi}:${s}.${ms}`;
     appendFileSync(filePath, `${ts} [BUN  ] [INFO ] [startup] ${step}\n`);
   } catch { /* ignore */ }
 }
@@ -1076,7 +1082,8 @@ async function main() {
   startupBeacon(`main() entered, pid=${process.pid}, platform=${process.platform}, argv=${process.argv.length} args`);
 
   const { agentDir, initialPrompt, port, sessionId: initialSessionId, noPreWarm } = parseArgs(process.argv);
-  startupBeacon(`args parsed, port=${port}, agentDir=${agentDir.slice(-40)}`);
+  const dirDisplay = agentDir.length > 50 ? agentDir.slice(0, 3) + '...' + agentDir.slice(-44) : agentDir;
+  startupBeacon(`args parsed, port=${port}, agentDir=${dirDisplay}`);
 
   let currentAgentDir = await ensureAgentDir(agentDir);
   startupBeacon('ensureAgentDir done');

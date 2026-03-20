@@ -1628,7 +1628,7 @@ pub fn start_tab_sidecar<R: Runtime>(
         thread::spawn(move || {
             let reader = BufReader::new(stdout);
             for line in reader.lines().flatten() {
-                log::info!("[bun-out][{}] {}", tab_id_clone, line);
+                ulog_info!("[bun-out][{}] {}", tab_id_clone, line);
             }
         });
     }
@@ -1639,7 +1639,12 @@ pub fn start_tab_sidecar<R: Runtime>(
         thread::spawn(move || {
             let reader = BufReader::new(stderr);
             for line in reader.lines().flatten() {
-                ulog_error!("[bun-err][{}] {}", tab_id_clone, line);
+                // startupBeacon 故意通过 stderr 输出 startup 进度，降级为 INFO 避免日志噪音
+                if line.contains("[startup]") {
+                    ulog_info!("[bun-err][{}] {}", tab_id_clone, line);
+                } else {
+                    ulog_error!("[bun-err][{}] {}", tab_id_clone, line);
+                }
             }
         });
     }
@@ -2208,7 +2213,7 @@ fn create_new_session_sidecar<R: Runtime>(
         thread::spawn(move || {
             let reader = BufReader::new(stdout);
             for line in reader.lines().flatten() {
-                log::info!("[bun-out][session:{}] {}", session_id_for_log, line);
+                ulog_info!("[bun-out][session:{}] {}", session_id_for_log, line);
             }
         });
     }
@@ -2218,7 +2223,11 @@ fn create_new_session_sidecar<R: Runtime>(
         thread::spawn(move || {
             let reader = BufReader::new(stderr);
             for line in reader.lines().flatten() {
-                ulog_error!("[bun-err][session:{}] {}", session_id_for_log, line);
+                if line.contains("[startup]") {
+                    ulog_info!("[bun-err][session:{}] {}", session_id_for_log, line);
+                } else {
+                    ulog_error!("[bun-err][session:{}] {}", session_id_for_log, line);
+                }
             }
         });
     }
