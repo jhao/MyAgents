@@ -191,6 +191,15 @@ try {
             if (Test-Path $corepackCmd) { Remove-Item -Force $corepackCmd }
             if (Test-Path $corepackDir) { Remove-Item -Recurse -Force $corepackDir }
 
+            # Self-upgrade npm to latest — Node.js v24 bundles npm 11.9.0 which has
+            # a minizlib/minipass compatibility bug on Windows. Latest npm (11.12+) fixes it.
+            Write-Host "  升级 npm 到最新版..." -ForegroundColor Cyan
+            $nodeExe = Join-Path $NodeDir "node.exe"
+            $npmCli = Join-Path $NodeDir "node_modules\npm\bin\npm-cli.js"
+            & $nodeExe $npmCli install npm@latest --global --prefix $NodeDir 2>&1 | Out-Null
+            $npmVer = & $nodeExe $npmCli --version 2>&1
+            Write-Host "  npm 已升级到 v$npmVer" -ForegroundColor Green
+
             Write-Host "  OK - Windows x64" -ForegroundColor Green
         } catch {
             Write-Host "  下载失败: $_" -ForegroundColor Red

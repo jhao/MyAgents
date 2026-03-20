@@ -186,6 +186,16 @@ try {
             }
             if (Test-Path $TempZip) { Remove-Item -Force $TempZip }
             if (Test-Path $TempDir) { Remove-Item -Recurse -Force $TempDir }
+            # Upgrade npm to latest — bundled npm 11.9.0 has minizlib CJS bug on Windows.
+            # Self-upgrade ensures production builds always ship working npm.
+            $nodeExe = Join-Path $NodeDir "node.exe"
+            $npmCli = Join-Path $NodeDir "node_modules\npm\bin\npm-cli.js"
+            if (Test-Path $nodeExe) {
+                Write-Host "    升级 npm..." -NoNewline
+                & $nodeExe $npmCli install npm@latest --global --prefix $NodeDir 2>&1 | Out-Null
+                $npmVer = & $nodeExe $npmCli --version 2>&1
+                Write-Host " v$npmVer" -ForegroundColor Green
+            }
             Write-Host "    OK - Node.js downloaded" -ForegroundColor Green
         } catch {
             Write-Host "    下载失败，请先运行 .\setup_windows.ps1" -ForegroundColor Red

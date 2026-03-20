@@ -124,6 +124,14 @@ EOF
 
     chmod +x "${RESOURCES_DIR}/bin/node"
 
+    # Upgrade npm to latest — bundled npm may have minizlib/minipass CJS bugs.
+    log_info "Upgrading npm to latest..."
+    "${RESOURCES_DIR}/bin/node" "${RESOURCES_DIR}/lib/node_modules/npm/bin/npm-cli.js" \
+        install npm@latest --global --prefix "${RESOURCES_DIR}" 2>/dev/null || true
+    local npm_ver
+    npm_ver=$("${RESOURCES_DIR}/bin/node" "${RESOURCES_DIR}/lib/node_modules/npm/bin/npm-cli.js" --version 2>/dev/null || echo "unknown")
+    log_ok "npm upgraded to v${npm_ver}"
+
     log_ok "macOS ${arch}: Node.js v${NODE_VERSION} ready"
 }
 
