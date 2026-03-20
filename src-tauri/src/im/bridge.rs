@@ -909,6 +909,22 @@ fn find_bundled_node_npm<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) ->
     None
 }
 
+/// Write a minimal package.json if it doesn't exist.
+/// Uses serde_json to avoid JSON injection from untrusted plugin_id.
+async fn ensure_package_json(base_dir: &std::path::Path, plugin_id: &str) -> Result<(), String> {
+    let pkg_json = base_dir.join("package.json");
+    if !pkg_json.exists() {
+        let content = json!({
+            "name": plugin_id,
+            "version": "1.0.0",
+            "private": true,
+        });
+        tokio::fs::write(&pkg_json, content.to_string()).await
+            .map_err(|e| format!("Failed to write package.json: {}", e))?;
+    }
+    Ok(())
+}
+
 /// Install an OpenClaw plugin from npm.
 /// Uses bundled Node.js (npm install) instead of Bun to avoid Bun's npm compatibility
 /// issues — especially on Windows where certain packages fail with Bun but work with npm.
@@ -988,15 +1004,7 @@ pub async fn install_openclaw_plugin<R: tauri::Runtime>(
         // Write package.json directly instead of calling `npm init -y`.
         // Avoids invoking npm for a trivial file creation — npm's internal dependencies
         // (minizlib/minipass) can break on Windows due to MAX_PATH copy issues.
-        let pkg_json = base_dir.join("package.json");
-        if !pkg_json.exists() {
-            let content = format!(
-                "{{\"name\":\"{}\",\"version\":\"1.0.0\",\"private\":true}}",
-                plugin_id
-            );
-            tokio::fs::write(&pkg_json, content).await
-                .map_err(|e| format!("Failed to write package.json: {}", e))?;
-        }
+        ensure_package_json(&base_dir, &plugin_id).await?;
 
         // npm install <package>
         let node_for_add = node_bin;
@@ -1028,16 +1036,7 @@ pub async fn install_openclaw_plugin<R: tauri::Runtime>(
 
         ulog_warn!("[bridge] Using Bun fallback for plugin install (Node.js not bundled)");
 
-        // Write package.json directly (same as Node.js path above)
-        let pkg_json = base_dir.join("package.json");
-        if !pkg_json.exists() {
-            let content = format!(
-                "{{\"name\":\"{}\",\"version\":\"1.0.0\",\"private\":true}}",
-                plugin_id
-            );
-            tokio::fs::write(&pkg_json, content).await
-                .map_err(|e| format!("Failed to write package.json: {}", e))?;
-        }
+        ensure_package_json(&base_dir, &plugin_id).await?;
 
         let bun_for_add = bun_path;
         let base_for_add = base_dir.clone();

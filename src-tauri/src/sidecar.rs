@@ -983,7 +983,7 @@ fn is_port_available(port: u16) -> bool {
 /// npm) cannot handle this prefix — they silently hang or fail.
 ///
 /// This function strips the prefix on Windows; on other platforms it's a no-op.
-pub fn normalize_external_path(path: PathBuf) -> PathBuf {
+pub(crate) fn normalize_external_path(path: PathBuf) -> PathBuf {
     #[cfg(target_os = "windows")]
     {
         let s = path.to_string_lossy();
