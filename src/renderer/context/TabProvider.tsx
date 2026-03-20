@@ -981,7 +981,22 @@ export default function TabProvider({
                     cache_creation_tokens?: number;
                     tool_count?: number;
                     duration_ms?: number;
+                    assistant_sdk_uuid?: string;
                 } | null;
+
+                // Apply assistant sdkUuid to the just-moved history message.
+                // This avoids the ID mismatch: streaming messages use Date.now() IDs,
+                // backend uses messageSequence IDs, so the separate sdk-uuid event can't
+                // match. Piggybacking on message-complete is reliable.
+                if (completePayload?.assistant_sdk_uuid) {
+                    const uuid = completePayload.assistant_sdk_uuid;
+                    setHistoryMessages(prev => {
+                        if (prev.length === 0) return prev;
+                        const last = prev[prev.length - 1];
+                        if (last.role !== 'assistant' || last.sdkUuid === uuid) return prev;
+                        return [...prev.slice(0, -1), { ...last, sdkUuid: uuid }];
+                    });
+                }
                 // Always track message_complete, use defaults if payload is missing
                 track('message_complete', {
                     model: completePayload?.model,
