@@ -4987,6 +4987,9 @@ async function startStreamingSession(preWarm = false): Promise<void> {
         // （thinking → text），resumeSessionAt 需要最后一条的 UUID 才能保留完整回答
         if (sdkMessage.uuid) {
           currentAssistant.sdkUuid = sdkMessage.uuid;
+          // Broadcast to frontend so fork button appears during streaming
+          // (user messages already broadcast this; assistant messages were missing it)
+          broadcast('chat:message-sdk-uuid', { messageId: currentAssistant.id, sdkUuid: sdkMessage.uuid });
         }
         const assistantMessage = sdkMessage.message;
         // Main turn token usage is extracted from result message (more reliable across providers)
