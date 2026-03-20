@@ -963,14 +963,29 @@ pub async fn install_openclaw_plugin<R: tauri::Runtime>(
             .ok_or_else(|| format!("npm-cli.js path contains invalid UTF-8: {:?}", npm_cli))?
             .to_string();
 
+        // Prepend node binary's directory to PATH so postinstall scripts can find `node`.
+        // Without this, `sh -c node scripts/postinstall` fails with "node: command not found".
+        let node_dir_for_path = node_bin.parent()
+            .map(|d| d.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let augmented_path = {
+            let system_path = std::env::var("PATH").unwrap_or_default();
+            #[cfg(target_os = "windows")]
+            { format!("{};{}", node_dir_for_path, system_path) }
+            #[cfg(not(target_os = "windows"))]
+            { format!("{}:{}", node_dir_for_path, system_path) }
+        };
+
         // npm init -y
         let node_for_init = node_bin.clone();
         let cli_str_init = npm_cli_str.clone();
         let base_for_init = base_dir.clone();
+        let path_for_init = augmented_path.clone();
         let init_output = tokio::task::spawn_blocking(move || {
             let mut cmd = crate::process_cmd::new(&node_for_init);
             cmd.args([cli_str_init.as_str(), "init", "-y"])
-                .current_dir(&base_for_init);
+                .current_dir(&base_for_init)
+                .env("PATH", &path_for_init);
             apply_proxy_env(&mut cmd);
             cmd.output()
         })
@@ -988,10 +1003,12 @@ pub async fn install_openclaw_plugin<R: tauri::Runtime>(
         let cli_str_add = npm_cli_str;
         let base_for_add = base_dir.clone();
         let npm_spec_owned = npm_spec.to_string();
+        let path_for_add = augmented_path;
         let add_output = tokio::task::spawn_blocking(move || {
             let mut cmd = crate::process_cmd::new(&node_for_add);
             cmd.args([cli_str_add.as_str(), "install", npm_spec_owned.as_str()])
-                .current_dir(&base_for_add);
+                .current_dir(&base_for_add)
+                .env("PATH", &path_for_add);
             apply_proxy_env(&mut cmd);
             cmd.output()
         })
