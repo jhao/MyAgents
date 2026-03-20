@@ -743,38 +743,8 @@ pub async fn spawn_plugin_bridge<R: tauri::Runtime>(
         // Pass config via env var to avoid leaking secrets in `ps` process listing
         .env("BRIDGE_PLUGIN_CONFIG", &config_json);
 
-    // Inject proxy env vars (same logic as sidecar.rs) so plugin HTTP calls
-    // (e.g. Feishu API via axios/fetch) use MyAgents' configured proxy
-    if let Some(proxy_settings) = crate::proxy_config::read_proxy_settings() {
-        match crate::proxy_config::get_proxy_url(&proxy_settings) {
-            Ok(proxy_url) => {
-                ulog_info!("[bridge] Injecting proxy for plugin: {}", proxy_url);
-                cmd.env("HTTP_PROXY", &proxy_url);
-                cmd.env("HTTPS_PROXY", &proxy_url);
-                cmd.env("http_proxy", &proxy_url);
-                cmd.env("https_proxy", &proxy_url);
-                cmd.env("NO_PROXY", "localhost,localhost.localdomain,127.0.0.1,127.0.0.0/8,::1,[::1]");
-                cmd.env("no_proxy", "localhost,localhost.localdomain,127.0.0.1,127.0.0.0/8,::1,[::1]");
-            }
-            Err(e) => {
-                ulog_warn!("[bridge] Invalid proxy config ({}), stripping proxy env vars", e);
-                for var in &["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
-                             "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"] {
-                    cmd.env_remove(var);
-                }
-            }
-        }
-    } else {
-        // No MyAgents proxy configured: strip inherited system proxy env vars
-        // so the Bridge doesn't accidentally use Clash/V2Ray system proxy
-        ulog_debug!("[bridge] No proxy configured, stripping inherited proxy env vars");
-        for var in &["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
-                     "ALL_PROXY", "all_proxy"] {
-            cmd.env_remove(var);
-        }
-        cmd.env("NO_PROXY", "localhost,localhost.localdomain,127.0.0.1,127.0.0.0/8,::1,[::1]");
-        cmd.env("no_proxy", "localhost,localhost.localdomain,127.0.0.1,127.0.0.0/8,::1,[::1]");
-    }
+    // Inject proxy env vars — reuse shared helper (pit-of-success: single source of truth)
+    apply_proxy_env(&mut cmd);
 
     let mut child = cmd
         .stdout(std::process::Stdio::piped())
@@ -842,6 +812,7 @@ fn apply_proxy_env(cmd: &mut std::process::Command) {
     if let Some(proxy_settings) = crate::proxy_config::read_proxy_settings() {
         match crate::proxy_config::get_proxy_url(&proxy_settings) {
             Ok(proxy_url) => {
+                ulog_info!("[bridge] Injecting proxy: {}", proxy_url);
                 cmd.env("HTTP_PROXY", &proxy_url);
                 cmd.env("HTTPS_PROXY", &proxy_url);
                 cmd.env("http_proxy", &proxy_url);
@@ -849,7 +820,8 @@ fn apply_proxy_env(cmd: &mut std::process::Command) {
                 cmd.env("NO_PROXY", "localhost,localhost.localdomain,127.0.0.1,127.0.0.0/8,::1,[::1]");
                 cmd.env("no_proxy", "localhost,localhost.localdomain,127.0.0.1,127.0.0.0/8,::1,[::1]");
             }
-            Err(_) => {
+            Err(e) => {
+                ulog_warn!("[bridge] Invalid proxy config ({}), stripping proxy env vars", e);
                 for var in &["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
                              "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"] {
                     cmd.env_remove(var);
@@ -857,6 +829,7 @@ fn apply_proxy_env(cmd: &mut std::process::Command) {
             }
         }
     } else {
+        ulog_debug!("[bridge] No proxy configured, stripping inherited proxy env vars");
         for var in &["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
                      "ALL_PROXY", "all_proxy"] {
             cmd.env_remove(var);

@@ -50,16 +50,6 @@ function buildUserPrompt(rounds: TitleRound[]): string {
  * Clean up the generated title: remove surrounding quotes, punctuation, whitespace,
  * and truncate to TITLE_MAX_LENGTH characters.
  */
-/** Detect model outputs that are meta-instructions about generating a title, not actual titles */
-const META_INSTRUCTION_PATTERNS = [
-  /标题.{0,4}(应该|是什么|是|为)/,           // "标题应该是…" "标题是什么"
-  /对话.{0,4}(标题|主题).{0,4}(是|应该|为)/, // "对话标题是…"
-  /(请|只).{0,4}(输出|生成|给出).{0,4}标题/, // "请只输出标题"
-  /^the title (should|is|could)/i,            // "The title should be…"
-  /^title:/i,                                 // "Title: xxx" (caught by cleanTitle too)
-  /不要.{0,4}(其他|多余|额外)/,              // "不要有其他内容"
-];
-
 function cleanTitle(raw: string): string {
   let cleaned = raw.trim();
   // Remove surrounding quotes (single, double, Chinese quotes)
@@ -69,11 +59,6 @@ function cleanTitle(raw: string): string {
   // Remove common AI preamble patterns
   cleaned = cleaned.replace(/^(标题[：:]|Title[：:])\s*/i, '');
   cleaned = cleaned.trim();
-  // Reject meta-instructions about title generation (model confused itself)
-  if (META_INSTRUCTION_PATTERNS.some(p => p.test(cleaned))) {
-    console.warn(`[title-generator] Rejected meta-instruction output: "${cleaned}"`);
-    return '';
-  }
   if (cleaned.length > TITLE_MAX_LENGTH) {
     cleaned = cleaned.slice(0, TITLE_MAX_LENGTH);
   }
