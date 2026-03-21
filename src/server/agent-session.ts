@@ -4174,12 +4174,49 @@ export function forkSession(assistantMessageId: string): {
   title?: string;
   error?: string;
 } {
-  // 1. Find target assistant message
-  const targetIndex = messages.findIndex(m => m.id === assistantMessageId && m.role === 'assistant');
+  // 1. Find target assistant message in memory first, then fall back to persistent storage.
+  // The in-memory `messages[]` may be empty after session switch/reset (clearMessageState),
+  // while the frontend still shows the fork button because it has the message from loaded state.
+  let targetIndex = messages.findIndex(m => m.id === assistantMessageId && m.role === 'assistant');
+  let messageSource = messages;
+
+  if (targetIndex < 0) {
+    // Fallback: load from persistent storage — covers race between clearMessageState
+    // and loadMessagesFromStorage during session switch/pre-warm.
+    const stored = getSessionData(sessionId);
+    if (stored?.messages) {
+      const storedIdx = stored.messages.findIndex(m => m.id === assistantMessageId && m.role === 'assistant');
+      if (storedIdx >= 0) {
+        console.log(`[agent] forkSession: message ${assistantMessageId} not in memory, found in storage`);
+        // Use stored messages directly for fork (they already have sdkUuid persisted)
+        targetIndex = storedIdx;
+        messageSource = stored.messages.map(m => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          timestamp: m.timestamp,
+          sdkUuid: m.sdkUuid,
+          attachments: m.attachments?.map(att => ({
+            id: att.id,
+            name: att.name,
+            size: 0,
+            mimeType: att.mimeType,
+            relativePath: att.path,
+          })),
+          metadata: m.metadata,
+        }));
+      }
+    }
+  }
+
   if (targetIndex < 0) return { success: false, error: 'Assistant message not found' };
-  const targetMsg = messages[targetIndex];
+  const targetMsg = messageSource[targetIndex];
   if (!targetMsg.sdkUuid) return { success: false, error: 'Message has no SDK UUID (cannot fork)' };
-  if (!currentSessionUuids.has(targetMsg.sdkUuid)) {
+
+  // UUID validity check: only enforce when session is active and UUIDs are tracked.
+  // When messages come from storage (session not running), currentSessionUuids is empty
+  // but the UUID is valid because it was persisted from a previous SDK session.
+  if (currentSessionUuids.size > 0 && !currentSessionUuids.has(targetMsg.sdkUuid)) {
     return { success: false, error: 'SDK UUID 已过期（当前 SDK session 不包含此消息），请重新发送后再 fork' };
   }
 
@@ -4199,8 +4236,8 @@ export function forkSession(assistantMessageId: string): {
       messageUuid: targetMsg.sdkUuid,
     };
 
-    // 4. Copy messages up to and including the fork point (same mapping as persistMessagesToStorage)
-    const forkedMessages: SessionMessage[] = messages.slice(0, targetIndex + 1).map(m => ({
+    // 4. Copy messages up to and including the fork point
+    const forkedMessages: SessionMessage[] = messageSource.slice(0, targetIndex + 1).map(m => ({
       id: m.id,
       role: m.role,
       content: typeof m.content === 'string' ? m.content : JSON.stringify(stripPlaywrightResults(m.content)),
@@ -4210,7 +4247,7 @@ export function forkSession(assistantMessageId: string): {
         id: att.id,
         name: att.name,
         mimeType: att.mimeType,
-        path: att.relativePath ?? '',
+        path: ('relativePath' in att ? att.relativePath : (att as { path?: string }).path) ?? '',
       })),
       metadata: m.metadata,
     }));
