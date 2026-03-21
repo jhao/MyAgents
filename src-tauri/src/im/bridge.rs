@@ -980,16 +980,29 @@ pub async fn install_openclaw_plugin<R: tauri::Runtime>(
 
     ulog_info!("[bridge] Installing plugin {} into {:?}", npm_spec, base_dir);
 
-    // Prefer bundled Node.js (npm) over Bun for ecosystem compatibility.
-    // Bun has known issues with certain npm packages on Windows.
+    // Write package.json upfront (shared by both npm and bun paths).
+    ensure_package_json(&base_dir, &plugin_id).await?;
+
+    // --- Try npm (bundled Node.js) first, fallback to Bun if npm is broken ---
+    let mut npm_succeeded = false;
+
     if let Some((node_bin, npm_cli)) = find_bundled_node_npm(app_handle) {
-        // Convert npm_cli path to String before closures to avoid OsStr issues
+        // Diagnostic: log node + npm version for troubleshooting
+        let node_ver = crate::process_cmd::new(&node_bin)
+            .args(["--version"]).output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_else(|e| format!("error: {}", e));
+        let npm_ver = crate::process_cmd::new(&node_bin)
+            .args([npm_cli.to_str().unwrap_or(""), "--version"]).output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_else(|e| format!("error: {}", e));
+        ulog_info!("[bridge] npm install: node={}, npm={}, cli={:?}", node_ver, npm_ver, npm_cli);
+
         let npm_cli_str = npm_cli.to_str()
             .ok_or_else(|| format!("npm-cli.js path contains invalid UTF-8: {:?}", npm_cli))?
             .to_string();
 
         // Prepend node binary's directory to PATH so postinstall scripts can find `node`.
-        // Without this, `sh -c node scripts/postinstall` fails with "node: command not found".
         let node_dir_for_path = node_bin.parent()
             .map(|d| d.to_string_lossy().to_string())
             .unwrap_or_default();
@@ -1001,46 +1014,56 @@ pub async fn install_openclaw_plugin<R: tauri::Runtime>(
             { format!("{}:{}", node_dir_for_path, system_path) }
         };
 
-        // Write package.json directly instead of calling `npm init -y`.
-        // Avoids invoking npm for a trivial file creation — npm's internal dependencies
-        // (minizlib/minipass) can break on Windows due to MAX_PATH copy issues.
-        ensure_package_json(&base_dir, &plugin_id).await?;
-
-        // npm install <package>
         let node_for_add = node_bin;
         let cli_str_add = npm_cli_str;
         let base_for_add = base_dir.clone();
         let npm_spec_owned = npm_spec.to_string();
         let path_for_add = augmented_path;
-        let add_output = tokio::task::spawn_blocking(move || {
+        let add_result = tokio::task::spawn_blocking(move || {
             let mut cmd = crate::process_cmd::new(&node_for_add);
             // --omit=peer: openclaw 插件声明 peerDependencies: { openclaw: '*' }，
             // npm 会自动安装原始 openclaw 包的 400+ 传递依赖（larksuite、playwright-core、aws-sdk 等）。
             // 我们的 shim 会在后续覆盖 openclaw，但已安装的垃圾依赖不会被清除。
             // --omit=peer 阻止这一行为，节省安装时间/体积/安全攻击面。
+            //
+            // Node.js v24 unflagged require(esm) causes npm's dual CJS/ESM deps
+            // (minipass-sized 2.0) to crash on Windows: "Class extends value undefined".
+            // --no-experimental-require-module forces pure CJS resolution (set via NODE_OPTIONS below).
             cmd.args([cli_str_add.as_str(), "install", npm_spec_owned.as_str(), "--omit=peer"])
                 .current_dir(&base_for_add)
-                .env("PATH", &path_for_add);
+                .env("PATH", &path_for_add)
+                .env("NODE_OPTIONS", "--no-experimental-require-module");
             apply_proxy_env(&mut cmd);
             cmd.output()
-        })
-        .await
-        .map_err(|e| format!("spawn_blocking: {}", e))?
-        .map_err(|e| format!("npm install failed: {}", e))?;
+        }).await;
 
-        if !add_output.status.success() {
-            let stderr = String::from_utf8_lossy(&add_output.stderr);
-            return Err(format!("npm install {} failed: {}", npm_spec, stderr));
+        match add_result {
+            Ok(Ok(output)) if output.status.success() => {
+                ulog_info!("[bridge] npm install {} succeeded", npm_spec);
+                npm_succeeded = true;
+            }
+            Ok(Ok(output)) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                ulog_error!("[bridge] npm install {} failed (exit {}): {}", npm_spec, output.status, stderr.trim());
+            }
+            Ok(Err(e)) => {
+                ulog_error!("[bridge] npm install {} — process spawn failed: {}", npm_spec, e);
+            }
+            Err(e) => {
+                ulog_error!("[bridge] npm install {} — spawn_blocking failed: {}", npm_spec, e);
+            }
         }
     } else {
-        // Fallback: use Bun if bundled Node.js is not available (pre-v0.1.44 builds)
+        ulog_warn!("[bridge] Bundled Node.js/npm not found, skipping npm install");
+    }
+
+    // --- Bun fallback: if npm failed or unavailable ---
+    if !npm_succeeded {
         use crate::sidecar::find_bun_executable_pub;
         let bun_path = find_bun_executable_pub(app_handle)
-            .ok_or_else(|| "Neither bundled Node.js nor Bun found".to_string())?;
+            .ok_or_else(|| format!("Plugin install failed: npm unavailable and Bun not found"))?;
 
-        ulog_warn!("[bridge] Using Bun fallback for plugin install (Node.js not bundled)");
-
-        ensure_package_json(&base_dir, &plugin_id).await?;
+        ulog_warn!("[bridge] Falling back to Bun for plugin install: {}", npm_spec);
 
         let bun_for_add = bun_path;
         let base_for_add = base_dir.clone();
@@ -1058,8 +1081,10 @@ pub async fn install_openclaw_plugin<R: tauri::Runtime>(
 
         if !add_output.status.success() {
             let stderr = String::from_utf8_lossy(&add_output.stderr);
-            return Err(format!("bun add {} failed: {}", npm_spec, stderr));
+            ulog_error!("[bridge] Bun fallback also failed for {}: {}", npm_spec, stderr.trim());
+            return Err(format!("Plugin install failed (both npm and bun): {}", stderr));
         }
+        ulog_info!("[bridge] Bun fallback install {} succeeded", npm_spec);
     }
 
     // Install plugin-sdk shim (copies from bundled resource files)

@@ -141,6 +141,36 @@ try {
             $existingVer = & $NodeExe --version 2>$null
             if ($existingVer -eq "v$NodeVersion") {
                 Write-Host "  OK - Node.js v$NodeVersion (already exists)" -ForegroundColor Green
+                # Node.js 已存在，但仍需确保 npm 已升级
+                $npmDir = Join-Path $NodeDir "node_modules\npm"
+                if (Test-Path $npmDir) {
+                    $npmCli = Join-Path $npmDir "bin\npm-cli.js"
+                    $curVer = & $NodeExe $npmCli --version 2>&1
+                    if ("$curVer" -match "^11\.[0-9]\.") {
+                        Write-Host "  npm v$curVer 需要升级..." -ForegroundColor Yellow
+                        try {
+                            $npmTmpDir = Join-Path $env:TEMP "npm_upgrade_$(Get-Random)"
+                            New-Item -ItemType Directory -Path $npmTmpDir -Force | Out-Null
+                            $registryJson = Invoke-RestMethod -Uri "https://registry.npmjs.org/npm/latest" -TimeoutSec 30
+                            $tarballUrl = $registryJson.dist.tarball
+                            $tgzPath = Join-Path $npmTmpDir "npm.tgz"
+                            Invoke-WebRequest -Uri $tarballUrl -OutFile $tgzPath -TimeoutSec 60
+                            tar -xzf $tgzPath -C $npmTmpDir 2>&1 | Out-Null
+                            $extractedPkg = Join-Path $npmTmpDir "package"
+                            if (Test-Path $extractedPkg) {
+                                Remove-Item -Recurse -Force $npmDir
+                                Move-Item -Path $extractedPkg -Destination $npmDir
+                                $newVer = & $NodeExe (Join-Path $npmDir "bin\npm-cli.js") --version 2>&1
+                                Write-Host "  npm 升级: v$curVer → v$newVer ✓" -ForegroundColor Green
+                            }
+                            Remove-Item -Recurse -Force $npmTmpDir -ErrorAction SilentlyContinue
+                        } catch {
+                            Write-Host "  npm 升级失败: $_" -ForegroundColor Red
+                        }
+                    } else {
+                        Write-Host "  npm v$curVer ✓" -ForegroundColor Green
+                    }
+                }
                 Write-Host "OK - Node.js runtime ready" -ForegroundColor Green
                 return
             }
@@ -193,14 +223,19 @@ try {
 
             # Upgrade npm — bundled npm 11.9.0 has minizlib CJS bug on Windows.
             # CANNOT use `npm install npm@latest` (catch-22: broken npm can't upgrade itself).
-            # Download npm tarball directly with curl/Invoke-WebRequest and replace.
             Write-Host "  升级 npm (curl + tar)..." -ForegroundColor Cyan
             $npmDir = Join-Path $NodeDir "node_modules\npm"
             try {
+                $nodeExe = Join-Path $NodeDir "node.exe"
+                $oldNpmCli = Join-Path $npmDir "bin\npm-cli.js"
+                $oldVer = if (Test-Path $oldNpmCli) { & $nodeExe $oldNpmCli --version 2>&1 } else { "unknown" }
+                Write-Host "  当前: v$oldVer" -ForegroundColor Gray
+
                 $npmTmpDir = Join-Path $env:TEMP "npm_upgrade_$(Get-Random)"
                 New-Item -ItemType Directory -Path $npmTmpDir -Force | Out-Null
                 $registryJson = Invoke-RestMethod -Uri "https://registry.npmjs.org/npm/latest" -TimeoutSec 30
                 $tarballUrl = $registryJson.dist.tarball
+                Write-Host "  下载: $($registryJson.version) ← $tarballUrl"
                 $tgzPath = Join-Path $npmTmpDir "npm.tgz"
                 Invoke-WebRequest -Uri $tarballUrl -OutFile $tgzPath -TimeoutSec 60
                 tar -xzf $tgzPath -C $npmTmpDir 2>&1 | Out-Null
@@ -208,16 +243,16 @@ try {
                 if (Test-Path $extractedPkg) {
                     Remove-Item -Recurse -Force $npmDir
                     Move-Item -Path $extractedPkg -Destination $npmDir
-                    $nodeExe = Join-Path $NodeDir "node.exe"
-                    $npmCli = Join-Path $npmDir "bin\npm-cli.js"
-                    $npmVer = & $nodeExe $npmCli --version 2>&1
-                    Write-Host "  npm 已升级到 v$npmVer" -ForegroundColor Green
+                    $newNpmCli = Join-Path $npmDir "bin\npm-cli.js"
+                    $newVer = & $nodeExe $newNpmCli --version 2>&1
+                    Write-Host "  npm 已升级: v$oldVer → v$newVer" -ForegroundColor Green
                 } else {
-                    Write-Host "  npm 解压失败" -ForegroundColor Yellow
+                    Write-Host "  npm 解压失败" -ForegroundColor Red
                 }
                 Remove-Item -Recurse -Force $npmTmpDir -ErrorAction SilentlyContinue
             } catch {
-                Write-Host "  npm 升级失败: $_" -ForegroundColor Yellow
+                Write-Host "  npm 升级失败: $_" -ForegroundColor Red
+                Write-Host "  ⚠ 插件安装可能失败，请检查网络后重试" -ForegroundColor Yellow
                 Remove-Item -Recurse -Force $npmTmpDir -ErrorAction SilentlyContinue
             }
 

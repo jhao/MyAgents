@@ -151,9 +151,42 @@ try {
     }
 
     $nodejsPath = "src-tauri\resources\nodejs\node.exe"
+    $NodeDir = "src-tauri\resources\nodejs"
     Write-Host "  检查 bundled Node.js... " -NoNewline
     if (Test-Path $nodejsPath) {
-        Write-Host "OK" -ForegroundColor Green
+        Write-Host "OK (exists)" -ForegroundColor Green
+        # Node.js 已存在，但仍需确保 npm 已升级（首次下载后未升级的遗留情况）
+        $npmDir = Join-Path $NodeDir "node_modules\npm"
+        $nodeExe = Join-Path $NodeDir "node.exe"
+        if (Test-Path $npmDir) {
+            $npmCli = Join-Path $npmDir "bin\npm-cli.js"
+            $curVer = & $nodeExe $npmCli --version 2>&1
+            # npm 11.9.0 has minizlib CJS bug — must upgrade
+            if ("$curVer" -match "^11\.[0-9]\.") {
+                Write-Host "    npm v$curVer 需要升级..." -ForegroundColor Yellow
+                try {
+                    $npmTmpDir = Join-Path $env:TEMP "npm_upgrade_$(Get-Random)"
+                    New-Item -ItemType Directory -Path $npmTmpDir -Force | Out-Null
+                    $registryJson = Invoke-RestMethod -Uri "https://registry.npmjs.org/npm/latest" -TimeoutSec 30
+                    $tarballUrl = $registryJson.dist.tarball
+                    $tgzPath = Join-Path $npmTmpDir "npm.tgz"
+                    Invoke-WebRequest -Uri $tarballUrl -OutFile $tgzPath -TimeoutSec 60
+                    tar -xzf $tgzPath -C $npmTmpDir 2>&1 | Out-Null
+                    $extractedPkg = Join-Path $npmTmpDir "package"
+                    if (Test-Path $extractedPkg) {
+                        Remove-Item -Recurse -Force $npmDir
+                        Move-Item -Path $extractedPkg -Destination $npmDir
+                        $newVer = & $nodeExe (Join-Path $npmDir "bin\npm-cli.js") --version 2>&1
+                        Write-Host "    npm 升级: v$curVer → v$newVer ✓" -ForegroundColor Green
+                    }
+                    Remove-Item -Recurse -Force $npmTmpDir -ErrorAction SilentlyContinue
+                } catch {
+                    Write-Host "    npm 升级失败: $_" -ForegroundColor Red
+                }
+            } else {
+                Write-Host "    npm v$curVer ✓" -ForegroundColor Green
+            }
+        }
     } else {
         Write-Host "MISSING - downloading..." -ForegroundColor Yellow
         # Auto-download Node.js if setup_windows.ps1 was not run
@@ -188,33 +221,38 @@ try {
             if (Test-Path $TempDir) { Remove-Item -Recurse -Force $TempDir }
             # Upgrade npm — bundled npm 11.9.0 has minizlib CJS bug on Windows.
             # CANNOT use `npm install npm@latest` (catch-22: broken npm can't upgrade itself).
-            # Instead, download npm tarball directly with curl and replace.
+            # Download npm tarball directly with Invoke-WebRequest + tar (Win10+ built-in).
             $npmDir = Join-Path $NodeDir "node_modules\npm"
             if (Test-Path $npmDir) {
                 Write-Host "    升级 npm (curl + tar)..." -NoNewline
                 try {
+                    $nodeExe = Join-Path $NodeDir "node.exe"
+                    $oldNpmCli = Join-Path $npmDir "bin\npm-cli.js"
+                    $oldVer = if (Test-Path $oldNpmCli) { & $nodeExe $oldNpmCli --version 2>&1 } else { "unknown" }
+                    Write-Host " 当前 v$oldVer" -NoNewline
+
                     $npmTmpDir = Join-Path $env:TEMP "npm_upgrade_$(Get-Random)"
                     New-Item -ItemType Directory -Path $npmTmpDir -Force | Out-Null
                     $registryJson = Invoke-RestMethod -Uri "https://registry.npmjs.org/npm/latest" -TimeoutSec 30
                     $tarballUrl = $registryJson.dist.tarball
+                    Write-Host " → 下载 $($registryJson.version)..." -NoNewline
                     $tgzPath = Join-Path $npmTmpDir "npm.tgz"
                     Invoke-WebRequest -Uri $tarballUrl -OutFile $tgzPath -TimeoutSec 60
-                    # Extract using tar (available on Windows 10+)
                     tar -xzf $tgzPath -C $npmTmpDir 2>&1 | Out-Null
                     $extractedPkg = Join-Path $npmTmpDir "package"
                     if (Test-Path $extractedPkg) {
                         Remove-Item -Recurse -Force $npmDir
                         Move-Item -Path $extractedPkg -Destination $npmDir
-                        $nodeExe = Join-Path $NodeDir "node.exe"
-                        $npmCli = Join-Path $npmDir "bin\npm-cli.js"
-                        $npmVer = & $nodeExe $npmCli --version 2>&1
-                        Write-Host " v$npmVer" -ForegroundColor Green
+                        $newNpmCli = Join-Path $npmDir "bin\npm-cli.js"
+                        $newVer = & $nodeExe $newNpmCli --version 2>&1
+                        Write-Host " → v$newVer ✓" -ForegroundColor Green
                     } else {
-                        Write-Host " 解压失败" -ForegroundColor Yellow
+                        Write-Host " 解压失败 (package/ 目录不存在)" -ForegroundColor Red
                     }
                     Remove-Item -Recurse -Force $npmTmpDir -ErrorAction SilentlyContinue
                 } catch {
-                    Write-Host " 下载失败: $_" -ForegroundColor Yellow
+                    Write-Host " 下载失败: $_ " -ForegroundColor Red
+                    Write-Host "    ⚠ npm 未升级，插件安装可能失败" -ForegroundColor Yellow
                     Remove-Item -Recurse -Force $npmTmpDir -ErrorAction SilentlyContinue
                 }
             }
