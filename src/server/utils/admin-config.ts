@@ -95,8 +95,21 @@ export function loadConfig(): AdminAppConfig {
   if (!existsSync(configPath)) {
     return {};
   }
-  const raw = readFileSync(configPath, 'utf-8');
-  return JSON.parse(raw) as AdminAppConfig;
+  try {
+    const raw = readFileSync(configPath, 'utf-8');
+    return JSON.parse(raw) as AdminAppConfig;
+  } catch {
+    // Malformed JSON — try .bak fallback
+    const bakPath = configPath + '.bak';
+    if (existsSync(bakPath)) {
+      try {
+        console.warn('[admin-config] config.json parse failed, falling back to .bak');
+        return JSON.parse(readFileSync(bakPath, 'utf-8')) as AdminAppConfig;
+      } catch { /* bak also corrupt */ }
+    }
+    console.error('[admin-config] config.json and .bak both unreadable, returning empty config');
+    return {};
+  }
 }
 
 /**

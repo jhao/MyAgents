@@ -144,10 +144,10 @@ myagents model add \
 
 1. `myagents agent list` 查看现有 Agent
 2. `myagents agent channel add <agent-id> --type telegram --token <bot-token>` 添加渠道
-3. 根据平台类型，可能需要不同的凭证：
-   - Telegram: `--token`
-   - 飞书: `--app-id` + `--app-secret`
-   - 钉钉: `--dingtalk-client-id` + `--dingtalk-client-secret`
+3. 根据平台类型，需要不同的凭证（flag 名必须与配置字段一致）：
+   - Telegram: `--bot-token <token>`
+   - 飞书: `--feishu-app-id <id>` + `--feishu-app-secret <secret>`
+   - 钉钉: `--dingtalk-client-id <id>` + `--dingtalk-client-secret <secret>`
 
 ### 查看和修改通用配置
 

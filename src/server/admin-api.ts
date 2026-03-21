@@ -229,11 +229,15 @@ export function handleMcpEnv(payload: {
     atomicModifyConfig(c => {
       const mcpServerEnv = { ...(c.mcpServerEnv || {}) };
       if (mcpServerEnv[id]) {
+        // Deep-copy per-server env to avoid mutating the original config object
+        const serverEnv = { ...mcpServerEnv[id] };
         for (const key of Object.keys(env)) {
-          delete mcpServerEnv[id][key];
+          delete serverEnv[key];
         }
-        if (Object.keys(mcpServerEnv[id]).length === 0) {
+        if (Object.keys(serverEnv).length === 0) {
           delete mcpServerEnv[id];
+        } else {
+          mcpServerEnv[id] = serverEnv;
         }
       }
       return { ...c, mcpServerEnv };
@@ -462,6 +466,7 @@ export function handleModelAdd(payload: {
 
   // Validate required fields
   if (!p.id) return { success: false, error: 'Missing required field: id' };
+  if (!isValidId(String(p.id))) return { success: false, error: 'Invalid id: only alphanumeric, hyphens, and underscores allowed' };
   if (!p.name) return { success: false, error: 'Missing required field: name' };
   if (!p.baseUrl) return { success: false, error: 'Missing required field: baseUrl (API endpoint)' };
   if (!p.models || !Array.isArray(p.models) || p.models.length === 0) {
@@ -528,6 +533,7 @@ export function handleModelAdd(payload: {
 export function handleModelRemove(payload: { id: string }): AdminResponse {
   const { id } = payload;
   if (!id) return { success: false, error: 'Missing required field: id' };
+  if (!isValidId(id)) return { success: false, error: 'Invalid id: only alphanumeric, hyphens, and underscores allowed' };
 
   // Check if it's a preset
   const provider = findProvider(id);
@@ -671,8 +677,13 @@ export function handleConfigSet(payload: { key: string; value: unknown; dryRun?:
   const { key, value, dryRun } = payload;
   if (!key) return { success: false, error: 'Missing required field: key' };
 
+  // Reject dangerous key paths (prototype pollution)
+  if (hasDangerousKeySegment(key)) {
+    return { success: false, error: 'Invalid key path' };
+  }
+
   // Protect structural/sensitive keys that have dedicated commands
-  const protectedKeys = ['providerApiKeys', 'agents', 'mcpServers', 'mcpEnabledServers', 'mcpServerEnv', 'imBotConfigs'];
+  const protectedKeys = ['providerApiKeys', 'providerVerifyStatus', 'agents', 'mcpServers', 'mcpEnabledServers', 'mcpServerEnv', 'mcpServerArgs', 'imBotConfigs'];
   const rootKey = key.split('.')[0];
   if (protectedKeys.includes(rootKey)) {
     return { success: false, error: `Cannot set '${key}' via config set. Use dedicated commands (e.g., 'myagents mcp', 'myagents agent', 'myagents model set-key').` };
@@ -834,6 +845,16 @@ Use "myagents <group> --help" for details on a specific group.`,
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/** Validate that an ID is safe for use as a filename (prevent path traversal) */
+function isValidId(id: string): boolean {
+  return /^[a-zA-Z0-9_-]+$/.test(id);
+}
+
+/** Reject dangerous property names to prevent prototype pollution */
+function hasDangerousKeySegment(key: string): boolean {
+  return key.split('.').some(p => p === '__proto__' || p === 'constructor' || p === 'prototype');
+}
 
 // ---------------------------------------------------------------------------
 // Provider file I/O (~/.myagents/providers/{id}.json)
