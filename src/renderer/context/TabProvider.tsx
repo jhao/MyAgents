@@ -1000,19 +1000,27 @@ export default function TabProvider({
                     tool_count?: number;
                     duration_ms?: number;
                     assistant_sdk_uuid?: string;
+                    assistant_message_id?: string;
                 } | null;
 
-                // Apply assistant sdkUuid to the just-moved history message.
-                // This avoids the ID mismatch: streaming messages use Date.now() IDs,
-                // backend uses messageSequence IDs, so the separate sdk-uuid event can't
-                // match. Piggybacking on message-complete is reliable.
-                if (completePayload?.assistant_sdk_uuid) {
+                // Apply backend's real message ID + sdkUuid to the just-moved history message.
+                // Streaming messages use Date.now() IDs that don't match backend's messageSequence IDs.
+                // Without this, fork/rewind pass the wrong ID to the backend.
+                if (completePayload?.assistant_sdk_uuid || completePayload?.assistant_message_id) {
                     const uuid = completePayload.assistant_sdk_uuid;
+                    const realId = completePayload.assistant_message_id;
                     setHistoryMessages(prev => {
                         if (prev.length === 0) return prev;
                         const last = prev[prev.length - 1];
-                        if (last.role !== 'assistant' || last.sdkUuid === uuid) return prev;
-                        return [...prev.slice(0, -1), { ...last, sdkUuid: uuid }];
+                        if (last.role !== 'assistant') return prev;
+                        const needsUuid = uuid && last.sdkUuid !== uuid;
+                        const needsId = realId && last.id !== realId;
+                        if (!needsUuid && !needsId) return prev;
+                        return [...prev.slice(0, -1), {
+                            ...last,
+                            ...(needsId ? { id: realId } : {}),
+                            ...(needsUuid ? { sdkUuid: uuid } : {}),
+                        }];
                     });
                 }
                 // Always track message_complete, use defaults if payload is missing

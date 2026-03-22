@@ -4253,6 +4253,8 @@ export function forkSession(assistantMessageId: string): {
   // 1. Find target assistant message in memory first, then fall back to persistent storage.
   // The in-memory `messages[]` may be empty after session switch/reset (clearMessageState),
   // while the frontend still shows the fork button because it has the message from loaded state.
+  console.log(`[agent] forkSession: looking for assistantMessageId=${assistantMessageId}, in-memory messages.length=${messages.length}, sessionId=${sessionId}`);
+  console.log(`[agent] forkSession: in-memory message IDs (last 20): ${messages.slice(-20).map(m => `${m.role}:${m.id}`).join(', ')}`);
   let targetIndex = messages.findIndex(m => m.id === assistantMessageId && m.role === 'assistant');
   let messageSource = messages;
 
@@ -4285,7 +4287,10 @@ export function forkSession(assistantMessageId: string): {
     }
   }
 
-  if (targetIndex < 0) return { success: false, error: 'Assistant message not found' };
+  if (targetIndex < 0) {
+    console.error(`[agent] forkSession: Assistant message NOT FOUND. assistantMessageId=${assistantMessageId}, in-memory count=${messages.length}, sessionId=${sessionId}`);
+    return { success: false, error: 'Assistant message not found' };
+  }
   const targetMsg = messageSource[targetIndex];
   if (!targetMsg.sdkUuid) return { success: false, error: 'Message has no SDK UUID (cannot fork)' };
 
@@ -5539,8 +5544,10 @@ async function startStreamingSession(preWarm = false): Promise<void> {
           cache_creation_tokens: currentTurnUsage.cacheCreationTokens,
           tool_count: currentTurnToolCount,
           duration_ms: durationMs,
-          // Piggyback sdkUuid so fork button appears immediately after streaming
+          // Piggyback sdkUuid + real message ID so fork button works immediately after streaming.
+          // Frontend streaming messages use Date.now() IDs that don't match backend messageSequence IDs.
           assistant_sdk_uuid: lastAssistant?.sdkUuid,
+          assistant_message_id: lastAssistant?.id,
         });
 
         // Server-side unified analytics: covers all sources (desktop/cron/im)
