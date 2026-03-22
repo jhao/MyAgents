@@ -1943,7 +1943,10 @@ impl FeishuAdapter {
         );
         match self.api_call("GET", &url, None).await {
             Ok(resp) => {
-                let name = resp["data"]["user"]["name"].as_str()
+                let user = &resp["data"]["user"];
+                let name = user["nickname"].as_str()
+                    .or_else(|| user["en_name"].as_str())
+                    .or_else(|| user["name"].as_str())
                     .map(|s| s.to_string());
                 if let Some(ref n) = name {
                     let mut cache = self.user_name_cache.lock().await;

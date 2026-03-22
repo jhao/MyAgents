@@ -2,6 +2,7 @@
 // Removes workspace step (Agent already has one), uses cmd_start_agent_channel.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, Copy, ExternalLink, Loader2, Plus, Puzzle, Trash2 } from 'lucide-react';
+import QRCode from 'qrcode';
 import { track } from '@/analytics';
 import { isTauriEnvironment } from '@/utils/browserMock';
 import { useToast } from '@/components/Toast';
@@ -162,11 +163,13 @@ export default function ChannelWizard({
     const promoted = isOpenClaw ? findPromotedByPlatform(platform) : undefined;
 
     // OpenClaw: config(1) → start(2) → binding(3)
+    // OpenClaw QR: qrLogin(1) → binding(2)
     // Telegram: credentials(1) → binding(2)
     // Feishu:   credentials(1) → permissions(2) → binding(3)
     // DingTalk: credentials(1) → permissions(2) → binding(3)
-    const totalSteps = isOpenClaw ? 3 : (isFeishu || isDingtalk) ? 3 : 2;
-    const bindingStep = totalSteps; // All platforms have binding as the last step
+    // isQrLogin is computed below after installedPlugin state is declared
+    const isQrLoginFromPreset = promoted?.authType === 'qrLogin';
+    const totalStepsBase = isQrLoginFromPreset ? 2 : isOpenClaw ? 3 : (isFeishu || isDingtalk) ? 3 : 2;
 
     const [step, setStep] = useState(1);
     // Telegram credentials
@@ -191,6 +194,37 @@ export default function ChannelWizard({
     const [botStatus, setBotStatus] = useState<ChannelStatusData | null>(null);
     const [permJsonCopied, setPermJsonCopied] = useState(false);
     const copyTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+    // QR Login state
+    const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+    const [qrMessage, setQrMessage] = useState<string>('');
+    const [qrStatus, setQrStatus] = useState<'idle' | 'loading' | 'waiting' | 'scanned' | 'connected' | 'error'>('idle');
+    const qrAbortRef = useRef(false);
+    const qrSessionKeyRef = useRef<string | undefined>(undefined);
+    // Rendered QR image: either the raw data URI (WhatsApp) or QR-encoded from URL (WeChat)
+    const [qrImageUrl, setQrImageUrl] = useState<string | null>(null);
+
+    // Convert qrDataUrl to a renderable image:
+    // - data:image/* → use directly (WhatsApp returns base64 PNG)
+    // - http(s):// URL → encode the URL INTO a QR code image (WeChat returns a URL to be QR-encoded)
+    useEffect(() => {
+        if (!qrDataUrl) { setQrImageUrl(null); return; }
+        if (qrDataUrl.startsWith('data:image/')) {
+            setQrImageUrl(qrDataUrl);
+            return;
+        }
+        // URL needs to be QR-encoded into an image
+        let cancelled = false;
+        QRCode.toDataURL(qrDataUrl, { width: 200, margin: 2, color: { dark: '#000000', light: '#ffffff' } })
+            .then((dataUrl: string) => { if (!cancelled) setQrImageUrl(dataUrl); })
+            .catch(() => { if (!cancelled) setQrImageUrl(null); });
+        return () => { cancelled = true; };
+    }, [qrDataUrl]);
+
+    // Derived: QR login detection (from preset or installed plugin's detected capability)
+    const isQrLogin = isQrLoginFromPreset || (!promoted && installedPlugin?.supportsQrLogin === true);
+    const totalSteps = isQrLogin ? 2 : totalStepsBase;
+    const bindingStep = totalSteps; // All platforms have binding as the last step
 
     useEffect(() => {
         return () => {
@@ -385,6 +419,146 @@ export default function ChannelWizard({
         }
     }, [buildChannelConfig, agent, platform, startChannel, refreshConfig]);
 
+    // QR Login: start channel then initiate QR login flow
+    const startQrLogin = useCallback(async () => {
+        if (!isTauriEnvironment()) return;
+        qrAbortRef.current = false;
+        setQrStatus('loading');
+        setQrMessage('正在启动插件...');
+
+        try {
+            const { invoke } = await import('@tauri-apps/api/core');
+            // 1. Start the channel (spawns Bridge process)
+            // disk-first: read latest config from disk before writing (CLAUDE.md convention)
+            const { loadAppConfig } = await import('@/config/configService');
+            const latestConfig = await loadAppConfig();
+            const latestAgent = (latestConfig.agents ?? []).find(a => a.id === agent.id);
+            const channelCfg = { ...buildChannelConfig(), setupCompleted: true };
+            const existingChannels = (latestAgent?.channels ?? agent.channels ?? []).filter(ch => ch.id !== channelCfg.id);
+            await patchAgentConfig(agent.id, { channels: [...existingChannels, channelCfg] });
+            await refreshConfig();
+            await invokeStartAgentChannel(agent, channelCfg);
+
+            // 2. Wait a moment for Bridge to load the plugin
+            await new Promise(r => setTimeout(r, 2000));
+            if (qrAbortRef.current || !isMountedRef.current) return;
+
+            // 3. Request QR code from Bridge
+            setQrMessage('正在获取二维码...');
+            const startResult = await invoke<{ ok: boolean; qrDataUrl?: string; message?: string; sessionKey?: string }>(
+                'cmd_plugin_qr_login_start', { agentId: agent.id, channelId }
+            );
+
+            if (!startResult.ok || !startResult.qrDataUrl) {
+                throw new Error(startResult.message || '获取二维码失败');
+            }
+
+            if (!isMountedRef.current || qrAbortRef.current) return;
+            qrSessionKeyRef.current = startResult.sessionKey;
+            setQrDataUrl(startResult.qrDataUrl);
+            setQrStatus('waiting');
+            setQrMessage(`请使用${openclawPluginName}扫描二维码`);
+
+            // 4. Poll for QR scan completion (pass sessionKey — WeChat requires it)
+            // Auto-retry with QR refresh on timeout/error, up to MAX_QR_RETRIES
+            const MAX_QR_RETRIES = 10;
+            let qrRetryCount = 0;
+
+            while (!qrAbortRef.current && isMountedRef.current) {
+                try {
+                    const waitResult = await invoke<{ ok: boolean; connected?: boolean; message?: string; accountId?: string }>(
+                        'cmd_plugin_qr_login_wait', { agentId: agent.id, channelId, sessionKey: qrSessionKeyRef.current }
+                    );
+
+                    if (!isMountedRef.current || qrAbortRef.current) return;
+
+                    if (waitResult.connected) {
+                        setQrStatus('connected');
+                        setQrMessage('登录成功！正在启动...');
+                        await invoke('cmd_plugin_restart_gateway', {
+                            agentId: agent.id, channelId,
+                            accountId: waitResult.accountId,
+                        });
+                        // Persist accountId to channel config so Bridge finds credentials on restart
+                        if (waitResult.accountId) {
+                            const { loadAppConfig } = await import('@/config/configService');
+                            const lat = await loadAppConfig();
+                            const latAgent = (lat.agents ?? []).find(a => a.id === agent.id);
+                            const updChs = (latAgent?.channels ?? []).map(ch =>
+                                ch.id === channelId
+                                    ? { ...ch, openclawPluginConfig: { ...(ch.openclawPluginConfig ?? {}), accountId: waitResult.accountId! } }
+                                    : ch,
+                            );
+                            await patchAgentConfig(agent.id, { channels: updChs });
+                            await refreshConfig();
+                        }
+                        if (isMountedRef.current) {
+                            track('agent_channel_create', { platform });
+                            toastRef.current.success('扫码登录成功');
+                            setStep(2);
+                        }
+                        return;
+                    }
+
+                    // connected:false — could be timeout or terminal. Add delay to prevent spinning.
+                    if (waitResult.message) setQrMessage(waitResult.message);
+                    await new Promise(r => setTimeout(r, 1000));
+
+                } catch (err) {
+                    if (!isMountedRef.current || qrAbortRef.current) return;
+
+                    // Most errors are transient: Rust proxy timeout, connection reset, QR expired.
+                    // Only truly terminal: plugin 501 (not supported), Bridge crashed (ECONNREFUSED).
+                    const errMsg = err instanceof Error ? err.message : String(err);
+                    const isTerminal = /ECONNREFUSED|not support|501/i.test(errMsg);
+
+                    if (isTerminal || qrRetryCount >= MAX_QR_RETRIES) {
+                        setQrStatus('error');
+                        setQrMessage(qrRetryCount >= MAX_QR_RETRIES
+                            ? `超过最大重试次数 (${MAX_QR_RETRIES})，请手动重试`
+                            : `登录失败: ${errMsg}`);
+                        return;
+                    }
+
+                    // Auto-retry: refresh QR code and continue polling
+                    qrRetryCount++;
+                    try {
+                        const refreshResult = await invoke<{ ok: boolean; qrDataUrl?: string; message?: string; sessionKey?: string }>(
+                            'cmd_plugin_qr_login_start', { agentId: agent.id, channelId }
+                        );
+                        if (refreshResult.ok && refreshResult.qrDataUrl) {
+                            qrSessionKeyRef.current = refreshResult.sessionKey;
+                            setQrDataUrl(refreshResult.qrDataUrl);
+                            setQrMessage(`二维码已刷新 (${qrRetryCount}/${MAX_QR_RETRIES})，请扫描`);
+                        }
+                    } catch {
+                        setQrStatus('error');
+                        setQrMessage('二维码获取失败，请手动重试');
+                        return;
+                    }
+                }
+            }
+        } catch (err) {
+            if (isMountedRef.current) {
+                setQrStatus('error');
+                setQrMessage(`启动失败: ${err}`);
+            }
+        }
+    }, [buildChannelConfig, agent, channelId, platform, refreshConfig]);
+
+    // Auto-start QR login when entering step 1 for QR plugins.
+    // CRITICAL: startQrLogin must NOT be in deps — it depends on `agent` which changes
+    // after refreshConfig(), causing cleanup → abort → stuck. Use ref for stable access.
+    const startQrLoginRef = useRef(startQrLogin);
+    startQrLoginRef.current = startQrLogin;
+    const qrStartedRef = useRef(false);
+    useEffect(() => {
+        if (!isQrLogin || step !== 1 || qrStartedRef.current) return;
+        qrStartedRef.current = true;
+        startQrLoginRef.current();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isQrLogin, step]);
+
     // Handle "Next" for all steps
     const handleNext = useCallback(async () => {
         // OpenClaw step 1 → step 2: just advance (validation is on the button disabled state)
@@ -548,6 +722,10 @@ export default function ChannelWizard({
     })();
 
     const stepLabel = (() => {
+        if (isQrLogin) {
+            if (step === 1) return '扫码登录';
+            return '绑定用户';
+        }
         if (isOpenClaw) {
             if (step === 1) return '配置插件';
             if (step === 2) return '确认并启动';
@@ -636,8 +814,70 @@ export default function ChannelWizard({
                 </div>
             </div>
 
+            {/* Step 1: QR Login (for plugins that use QR code authentication) */}
+            {step === 1 && isQrLogin && (
+                <div className="space-y-6">
+                    {/* Action bar — must use handleCancel to stop Bridge + remove config */}
+                    {renderActionBar({
+                        onNext: () => { qrAbortRef.current = true; handleCancel(); },
+                        nextLabel: '取消',
+                        nextIcon: undefined,
+                    })}
+
+                    {/* Plugin info card */}
+                    <div className="rounded-xl border border-[var(--line)] bg-[var(--paper-elevated)] p-5">
+                        <div className="flex items-start gap-4">
+                            {promoted && (
+                                <img src={promoted.icon} alt={openclawPluginName} className="h-10 w-10 shrink-0 rounded-xl" />
+                            )}
+                            <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2">
+                                    <p className="text-sm font-semibold text-[var(--ink)]">{openclawPluginName}</p>
+                                    {installedPlugin?.packageVersion && (
+                                        <span className="rounded-full bg-[var(--paper-inset)] px-2 py-0.5 text-[11px] font-medium text-[var(--ink-muted)]">
+                                            v{installedPlugin.packageVersion}
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* QR Code display */}
+                    <div className="rounded-xl border border-[var(--line)] bg-[var(--paper-elevated)] p-6">
+                        <div className="flex flex-col items-center gap-4">
+                            {qrStatus === 'loading' && (
+                                <div className="flex h-48 w-48 items-center justify-center rounded-xl bg-[var(--paper-inset)]">
+                                    <Loader2 className="h-8 w-8 animate-spin text-[var(--ink-muted)]" />
+                                </div>
+                            )}
+                            {(qrStatus === 'waiting' || qrStatus === 'scanned') && qrImageUrl && (
+                                <img src={qrImageUrl} alt="扫码登录" className="h-48 w-48 rounded-xl" />
+                            )}
+                            {qrStatus === 'connected' && (
+                                <div className="flex h-48 w-48 items-center justify-center rounded-xl bg-[var(--accent-success-subtle)]">
+                                    <Check className="h-12 w-12 text-[var(--accent-success)]" />
+                                </div>
+                            )}
+                            {qrStatus === 'error' && (
+                                <div className="flex h-48 w-48 flex-col items-center justify-center gap-2 rounded-xl bg-[var(--paper-inset)]">
+                                    <p className="text-sm text-[var(--accent-danger)]">获取失败</p>
+                                    <button
+                                        onClick={() => { setQrStatus('idle'); }}
+                                        className="rounded-lg bg-[var(--button-primary-bg)] px-3 py-1.5 text-xs font-medium text-[var(--button-primary-text)] hover:bg-[var(--button-primary-bg-hover)]"
+                                    >
+                                        重试
+                                    </button>
+                                </div>
+                            )}
+                            <p className="text-sm text-[var(--ink-muted)]">{qrMessage}</p>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Step 1: Credentials / OpenClaw Config */}
-            {step === 1 && isOpenClaw && (
+            {step === 1 && isOpenClaw && !isQrLogin && (
                 <div className="space-y-6">
                     {/* Action bar at top */}
                     {renderActionBar({
@@ -1147,7 +1387,7 @@ export default function ChannelWizard({
                 <div className="space-y-6">
                     {/* Action bar at top */}
                     {renderActionBar({
-                        onBack: () => setStep((isFeishu || isDingtalk || isOpenClaw) ? 2 : 1),
+                        onBack: isQrLogin ? undefined : () => setStep((isFeishu || isDingtalk || isOpenClaw) ? 2 : 1),
                         onNext: handleComplete,
                         nextLabel: '完成',
                         nextIcon: <Check className="h-4 w-4" />,

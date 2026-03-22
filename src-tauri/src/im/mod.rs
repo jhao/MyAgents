@@ -327,11 +327,11 @@ pub type ManagedImBots = Arc<Mutex<HashMap<String, ImBotInstance>>>;
 /// Running IM Bot instance
 pub struct ImBotInstance {
     #[allow(dead_code)]
-    bot_id: String,
+    pub(crate) bot_id: String,
     #[allow(dead_code)]
-    platform: ImPlatform,
+    pub(crate) platform: ImPlatform,
     shutdown_tx: watch::Sender<bool>,
-    health: Arc<HealthManager>,
+    pub(crate) health: Arc<HealthManager>,
     pub(crate) router: Arc<Mutex<SessionRouter>>,
     buffer: Arc<Mutex<MessageBuffer>>,
     started_at: Instant,
@@ -346,7 +346,7 @@ pub struct ImBotInstance {
     /// Random bind code for QR code binding flow
     bind_code: String,
     #[allow(dead_code)]
-    config: ImConfig,
+    pub(crate) config: ImConfig,
     // ===== Heartbeat (v0.1.21) =====
     /// Heartbeat runner background task handle
     heartbeat_handle: Option<tokio::task::JoinHandle<()>>,
@@ -4525,6 +4525,10 @@ async fn update_bot_config_internal<R: Runtime>(
                 if let Some(ref config_arc) = inst.heartbeat_config {
                     if let Ok(hb) = serde_json::from_str::<types::HeartbeatConfig>(hcj) {
                         *config_arc.write().await = hb;
+                        // Wake heartbeat runner to pick up new interval immediately
+                        if let Some(ref tx) = inst.heartbeat_wake_tx {
+                            let _ = tx.try_send(types::WakeReason::Interval);
+                        }
                     }
                 }
             }
@@ -4953,6 +4957,68 @@ pub async fn cmd_list_openclaw_plugins() -> Result<Vec<serde_json::Value>, Strin
 #[allow(non_snake_case)]
 pub async fn cmd_uninstall_openclaw_plugin(pluginId: String) -> Result<(), String> {
     bridge::uninstall_openclaw_plugin(&pluginId).await
+}
+
+/// Helper: get bridge port from agent channel.
+/// Both the outer (ManagedAgents) and inner (BridgeProcess) locks are held briefly
+/// to extract the port value, then released before the actual HTTP call.
+async fn get_bridge_port(agent_state: &ManagedAgents, agent_id: &str, channel_id: &str) -> Result<u16, String> {
+    let agents_guard = agent_state.lock().await;
+    let agent = agents_guard.get(agent_id)
+        .ok_or_else(|| format!("Agent '{}' not found", agent_id))?;
+    let ch = agent.channels.get(channel_id)
+        .ok_or_else(|| format!("Channel '{}' not found on agent '{}'", channel_id, agent_id))?;
+    let bp_mutex = ch.bot_instance.bridge_process.as_ref()
+        .ok_or_else(|| "Channel has no Bridge process (not an OpenClaw plugin)".to_string())?;
+    let port = bp_mutex.lock().await.port;
+    drop(agents_guard);
+    Ok(port)
+}
+
+/// QR login: start QR code generation via Bridge.
+/// The channel must already be started (Bridge process running).
+/// Returns { ok, qrDataUrl?, message, sessionKey? }.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn cmd_plugin_qr_login_start(
+    agentState: tauri::State<'_, ManagedAgents>,
+    agentId: String,
+    channelId: String,
+) -> Result<serde_json::Value, String> {
+    let port = get_bridge_port(&agentState, &agentId, &channelId).await?;
+    bridge::qr_login_start(port, None).await
+}
+
+/// QR login: wait for user to scan QR code via Bridge.
+/// Long-polls (up to 60s). Returns { ok, connected, message }.
+/// `sessionKey` is returned by `cmd_plugin_qr_login_start` and MUST be forwarded here
+/// (WeChat plugin uses it to track the active login session).
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn cmd_plugin_qr_login_wait(
+    agentState: tauri::State<'_, ManagedAgents>,
+    agentId: String,
+    channelId: String,
+    sessionKey: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let port = get_bridge_port(&agentState, &agentId, &channelId).await?;
+    bridge::qr_login_wait(port, None, sessionKey.as_deref()).await
+}
+
+/// Restart the gateway after QR login success.
+/// Re-resolves credentials and starts the plugin's message listener.
+/// `accountId` is returned by the plugin during QR login (e.g. WeChat's ilink_bot_id)
+/// and is REQUIRED for `resolveAccount()` to find the newly-saved credentials.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn cmd_plugin_restart_gateway(
+    agentState: tauri::State<'_, ManagedAgents>,
+    agentId: String,
+    channelId: String,
+    accountId: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let port = get_bridge_port(&agentState, &agentId, &channelId).await?;
+    bridge::restart_gateway(port, accountId.as_deref()).await
 }
 
 /// Restart all running channels that use the given OpenClaw plugin.
@@ -5557,6 +5623,12 @@ pub async fn cmd_update_agent_config(
             if let Ok(hb_config) = serde_json::from_str::<types::HeartbeatConfig>(hb_json) {
                 if let Some(ref hb_arc) = agent.heartbeat_config {
                     *hb_arc.write().await = hb_config;
+                }
+                // Wake the heartbeat runner so it picks up the new interval immediately
+                // (otherwise it stays blocked on the old interval.tick())
+                // Use try_send (non-async) to avoid holding the agents mutex across an await point
+                if let Some(ref tx) = agent.heartbeat_wake_tx {
+                    let _ = tx.try_send(types::WakeReason::Interval);
                 }
             }
         }

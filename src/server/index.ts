@@ -28,6 +28,13 @@ import {
   CRON_TASK_EXIT_REASON_PATTERN,
 } from './tools/cron-tools';
 import { setImCronContext } from './tools/im-cron-tool';
+import {
+  handleMcpList, handleMcpAdd, handleMcpRemove, handleMcpEnable, handleMcpDisable, handleMcpEnv, handleMcpTest,
+  handleModelList, handleModelAdd, handleModelRemove, handleModelSetKey, handleModelSetDefault, handleModelVerify,
+  handleAgentList, handleAgentEnable, handleAgentDisable, handleAgentSet,
+  handleAgentChannelList, handleAgentChannelAdd, handleAgentChannelRemove,
+  handleConfigGet, handleConfigSet, handleStatus, handleReload, handleHelp,
+} from './admin-api';
 import { setImMediaContext } from './tools/im-media-tool';
 import { setImBridgeToolsContext } from './tools/im-bridge-tools';
 import { getBuiltinMcp } from './tools/builtin-mcp-registry';
@@ -118,6 +125,7 @@ import {
   syncProjectUserConfig,
   setProxyConfig,
   initSocksBridgeFromEnv,
+  getHistoricalSessionMessages,
   type ProviderEnv,
 } from './agent-session';
 import { getHomeDirOrNull, isSkillBlockedOnPlatform } from './utils/platform';
@@ -902,6 +910,52 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 /**
+ * Route /api/admin/* requests to the appropriate handler.
+ * Keeps the route matching logic clean and separated from business logic (in admin-api.ts).
+ */
+async function routeAdminApi(pathname: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  // Strip the prefix for matching
+  const route = pathname.replace('/api/admin/', '');
+
+  // MCP commands
+  if (route === 'mcp/list') return handleMcpList();
+  if (route === 'mcp/add') return handleMcpAdd(payload as Parameters<typeof handleMcpAdd>[0]);
+  if (route === 'mcp/remove') return handleMcpRemove(payload as Parameters<typeof handleMcpRemove>[0]);
+  if (route === 'mcp/enable') return handleMcpEnable(payload as Parameters<typeof handleMcpEnable>[0]);
+  if (route === 'mcp/disable') return handleMcpDisable(payload as Parameters<typeof handleMcpDisable>[0]);
+  if (route === 'mcp/env') return handleMcpEnv(payload as Parameters<typeof handleMcpEnv>[0]);
+  if (route === 'mcp/test') return await handleMcpTest(payload as Parameters<typeof handleMcpTest>[0]);
+
+  // Model commands
+  if (route === 'model/list') return handleModelList();
+  if (route === 'model/add') return handleModelAdd(payload as Parameters<typeof handleModelAdd>[0]);
+  if (route === 'model/remove') return handleModelRemove(payload as Parameters<typeof handleModelRemove>[0]);
+  if (route === 'model/set-key') return handleModelSetKey(payload as Parameters<typeof handleModelSetKey>[0]);
+  if (route === 'model/set-default') return handleModelSetDefault(payload as Parameters<typeof handleModelSetDefault>[0]);
+  if (route === 'model/verify') return await handleModelVerify(payload as Parameters<typeof handleModelVerify>[0]);
+
+  // Agent commands
+  if (route === 'agent/list') return handleAgentList();
+  if (route === 'agent/enable') return handleAgentEnable(payload as Parameters<typeof handleAgentEnable>[0]);
+  if (route === 'agent/disable') return handleAgentDisable(payload as Parameters<typeof handleAgentDisable>[0]);
+  if (route === 'agent/set') return handleAgentSet(payload as Parameters<typeof handleAgentSet>[0]);
+  if (route === 'agent/channel/list') return handleAgentChannelList(payload as Parameters<typeof handleAgentChannelList>[0]);
+  if (route === 'agent/channel/add') return handleAgentChannelAdd(payload as Parameters<typeof handleAgentChannelAdd>[0]);
+  if (route === 'agent/channel/remove') return handleAgentChannelRemove(payload as Parameters<typeof handleAgentChannelRemove>[0]);
+
+  // Config commands
+  if (route === 'config/get') return handleConfigGet(payload as Parameters<typeof handleConfigGet>[0]);
+  if (route === 'config/set') return handleConfigSet(payload as Parameters<typeof handleConfigSet>[0]);
+
+  // System commands
+  if (route === 'status') return handleStatus();
+  if (route === 'reload') return handleReload(payload.workspacePath as string | undefined);
+  if (route === 'help') return handleHelp(payload as Parameters<typeof handleHelp>[0]);
+
+  return { success: false, error: `Unknown admin route: ${pathname}` };
+}
+
+/**
  * Strip HEARTBEAT_OK token from AI response and determine if it's silent or has content.
  * Supports markdown/HTML wrapping around the token.
  */
@@ -1058,7 +1112,9 @@ function buildCronEventPrompt(
 function startupBeacon(step: string): void {
   // Write to stderr — captured by Rust drain thread → unified log
   try { process.stderr.write(`[startup] ${step}\n`); } catch { /* ignore */ }
-  // Also write directly to unified log file
+  // Also write directly to unified log file.
+  // NOTE: 内联时间戳格式而非 import localTimestamp()，因为此函数在 initLogger() 之前运行，
+  // 需保持零依赖以诊断 Windows 上 initLogger 未到达的 hang 问题。
   try {
     const now = new Date();
     const y = now.getFullYear();
@@ -1067,7 +1123,11 @@ function startupBeacon(step: string): void {
     const logsDir = join(homedir(), '.myagents', 'logs');
     if (!existsSync(logsDir)) mkdirSync(logsDir, { recursive: true });
     const filePath = join(logsDir, `unified-${y}-${m}-${d}.log`);
-    const ts = now.toISOString();
+    const h = String(now.getHours()).padStart(2, '0');
+    const mi = String(now.getMinutes()).padStart(2, '0');
+    const s = String(now.getSeconds()).padStart(2, '0');
+    const ms = String(now.getMilliseconds()).padStart(3, '0');
+    const ts = `${y}-${m}-${d} ${h}:${mi}:${s}.${ms}`;
     appendFileSync(filePath, `${ts} [BUN  ] [INFO ] [startup] ${step}\n`);
   } catch { /* ignore */ }
 }
@@ -1076,7 +1136,8 @@ async function main() {
   startupBeacon(`main() entered, pid=${process.pid}, platform=${process.platform}, argv=${process.argv.length} args`);
 
   const { agentDir, initialPrompt, port, sessionId: initialSessionId, noPreWarm } = parseArgs(process.argv);
-  startupBeacon(`args parsed, port=${port}, agentDir=${agentDir.slice(-40)}`);
+  const dirDisplay = agentDir.length > 50 ? agentDir.slice(0, 3) + '...' + agentDir.slice(-44) : agentDir;
+  startupBeacon(`args parsed, port=${port}, agentDir=${dirDisplay}`);
 
   let currentAgentDir = await ensureAgentDir(agentDir);
   startupBeacon('ensureAgentDir done');
@@ -1169,6 +1230,29 @@ async function main() {
       if (pathname === '/api/session-state' && request.method === 'GET') {
         const { sessionState } = getAgentState();
         return jsonResponse({ sessionState });
+      }
+
+      // Read historical session messages from SDK's persisted session files (v0.2.59+)
+      // Works without an active Sidecar — reads directly from .claude/ session data
+      if (pathname === '/api/session/messages' && request.method === 'GET') {
+        const sdkSessionId = url.searchParams.get('sdkSessionId');
+        if (!sdkSessionId) {
+          return jsonResponse({ success: false, error: 'sdkSessionId is required' }, 400);
+        }
+        const dir = url.searchParams.get('dir') || undefined;
+        const rawLimit = url.searchParams.get('limit');
+        const rawOffset = url.searchParams.get('offset');
+        const limit = rawLimit ? (Number.isFinite(+rawLimit) && +rawLimit >= 0 ? Math.floor(+rawLimit) : undefined) : undefined;
+        const offset = rawOffset ? (Number.isFinite(+rawOffset) && +rawOffset >= 0 ? Math.floor(+rawOffset) : undefined) : undefined;
+        try {
+          const messages = await getHistoricalSessionMessages(sdkSessionId, dir, limit, offset);
+          return jsonResponse({ success: true, messages });
+        } catch (error) {
+          return jsonResponse(
+            { success: false, error: error instanceof Error ? error.message : 'Failed to read session messages' },
+            500
+          );
+        }
       }
 
       // Check ~/.claude/settings.json for env overrides (ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY)
@@ -3728,7 +3812,7 @@ async function main() {
       }
 
       // POST /api/mcp/enable - Validate and enable MCP server
-      // For preset MCP (npx): warmup bun cache
+      // For preset MCP (npx): warmup npm/npx cache (system npx → bundled npx → bun x)
       // For custom MCP: check if command exists
       if (pathname === '/api/mcp/enable' && request.method === 'POST') {
         try {
@@ -3991,7 +4075,7 @@ async function main() {
 
             // Preset MCP (isBuiltin: true) with npx → warmup to download and cache package
             if (server.isBuiltin && command === 'npx') {
-              const { getBundledNodeDir, getBundledRuntimePath, isBunRuntime } = await import('./utils/runtime');
+              const { getBundledNodeDir, getBundledRuntimePath, isBunRuntime, getSystemNpxPaths, findExistingPath } = await import('./utils/runtime');
               const { pinMcpPackageVersions } = await import('./agent-session');
               const args = pinMcpPackageVersions(server.args || []);
 
@@ -3999,13 +4083,29 @@ async function main() {
               const { getShellEnv } = await import('./utils/shell');
               const baseEnv = getShellEnv();
 
-              // Dual runtime: prefer bundled Node.js npx, fallback to bun x
+              // Priority: system npx → bundled Node.js npx → bun x
+              const systemNpx = findExistingPath(getSystemNpxPaths());
               const nodeDir = getBundledNodeDir();
               let warmupCmd: string;
               let warmupArgs: string[];
 
-              if (nodeDir) {
-                // Bundled Node.js: warmup with npx (uses same npm cache as actual execution)
+              if (systemNpx) {
+                // 1. System npx available — most reliable, user-maintained
+                warmupCmd = systemNpx;
+                warmupArgs = ['-y', ...args, '--help'];
+
+                // Ensure system npx's directory is in PATH (GUI-launched apps may have minimal PATH)
+                const { dirname } = await import('path');
+                const npxDir = dirname(systemNpx);
+                const pathKey = process.platform === 'win32' ? 'Path' : 'PATH';
+                const sep = process.platform === 'win32' ? ';' : ':';
+                if (!(baseEnv[pathKey] || '').includes(npxDir)) {
+                  baseEnv[pathKey] = npxDir + sep + (baseEnv[pathKey] || '');
+                }
+
+                console.log(`[api/mcp/enable] Warming up with system npx: ${warmupArgs.join(' ')}`);
+              } else if (nodeDir) {
+                // 2. Fallback to bundled Node.js npx
                 const npxPath = process.platform === 'win32'
                   ? join(nodeDir, 'npx.cmd')
                   : join(nodeDir, 'npx');
@@ -4019,14 +4119,14 @@ async function main() {
 
                 console.log(`[api/mcp/enable] Warming up with bundled npx: ${warmupArgs.join(' ')}`);
               } else {
-                // Fallback: use bun x
+                // 3. Last resort: bun x
                 const runtime = getBundledRuntimePath();
                 if (!isBunRuntime(runtime)) {
                   return jsonResponse({
                     success: false,
                     error: {
                       type: 'runtime_error',
-                      message: '内置运行时不可用（Node.js 和 Bun 均未找到）',
+                      message: '运行时不可用（系统/内置 Node.js 和 Bun 均未找到）',
                     }
                   });
                 }
@@ -4325,6 +4425,25 @@ async function main() {
       // ============= END MCP OAuth API =============
 
       // ============= END MCP API =============
+
+      // ============= ADMIN API (Self-Config CLI) =============
+      if (pathname.startsWith('/api/admin/') && request.method === 'POST') {
+        try {
+          const payload = pathname === '/api/admin/status'
+            ? {}
+            : await request.json().catch(() => ({})) as Record<string, unknown>;
+
+          const result = await routeAdminApi(pathname, payload);
+          return jsonResponse(result, result.success ? 200 : 400);
+        } catch (error) {
+          console.error(`[admin] ${pathname} error:`, error);
+          return jsonResponse(
+            { success: false, error: error instanceof Error ? error.message : 'Admin API error' },
+            500
+          );
+        }
+      }
+      // ============= END ADMIN API =============
 
       // ============= SLASH COMMANDS API =============
       // GET /api/commands - Get all available slash commands and skills
@@ -6698,6 +6817,7 @@ description: >
           const {
             enqueueUserMessage, waitForSessionIdle, getMessages,
             getSessionModel, getSessionProviderEnv,
+            getAndClearLastAgentError,
           } = await import('./agent-session');
 
           // Inject heartbeat prompt as user message (wrapped in <system-reminder><HEARTBEAT> tags)
@@ -6706,6 +6826,7 @@ description: >
           // CRITICAL: Pass current model + providerEnv to avoid triggering provider-switch logic.
           // Without this, undefined providerEnv triggers switchingToSubscription in enqueueUserMessage,
           // which resets the session to Anthropic subscription and causes "Not logged in" errors.
+          getAndClearLastAgentError(); // Clear stale errors from prior turns before injecting heartbeat
           await enqueueUserMessage(
             enrichedPrompt,
             [],
@@ -6743,6 +6864,13 @@ description: >
               .filter((b: { type: string }) => b.type === 'text')
               .map((b: { type: string; text?: string }) => b.text || '')
               .join('\n');
+          }
+
+          // Guard: message was enqueued but assistant response is empty → AI failed to respond
+          // (SDK wraps API errors as synthetic assistant messages with empty content in messages[])
+          if (!text.trim()) {
+            const agentErr = getAndClearLastAgentError();
+            return jsonResponse({ status: 'error', text: agentErr || 'AI did not respond' });
           }
 
           // Check HEARTBEAT_OK

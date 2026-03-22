@@ -2,8 +2,8 @@ import { randomUUID } from 'crypto';
 import { existsSync, mkdirSync, readdirSync, symlinkSync, lstatSync, readFileSync, readlinkSync, rmSync } from 'fs';
 import { join, resolve, sep } from 'path';
 import { createRequire } from 'module';
-import { query, type Query, type SDKUserMessage, type AgentDefinition, type HookInput, type HookJSONOutput, type PostToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
-import { getScriptDir, getBundledBunDir, getBundledNodeDir, getAgentBrowserCliPath } from './utils/runtime';
+import { query, getSessionMessages as sdkGetSessionMessages, type Query, type SDKUserMessage, type AgentDefinition, type HookInput, type HookJSONOutput, type PostToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
+import { getScriptDir, getBundledBunDir, getBundledNodeDir, getAgentBrowserCliPath, getSystemNodeDirs } from './utils/runtime';
 import { getCrossPlatformEnv, isSkillBlockedOnPlatform } from './utils/platform';
 import { processImage, resizeToolImageContent } from './utils/imageResize';
 import { cronToolsServer, getCronTaskContext, clearCronTaskContext } from './tools/cron-tools';
@@ -328,6 +328,7 @@ let pendingConfigRestart = false;
 let sessionTerminationPromise: Promise<void> | null = null;
 let isInterruptingResponse = false;
 let isStreamingMessage = false;
+let isApiRetrying = false;  // Track api_retry state to clear when streaming resumes
 const messages: MessageWire[] = [];
 const streamIndexToToolId: Map<number, string> = new Map();
 const toolResultIndexToId: Map<number, string> = new Map();
@@ -440,6 +441,13 @@ let sessionRegistered = false;
 let pendingResumeSessionAt: string | undefined;
 // 时间回溯进行中 — 阻止 enqueueUserMessage 并发写入
 let rewindPromise: Promise<unknown> | null = null;
+
+// 当前 SDK session 分配的 UUID 集合（区分「本 session 分配」vs「从磁盘加载的旧 UUID」）。
+// rewindSession 使用此集合校验 lastAssistantUuid 是否属于当前 session：
+// - 属于 → 可安全用于 resumeSessionAt（SDK 一定认识该 UUID）
+// - 不属于 → session 被重建过（如换机、No conversation found 恢复），旧 UUID 对 SDK 无意义，
+//   强行传 resumeSessionAt 会导致 SDK 报错、session 启动失败、用户消息丢失。
+const currentSessionUuids = new Set<string>();
 
 // ===== 持久 Session 门控 =====
 // 消息交付：事件驱动替代轮询，generator 阻塞在 waitForMessage 直到新消息到达
@@ -1088,7 +1096,7 @@ export function pinMcpPackageVersions(args: string[]): string[] {
  * 3. External (stdio/sse/http) — subprocess or remote servers, user-configured.
  *
  * Execution strategy for external stdio:
- * - For npx commands: Uses bundled bun (bun x), fallback to npx if bun unavailable
+ * - For npx commands: system npx → bundled Node.js npx → bun x
  * - For other commands: Uses user-specified command directly (node/python etc.)
  * - Strips proxy env vars to prevent MCP WebSocket breakage
  */
@@ -1166,7 +1174,9 @@ function buildSdkMcpServers(): Record<string, SdkMcpServerConfig | typeof cronTo
       let command = server.command;
       let args = server.args || [];
 
-      // For npx commands: prefer bundled Node.js npx, fallback to bun x
+      // For npx commands: prefer system npx → bundled Node.js npx → bun x
+      // System Node.js is maintained by the user's package manager, more reliable than our bundled npm.
+      // Bundled Node.js serves as fallback for users who don't have Node.js installed.
       if (command === 'npx') {
         if (server.isBuiltin) {
           // Pin @latest to known versions to avoid npm registry check on every startup
@@ -1174,26 +1184,42 @@ function buildSdkMcpServers(): Record<string, SdkMcpServerConfig | typeof cronTo
 
           // Dual runtime strategy: MCP servers are community npm packages designed for
           // Node.js. Running them under Bun causes compatibility issues (Playwright pipe
-          // transport, axios adapter, postinstall scripts, etc.). Use bundled Node.js npx
-          // when available; fallback to bun x only if Node.js is not bundled.
+          // transport, axios adapter, postinstall scripts, etc.).
+          // Priority: system npx → bundled Node.js npx → bun x
           // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const { getBundledNodeDir: getNodeDir, getBundledRuntimePath, isBunRuntime } = require('./utils/runtime');
-          const nodeDir = getNodeDir();
+          const { getBundledNodeDir: getNodeDir, getBundledRuntimePath, isBunRuntime, getSystemNpxPaths, findExistingPath } = require('./utils/runtime');
+          const systemNpx = findExistingPath(getSystemNpxPaths());
 
-          if (nodeDir) {
-            // Bundled Node.js available — use npx natively (all platforms unified)
+          if (systemNpx) {
+            // 1. System npx available — most reliable, user-maintained
+            command = systemNpx;
             args = ['-y', ...args];
-            console.log(`[agent] MCP ${server.id}: Using bundled Node.js npx (${nodeDir})`);
+            console.log(`[agent] MCP ${server.id}: Using system npx (${systemNpx})`);
           } else {
-            // Fallback: no bundled Node.js — use bun x (legacy behavior)
-            const runtime = getBundledRuntimePath();
-            if (isBunRuntime(runtime)) {
-              command = runtime;
-              args = ['x', ...args];
-              console.log(`[agent] MCP ${server.id}: Using bundled bun x (Node.js not available)`);
-            } else {
+            // 2. Fallback to bundled Node.js npx (use absolute path for deterministic resolution)
+            const nodeDir = getNodeDir();
+            if (nodeDir) {
+              // eslint-disable-next-line @typescript-eslint/no-require-imports
+              const { join: pathJoin } = require('path');
+              command = process.platform === 'win32' ? pathJoin(nodeDir, 'npx.cmd') : pathJoin(nodeDir, 'npx');
               args = ['-y', ...args];
-              console.log(`[agent] MCP ${server.id}: Using system npx`);
+              console.log(`[agent] MCP ${server.id}: System npx not found, using bundled Node.js npx (${command})`);
+            } else {
+              // 3. Last resort: bun x or derive npx from system node
+              const runtime = getBundledRuntimePath();
+              if (isBunRuntime(runtime)) {
+                command = runtime;
+                args = ['x', ...args];
+                console.log(`[agent] MCP ${server.id}: No Node.js found (system or bundled), falling back to bun x`);
+              } else {
+                // getBundledRuntimePath found a system node — derive npx from same dir
+                // eslint-disable-next-line @typescript-eslint/no-require-imports
+                const { dirname: pathDirname, resolve: pathResolve } = require('path');
+                const npxSibling = pathResolve(pathDirname(runtime), process.platform === 'win32' ? 'npx.cmd' : 'npx');
+                command = npxSibling;
+                args = ['-y', ...args];
+                console.log(`[agent] MCP ${server.id}: Derived npx from system node: ${npxSibling}`);
+              }
             }
           }
         } else {
@@ -1413,6 +1439,9 @@ async function handleAskUserQuestion(
   broadcast('ask-user-question:request', {
     requestId,
     questions: questionInput.questions,
+    // SDK v0.2.69+: options may contain `preview` field (HTML or Markdown)
+    // Our toolConfig sets previewFormat: 'html', so previews are HTML fragments
+    previewFormat: 'html',
   });
 
   // Wait for user response or abort
@@ -1813,7 +1842,7 @@ export function getPendingInteractiveRequests(): Array<{
   for (const [requestId, q] of pendingAskUserQuestions) {
     result.push({
       type: 'ask-user-question:request',
-      data: { requestId, questions: q.input.questions },
+      data: { requestId, questions: q.input.questions, previewFormat: 'html' },
     });
   }
   for (const [requestId, p] of pendingExitPlanMode) {
@@ -1992,8 +2021,20 @@ export function resolveClaudeCodeCli(): string {
   console.warn(`[sdk] Bundled SDK not found at ${bundledPath} (cwd=${cwd}), falling back to require.resolve`);
 
   // Development: resolve from node_modules
+  // SDK 0.2.80+ has `exports` in package.json that does NOT export `./cli.js`,
+  // so require.resolve('@anthropic-ai/claude-agent-sdk/cli.js') fails with
+  // ERR_PACKAGE_PATH_NOT_EXPORTED. Instead, resolve the package root via the
+  // main export, then derive cli.js from the package directory.
   try {
-    const cliPath = requireModule.resolve('@anthropic-ai/claude-agent-sdk/cli.js');
+    const sdkMain = requireModule.resolve('@anthropic-ai/claude-agent-sdk');
+    // dirname(sdkMain) gives us the package root — assumes main export is in root dir.
+    // This is the standard Node.js ecosystem pattern for exports-locked packages.
+    const { dirname } = require('path') as typeof import('path');
+    const sdkDir = dirname(sdkMain);
+    const cliPath = join(sdkDir, 'cli.js');
+    if (!existsSync(cliPath)) {
+      throw new Error(`cli.js not found at ${cliPath} (resolved SDK root: ${sdkDir})`);
+    }
     if (cliPath.includes('app.asar')) {
       const unpackedPath = cliPath.replace('app.asar', 'app.asar.unpacked');
       if (existsSync(unpackedPath)) {
@@ -2047,7 +2088,16 @@ export function buildClaudeSessionEnv(providerEnv?: ProviderEnv): NodeJS.Process
     essentialPaths.push(bundledBunDir);
   }
 
-  // Bundled Node.js directory — MCP servers, AI bash `node`/`npm`/`npx` commands
+  // System Node.js directories — preferred over bundled for MCP/npm ecosystem reliability.
+  // User-maintained Node.js is less likely to have broken npm than our bundled version.
+  // Only add directories that actually exist to avoid polluting PATH with ghost entries.
+  for (const dir of getSystemNodeDirs()) {
+    if (existsSync(dir)) {
+      essentialPaths.push(dir);
+    }
+  }
+
+  // Bundled Node.js directory — fallback for users without system Node.js
   if (bundledNodeDir) {
     essentialPaths.push(bundledNodeDir);
   }
@@ -2126,6 +2176,11 @@ export function buildClaudeSessionEnv(providerEnv?: ProviderEnv): NodeJS.Process
   // MyAgents manages its own telemetry; these external connections add startup latency
   // and can timeout in restricted network environments (e.g. China).
   env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
+  // Disable SDK built-in cron tools (CronCreate/CronDelete/CronList).
+  // MyAgents has its own persistent cron system (im-cron MCP tool → Rust CronTaskManager)
+  // that survives session restarts, supports IM delivery, and uses wall-clock scheduling.
+  // The SDK's cron is session-scoped/in-memory, would conflict and confuse users.
+  env.CLAUDE_CODE_DISABLE_CRON = '1';
   // DO NOT set CLAUDE_CONFIG_DIR here — it would change the Keychain service name
   // and break Anthropic subscription OAuth. User-level skills are synced as symlinks
   // into project .claude/skills/ by syncProjectUserConfig() instead.
@@ -2140,6 +2195,11 @@ export function buildClaudeSessionEnv(providerEnv?: ProviderEnv): NodeJS.Process
       // cliPath = .../agent-browser/bin/agent-browser.js → HOME = .../agent-browser/
       env.AGENT_BROWSER_HOME = resolve(abCliPath, '..', '..');
     }
+  }
+
+  // Self-Config CLI: expose sidecar port so the `myagents` CLI can call back
+  if (sidecarPort > 0) {
+    env.MYAGENTS_PORT = String(sidecarPort);
   }
 
   // Windows: Set CLAUDE_CODE_GIT_BASH_PATH so SDK finds git-bash directly
@@ -3081,6 +3141,16 @@ export function getMessages(): MessageWire[] {
   return messages;
 }
 
+// Last agent error — captured from SDK error events for heartbeat error reporting.
+// Set by the SDK message handler, consumed (cleared) by the heartbeat endpoint.
+let lastAgentError: string | null = null;
+
+export function getAndClearLastAgentError(): string | null {
+  const err = lastAgentError;
+  lastAgentError = null;
+  return err;
+}
+
 /**
  * Internal: Clear all message-related state
  * Used by both resetSession() and initializeAgent()
@@ -3095,6 +3165,7 @@ function clearMessageState(): void {
   imTextBlockIndices.clear();
 
   strippedToolResultIds.clear();
+  currentSessionUuids.clear();
   isStreamingMessage = false;
   messageSequence = 0;
   pendingConfigRestart = false;
@@ -3321,6 +3392,36 @@ export async function initializeAgent(
   // Initialize logger for new session (lazy file creation)
   initLogger(sessionId);
   console.log(`[agent] init dir=${agentDir} initialPrompt=${hasInitialPrompt ? 'yes' : 'no'} sessionId=${sessionId} resume=${sessionRegistered}`);
+
+  // Self-resolve workspace config from disk (MCP/provider/model).
+  // Eliminates dependency on pre-serialized snapshots (providerEnvJson, mcpServersJson)
+  // that can fail to save or go stale. IM Bot sessions work correctly without the
+  // frontend having been opened first. For desktop Tabs, the frontend's /api/mcp/set
+  // and per-message providerEnv will override these values.
+  // Skip for Global Sidecar (no workspace-specific config).
+  if (!preWarmDisabled) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolveWorkspaceConfig } = require('./utils/admin-config');
+      const resolved = resolveWorkspaceConfig(agentDir);
+      if (currentMcpServers === null && resolved.mcpServers.length > 0) {
+        currentMcpServers = resolved.mcpServers;
+        console.log(`[agent] self-resolved ${resolved.mcpServers.length} MCP server(s): ${resolved.mcpServers.map((s: { id: string }) => s.id).join(', ')}`);
+      }
+      if (!currentProviderEnv && resolved.providerEnv) {
+        currentProviderEnv = resolved.providerEnv;
+        console.log(`[agent] self-resolved provider: ${resolved.providerEnv.baseUrl ?? 'anthropic'}`);
+      }
+      if (!currentModel && resolved.model) {
+        currentModel = resolved.model;
+        console.log(`[agent] self-resolved model: ${resolved.model}`);
+      }
+    } catch (error) {
+      // Self-resolution failure is non-fatal — fall back to external sync (Rust sync_ai_config)
+      console.warn('[agent] self-resolution failed, falling back to external sync:', error);
+    }
+  }
+
   if (hasInitialPrompt) {
     void enqueueUserMessage(initialPrompt!.trim());
   } else {
@@ -3847,6 +3948,29 @@ export function isSessionActive(): boolean {
 }
 
 /**
+ * Read historical session messages from SDK's persisted session files.
+ * Works without an active Sidecar — reads directly from .claude/ session files.
+ *
+ * @param sdkSessionId - The SDK session ID (from session metadata's sdkSessionId)
+ * @param dir - Optional project directory to search in
+ * @param limit - Maximum number of messages to return
+ * @param offset - Number of messages to skip from the start
+ */
+export async function getHistoricalSessionMessages(
+  sdkSessionId: string,
+  dir?: string,
+  limit?: number,
+  offset?: number,
+): Promise<Array<{ type: string; uuid: string; session_id: string; message: unknown }>> {
+  const messages = await sdkGetSessionMessages(sdkSessionId, {
+    ...(dir ? { dir } : {}),
+    ...(limit !== undefined ? { limit } : {}),
+    ...(offset !== undefined ? { offset } : {}),
+  });
+  return messages;
+}
+
+/**
  * Wait for the current session to become idle
  * Returns true if idle, false if timeout
  * @param timeoutMs Maximum time to wait in milliseconds (default: 10 minutes)
@@ -3947,7 +4071,16 @@ export async function interruptCurrentResponse(): Promise<boolean> {
  */
 export function cancelQueueItem(queueId: string): string | null {
   const index = messageQueue.findIndex(item => item.id === queueId);
-  if (index === -1) return null;
+  if (index === -1) {
+    // 消息可能已被 wakeGenerator 直接投递 → 在 pendingMidTurnQueue 中（已 yield 给 SDK stdin）。
+    // SDK 已收到无法撤回，但从 pending 队列移除可防止 queue:started 触发和 messages[] 污染。
+    const pmIdx = pendingMidTurnQueue.findIndex(p => p.queueId === queueId);
+    if (pmIdx === -1) return null;
+    const [removed] = pendingMidTurnQueue.splice(pmIdx, 1);
+    broadcast('queue:cancelled', { queueId });
+    console.log(`[agent] Queue item ${queueId} cancelled from pendingMidTurnQueue (already yielded to SDK, AI may still respond)`);
+    return typeof removed.userMessage.content === 'string' ? removed.userMessage.content : '';
+  }
 
   const [item] = messageQueue.splice(index, 1);
   // Only resolve if this was a non-blocking queued item (wasQueued: true has no-op resolve).
@@ -3964,9 +4097,15 @@ export function cancelQueueItem(queueId: string): string | null {
  */
 export async function forceExecuteQueueItem(queueId: string): Promise<boolean> {
   const index = messageQueue.findIndex(item => item.id === queueId);
-  if (index === -1) return false;
 
-  // Move to front of queue
+  // 消息可能已被 wakeGenerator 直接投递给 generator（跳过 messageQueue），
+  // 此时它在 pendingMidTurnQueue 中（已 yield 给 SDK stdin，等待 AI 消费）。
+  // 这种情况下中断当前响应即可让 SDK 更快处理该消息。
+  const inPendingMidTurn = index === -1 && pendingMidTurnQueue.some(p => p.queueId === queueId);
+
+  if (index === -1 && !inPendingMidTurn) return false;
+
+  // Move to front of queue (only if still in messageQueue)
   if (index > 0) {
     const [item] = messageQueue.splice(index, 1);
     messageQueue.unshift(item);
@@ -3974,6 +4113,7 @@ export async function forceExecuteQueueItem(queueId: string): Promise<boolean> {
 
   if (isSessionActive()) {
     // Session 存活：中断当前响应，generator 会自然消费队列头部
+    // （或 pendingMidTurnQueue 中的消息在中断后被 SDK 立即处理）
     await interruptCurrentResponse();
   } else {
     // Session 已死：generator 不存在，无人消费队列。
@@ -4031,7 +4171,8 @@ export async function rewindSession(userMessageId: string): Promise<{
 
     // 3. 在活跃 session 上直接执行 rewindFiles（subprocess 存活，即时调用！）
     //    跳过已被 force-abort 的 session：subprocess 正在死亡，发 IPC 会阻塞到超时（~100s）。
-    if (querySession && lastAssistantUuid && !shouldAbortSession) {
+    //    跳过不属于当前 session 的 UUID：SDK 不认识，调用必定失败且日志噪声。
+    if (querySession && lastAssistantUuid && !shouldAbortSession && currentSessionUuids.has(lastAssistantUuid)) {
       try {
         const REWIND_FILES_TIMEOUT_MS = 5_000;
         const result = await Promise.race([
@@ -4067,9 +4208,16 @@ export async function rewindSession(userMessageId: string): Promise<{
     persistMessagesToStorage();
 
     // 7. 设置下次 query 的对话截断点
-    if (lastAssistantUuid) {
+    //    仅当 UUID 属于当前 SDK session 时才使用 resumeSessionAt。
+    //    旧 UUID（从磁盘加载、来自其他机器/已重建的 session）对当前 SDK 无意义，
+    //    强行传入会导致 SDK 报错 → session 启动失败 → 用户消息丢失。
+    const uuidIsCurrentSession = lastAssistantUuid && currentSessionUuids.has(lastAssistantUuid);
+    if (uuidIsCurrentSession) {
       pendingResumeSessionAt = lastAssistantUuid;
     } else {
+      if (lastAssistantUuid) {
+        console.warn(`[agent] rewind: skipping resumeSessionAt — UUID ${lastAssistantUuid} not in current session (stale from disk/previous session)`);
+      }
       pendingResumeSessionAt = undefined;
       sessionRegistered = false;
       sessionId = randomUUID();
@@ -4102,11 +4250,59 @@ export function forkSession(assistantMessageId: string): {
   title?: string;
   error?: string;
 } {
-  // 1. Find target assistant message
-  const targetIndex = messages.findIndex(m => m.id === assistantMessageId && m.role === 'assistant');
-  if (targetIndex < 0) return { success: false, error: 'Assistant message not found' };
-  const targetMsg = messages[targetIndex];
+  // 1. Find target assistant message in memory first, then fall back to persistent storage.
+  // The in-memory `messages[]` may be empty after session switch/reset (clearMessageState),
+  // while the frontend still shows the fork button because it has the message from loaded state.
+  console.log(`[agent] forkSession: looking for assistantMessageId=${assistantMessageId}, in-memory messages.length=${messages.length}, sessionId=${sessionId}`);
+  console.log(`[agent] forkSession: in-memory message IDs (last 20): ${messages.slice(-20).map(m => `${m.role}:${m.id}`).join(', ')}`);
+  let targetIndex = messages.findIndex(m => m.id === assistantMessageId && m.role === 'assistant');
+  let messageSource = messages;
+
+  if (targetIndex < 0) {
+    // Fallback: load from persistent storage — covers race between clearMessageState
+    // and loadMessagesFromStorage during session switch/pre-warm.
+    const stored = getSessionData(sessionId);
+    if (stored?.messages) {
+      const storedIdx = stored.messages.findIndex(m => m.id === assistantMessageId && m.role === 'assistant');
+      if (storedIdx >= 0) {
+        console.log(`[agent] forkSession: message ${assistantMessageId} not in memory, found in storage`);
+        // Use stored messages directly for fork (they already have sdkUuid persisted)
+        targetIndex = storedIdx;
+        messageSource = stored.messages.map(m => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          timestamp: m.timestamp,
+          sdkUuid: m.sdkUuid,
+          attachments: m.attachments?.map(att => ({
+            id: att.id,
+            name: att.name,
+            size: 0,
+            mimeType: att.mimeType,
+            relativePath: att.path,
+          })),
+          metadata: m.metadata,
+        }));
+      }
+    }
+  }
+
+  if (targetIndex < 0) {
+    console.error(`[agent] forkSession: Assistant message NOT FOUND. assistantMessageId=${assistantMessageId}, in-memory count=${messages.length}, sessionId=${sessionId}`);
+    return { success: false, error: 'Assistant message not found' };
+  }
+  const targetMsg = messageSource[targetIndex];
   if (!targetMsg.sdkUuid) return { success: false, error: 'Message has no SDK UUID (cannot fork)' };
+
+  // UUID validity check: only enforce for STORAGE-loaded messages (messageSource !== messages).
+  // In-memory messages are trusted — their UUIDs were assigned during this process's lifetime.
+  // After rewind, currentSessionUuids is cleared (new SDK session), but pre-rewind messages
+  // remain in memory with valid UUIDs (SDK's resumeSessionAt preserves earlier history).
+  // Storage-loaded messages may come from a different SDK session, so enforce UUID freshness.
+  const isFromStorage = messageSource !== messages;
+  if (isFromStorage && currentSessionUuids.size > 0 && !currentSessionUuids.has(targetMsg.sdkUuid)) {
+    return { success: false, error: 'SDK UUID 已过期（当前 SDK session 不包含此消息），请重新发送后再 fork' };
+  }
 
   // 2. Get current session info for the fork source
   const sourceSessionId = sessionId; // unifiedSession: id === SDK session ID
@@ -4124,8 +4320,8 @@ export function forkSession(assistantMessageId: string): {
       messageUuid: targetMsg.sdkUuid,
     };
 
-    // 4. Copy messages up to and including the fork point (same mapping as persistMessagesToStorage)
-    const forkedMessages: SessionMessage[] = messages.slice(0, targetIndex + 1).map(m => ({
+    // 4. Copy messages up to and including the fork point
+    const forkedMessages: SessionMessage[] = messageSource.slice(0, targetIndex + 1).map(m => ({
       id: m.id,
       role: m.role,
       content: typeof m.content === 'string' ? m.content : JSON.stringify(stripPlaywrightResults(m.content)),
@@ -4135,7 +4331,7 @@ export function forkSession(assistantMessageId: string): {
         id: att.id,
         name: att.name,
         mimeType: att.mimeType,
-        path: att.relativePath ?? '',
+        path: ('relativePath' in att ? att.relativePath : (att as { path?: string }).path) ?? '',
       })),
       metadata: m.metadata,
     }));
@@ -4176,6 +4372,7 @@ async function startStreamingSession(preWarm = false): Promise<void> {
   shouldAbortSession = false;
   resetAbortFlag();
   isProcessing = true;
+  currentSessionUuids.clear(); // 新 session 实例，旧 UUID 不再有效
   let preWarmStartedOk = false; // Tracks whether pre-warm received system_init
   let abortedByTimeout = false; // Distinguishes timeout abort from config-change abort
   let detectedAlreadyInUse = false; // stderr reported "Session ID already in use"
@@ -4319,6 +4516,11 @@ async function startStreamingSession(preWarm = false): Promise<void> {
       },
       cwd: agentDir,
       includePartialMessages: true,
+      // AskUserQuestion preview: request HTML format so frontend can render rich previews
+      // (markdown/code snippets, visual comparisons) when AI presents options to the user
+      toolConfig: {
+        askUserQuestion: { previewFormat: 'html' as const },
+      },
       mcpServers: buildSdkMcpServers(),
       // Sub-agents: inject custom agent definitions if configured
       // When agents are injected, ensure 'Task' tool is in allowedTools so the model can delegate
@@ -4651,10 +4853,26 @@ async function startStreamingSession(preWarm = false): Promise<void> {
             outputFile: taskMsg.output_file,
           });
         }
+
+        // Handle API retry events (v0.2.77+) — show retry status to user
+        // SDK emits these when the Anthropic API returns rate_limit or transient errors
+        // and the SDK is automatically retrying. Without handling, user sees "stuck" behavior.
+        // Field names match SDKAPIRetryMessage type: attempt, max_retries, retry_delay_ms
+        const retryMsg = sdkMessage as { subtype?: string; attempt?: number; max_retries?: number; retry_delay_ms?: number; error?: unknown };
+        if (retryMsg.subtype === 'api_retry') {
+          isApiRetrying = true;
+          console.log(`[agent] API retry: attempt=${retryMsg.attempt}/${retryMsg.max_retries}, delay=${retryMsg.retry_delay_ms}ms`);
+          broadcast('chat:api-retry', {
+            attempt: retryMsg.attempt,
+            maxRetries: retryMsg.max_retries,
+            delayMs: retryMsg.retry_delay_ms,
+          });
+        }
       }
 
       const agentError = extractAgentError(sdkMessage);
       if (agentError) {
+        lastAgentError = agentError;
         broadcast('chat:agent-error', { message: agentError });
       }
       if (shouldAbortSession) {
@@ -4662,6 +4880,11 @@ async function startStreamingSession(preWarm = false): Promise<void> {
       }
 
       if (sdkMessage.type === 'stream_event') {
+        // Clear api_retry status when streaming resumes after a successful retry
+        if (isApiRetrying) {
+          isApiRetrying = false;
+          broadcast('chat:api-retry', null);
+        }
         const streamEvent = sdkMessage.event;
         if (streamEvent.type === 'content_block_delta') {
           if (streamEvent.delta.type === 'text_delta') {
@@ -4904,6 +5127,7 @@ async function startStreamingSession(preWarm = false): Promise<void> {
       } else if (sdkMessage.type === 'user') {
         // Track SDK user UUID — only for non-synthetic messages
         if (!(sdkMessage as { isSynthetic?: boolean }).isSynthetic && sdkMessage.uuid) {
+          currentSessionUuids.add(sdkMessage.uuid);
           for (let i = messages.length - 1; i >= 0; i--) {
             if (messages[i].role === 'user' && !messages[i].sdkUuid) {
               messages[i].sdkUuid = sdkMessage.uuid;
@@ -4991,6 +5215,7 @@ async function startStreamingSession(preWarm = false): Promise<void> {
         // 始终更新为最新的 UUID — SDK 一个回合可能输出多条 assistant 消息
         // （thinking → text），resumeSessionAt 需要最后一条的 UUID 才能保留完整回答
         if (sdkMessage.uuid) {
+          currentSessionUuids.add(sdkMessage.uuid);
           currentAssistant.sdkUuid = sdkMessage.uuid;
           // Broadcast to frontend so fork button appears during streaming
           // (user messages already broadcast this; assistant messages were missing it)
@@ -5322,8 +5547,10 @@ async function startStreamingSession(preWarm = false): Promise<void> {
           cache_creation_tokens: currentTurnUsage.cacheCreationTokens,
           tool_count: currentTurnToolCount,
           duration_ms: durationMs,
-          // Piggyback sdkUuid so fork button appears immediately after streaming
+          // Piggyback sdkUuid + real message ID so fork button works immediately after streaming.
+          // Frontend streaming messages use Date.now() IDs that don't match backend messageSequence IDs.
           assistant_sdk_uuid: lastAssistant?.sdkUuid,
+          assistant_message_id: lastAssistant?.id,
         });
 
         // Server-side unified analytics: covers all sources (desktop/cron/im)

@@ -3,7 +3,7 @@
 // Only accessible from 127.0.0.1 (Bun Sidecar processes)
 
 use axum::{
-    extract::Query,
+    extract::{DefaultBodyLimit, Query},
     routing::{get, post},
     Json, Router,
 };
@@ -74,9 +74,13 @@ pub async fn start_management_api() -> Result<u16, String> {
         .route("/api/cron/run", post(run_cron_handler))
         .route("/api/cron/runs", get(runs_cron_handler))
         .route("/api/cron/status", get(status_cron_handler))
+        .route("/api/im/channels", get(list_im_channels_handler))
         .route("/api/im/wake", post(wake_bot_handler))
         .route("/api/im/send-media", post(send_media_handler))
-        .route("/api/im-bridge/message", post(handle_bridge_message));
+        .route("/api/im-bridge/message", post(handle_bridge_message))
+        // Bridge messages carry base64-encoded media attachments (images/files).
+        // Default axum 2MB limit is too small — raise to 50MB for this API.
+        .layer(DefaultBodyLimit::max(50 * 1024 * 1024));
 
     tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, app).await {
@@ -444,6 +448,84 @@ async fn find_bot_adapter(bot_id: &str) -> Option<std::sync::Arc<im::AnyAdapter>
     None
 }
 
+/// Snapshot of channel metadata extracted under lock, resolved after lock is dropped.
+struct ChannelSnapshot {
+    bot_id: String,
+    platform_str: String,
+    name: String,
+    agent_name: Option<String>,
+    health: std::sync::Arc<im::health::HealthManager>,
+}
+
+/// GET /api/im/channels — List all configured IM channels for cron delivery target discovery.
+/// Returns channel botId, platform, name, parent agent name, and runtime status.
+/// Uses snapshot-then-await pattern to avoid holding ManagedAgents/ManagedImBots lock across awaits.
+async fn list_im_channels_handler() -> Json<serde_json::Value> {
+    let mut snapshots: Vec<ChannelSnapshot> = Vec::new();
+
+    // Snapshot from ManagedAgents (primary path after v0.1.41) — lock dropped before await
+    if let Some(agents) = get_agents() {
+        let agents_guard = agents.lock().await;
+        for agent in agents_guard.values() {
+            for (ch_id, ch_inst) in &agent.channels {
+                let platform_str = serde_json::to_value(&ch_inst.bot_instance.platform)
+                    .and_then(|v| serde_json::from_value::<String>(v))
+                    .unwrap_or_else(|_| "unknown".to_string());
+                let name = ch_inst.bot_instance.config.name.clone()
+                    .unwrap_or_else(|| ch_id.clone());
+                snapshots.push(ChannelSnapshot {
+                    bot_id: ch_id.clone(),
+                    platform_str,
+                    name,
+                    agent_name: Some(agent.config.name.clone()),
+                    health: std::sync::Arc::clone(&ch_inst.bot_instance.health),
+                });
+            }
+        }
+    } // agents_guard dropped here
+
+    // Snapshot from legacy ManagedImBots — lock dropped before await
+    if let Some(bots) = get_im_bots() {
+        let bots_guard = bots.lock().await;
+        for (bot_id, instance) in bots_guard.iter() {
+            // Skip if already collected from agent channels
+            if snapshots.iter().any(|s| s.bot_id == *bot_id) {
+                continue;
+            }
+            let platform_str = serde_json::to_value(&instance.platform)
+                .and_then(|v| serde_json::from_value::<String>(v))
+                .unwrap_or_else(|_| "unknown".to_string());
+            let name = instance.config.name.clone()
+                .unwrap_or_else(|| bot_id.clone());
+            snapshots.push(ChannelSnapshot {
+                bot_id: bot_id.clone(),
+                platform_str,
+                name,
+                agent_name: None,
+                health: std::sync::Arc::clone(&instance.health),
+            });
+        }
+    } // bots_guard dropped here
+
+    // Now resolve health states without holding any lock
+    let mut channels = Vec::with_capacity(snapshots.len());
+    for snap in snapshots {
+        let health_state = snap.health.get_state().await;
+        let status_str = serde_json::to_value(&health_state.status)
+            .and_then(|v| serde_json::from_value::<String>(v))
+            .unwrap_or_else(|_| "unknown".to_string());
+        channels.push(serde_json::json!({
+            "botId": snap.bot_id,
+            "platform": snap.platform_str,
+            "name": snap.name,
+            "agentName": snap.agent_name,
+            "status": status_str,
+        }));
+    }
+
+    Json(serde_json::json!({ "ok": true, "channels": channels }))
+}
+
 async fn wake_bot_handler(
     Json(payload): Json<WakeRequest>,
 ) -> Json<serde_json::Value> {
@@ -593,6 +675,21 @@ async fn send_media_handler(
 
 // ===== Bridge Message handler (OpenClaw Channel Plugin → Rust) =====
 
+/// Media attachment from Plugin Bridge (base64-encoded).
+/// Classified by the Bridge shim based on MIME type:
+///   - "image" → ImAttachmentType::Image (Claude Vision API)
+///   - "file"  → ImAttachmentType::File (save to workspace + @path reference)
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgeAttachment {
+    file_name: String,
+    mime_type: String,
+    /// base64-encoded file content
+    data: String,
+    /// "image" | "file"
+    attachment_type: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BridgeMessagePayload {
@@ -620,13 +717,16 @@ struct BridgeMessagePayload {
     /// Group-level custom system prompt from plugin config
     #[serde(default)]
     group_system_prompt: Option<String>,
+    /// Media attachments from OpenClaw plugin (images, files, voice, video)
+    #[serde(default)]
+    attachments: Vec<BridgeAttachment>,
 }
 
 async fn handle_bridge_message(
     Json(payload): Json<BridgeMessagePayload>,
 ) -> (axum::http::StatusCode, Json<serde_json::Value>) {
     use crate::im::bridge;
-    use crate::im::types::{ImMessage, ImPlatform, ImSourceType};
+    use crate::im::types::{ImAttachment, ImAttachmentType, ImMessage, ImPlatform, ImSourceType};
 
     // Validate plugin_id: reject empty, path separators, and colons.
     // Note: built-in platform names ("feishu" etc.) are allowed because OpenClaw plugins
@@ -668,6 +768,41 @@ async fn handle_bridge_message(
     // Default: private=true (directed at bot), group=false (only if explicitly flagged)
     let is_mention = payload.is_mention.unwrap_or(source_type == ImSourceType::Private);
 
+    // Decode base64 media attachments from Bridge
+    let mut im_attachments: Vec<ImAttachment> = Vec::new();
+    for att in &payload.attachments {
+        use base64::Engine;
+        match base64::engine::general_purpose::STANDARD.decode(&att.data) {
+            Ok(data) => {
+                let attachment_type = if att.attachment_type == "image" {
+                    ImAttachmentType::Image
+                } else {
+                    ImAttachmentType::File
+                };
+                crate::ulog_info!(
+                    "[im-bridge] Decoded {} attachment: {} ({}, {} bytes)",
+                    att.attachment_type,
+                    att.file_name,
+                    att.mime_type,
+                    data.len()
+                );
+                im_attachments.push(ImAttachment {
+                    file_name: att.file_name.clone(),
+                    mime_type: att.mime_type.clone(),
+                    data,
+                    attachment_type,
+                });
+            }
+            Err(e) => {
+                crate::ulog_error!(
+                    "[im-bridge] Failed to decode base64 for {}: {}",
+                    att.file_name,
+                    e
+                );
+            }
+        }
+    }
+
     let msg = ImMessage {
         chat_id: payload.chat_id,
         message_id: payload.message_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
@@ -677,7 +812,7 @@ async fn handle_bridge_message(
         source_type,
         platform: ImPlatform::OpenClaw(plugin_id),
         timestamp: chrono::Utc::now(),
-        attachments: Vec::new(),
+        attachments: im_attachments,
         media_group_id: None,
         is_mention,
         reply_to_bot: false,

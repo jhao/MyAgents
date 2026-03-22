@@ -483,6 +483,29 @@ export function saveSessionMessages(sessionId: string, messages: SessionMessage[
             existingCount = getCachedLineCount(sessionId, filePath);
         }
 
+        // Detect rewind truncation: in-memory messages shrank (e.g., after rewind)
+        // Must rewrite entire JSONL file to match the truncated state
+        if (messages.length < existingCount) {
+            console.log(`[SessionStore] Rewind detected: messages.length=${messages.length} < existingCount=${existingCount}, rewriting JSONL for session ${sessionId}`);
+            const fullContent = messages.map(msg => JSON.stringify(msg)).join('\n') + (messages.length > 0 ? '\n' : '');
+            writeFileSync(filePath, fullContent, 'utf-8');
+            lineCountCache.set(sessionId, messages.length);
+
+            // Recalculate full stats after rewrite
+            const fullStats = calculateSessionStats(messages);
+            withSessionsLock(() => {
+                const session = getSessionMetadata(sessionId);
+                if (!session) return;
+                const all = getAllSessionMetadata();
+                const index = all.findIndex(s => s.id === sessionId);
+                if (index >= 0) {
+                    all[index] = { ...session, stats: fullStats };
+                    writeFileSync(SESSIONS_FILE, JSON.stringify(all, null, 2), 'utf-8');
+                }
+            });
+            return;
+        }
+
         // Only append new messages
         const newMessages = messages.slice(existingCount);
 

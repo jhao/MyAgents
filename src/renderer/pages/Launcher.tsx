@@ -26,6 +26,7 @@ import {
     getEnabledMcpServerIds,
     resolveProvider,
 } from '@/config/configService';
+import { patchAgentConfig, getAgentById } from '@/config/services/agentConfigService';
 import { deleteCronTask, stopCronTask, startCronTask, startCronScheduler } from '@/api/cronTaskClient';
 import { isBrowserDevMode, pickFolderForDialog } from '@/utils/browserMock';
 import { useAgentStatuses } from '@/hooks/useAgentStatuses';
@@ -129,11 +130,17 @@ export default function Launcher({ onLaunchProject, isStarting, startError: _sta
     const [launcherGlobalMcpEnabled, setLauncherGlobalMcpEnabled] = useState<string[]>([]);
     const [launcherWorkspaceMcpEnabled, setLauncherWorkspaceMcpEnabled] = useState<string[]>([]);
 
+    // Resolve AgentConfig for selected workspace (source of truth for AI settings)
+    const selectedAgent = useMemo(() => {
+        if (!selectedWorkspace?.agentId) return undefined;
+        return getAgentById(config, selectedWorkspace.agentId);
+    }, [selectedWorkspace?.agentId, config]);
+
     // Derive provider for launcher — only select providers with valid credentials
     const launcherProvider = useMemo(() => {
-        const id = launcherProviderId ?? selectedWorkspace?.providerId ?? config.defaultProviderId;
+        const id = launcherProviderId ?? selectedAgent?.providerId ?? selectedWorkspace?.providerId ?? config.defaultProviderId;
         return resolveProvider(id, providers, apiKeys, providerVerifyStatus);
-    }, [launcherProviderId, selectedWorkspace, config.defaultProviderId, providers, apiKeys, providerVerifyStatus]);
+    }, [launcherProviderId, selectedAgent, selectedWorkspace, config.defaultProviderId, providers, apiKeys, providerVerifyStatus]);
 
     // Load MCP servers when workspace changes
     useEffect(() => {
@@ -143,7 +150,7 @@ export default function Launcher({ onLaunchProject, isStarting, startError: _sta
                 const enabled = await getEnabledMcpServerIds();
                 setLauncherMcpServers(servers);
                 setLauncherGlobalMcpEnabled(enabled);
-                setLauncherWorkspaceMcpEnabled(selectedWorkspace?.mcpEnabledServers ?? []);
+                setLauncherWorkspaceMcpEnabled(selectedAgent?.mcpEnabledServers ?? selectedWorkspace?.mcpEnabledServers ?? []);
             } catch (err) {
                 console.warn('[Launcher] Failed to load MCP servers:', err);
             }
@@ -179,6 +186,9 @@ export default function Launcher({ onLaunchProject, isStarting, startError: _sta
             const newEnabled = enabled ? [...prev, serverId] : prev.filter(id => id !== serverId);
             if (selectedWorkspace) {
                 void patchProject(selectedWorkspace.id, { mcpEnabledServers: newEnabled });
+                if (selectedWorkspace.agentId) {
+                    void patchAgentConfig(selectedWorkspace.agentId, { mcpEnabledServers: newEnabled });
+                }
             }
             return newEnabled;
         });
@@ -206,12 +216,12 @@ export default function Launcher({ onLaunchProject, isStarting, startError: _sta
     // Depends on individual fields (not just .id) so it re-runs when Chat's patchProject updates them.
     useEffect(() => {
         if (isLoading || !selectedWorkspace) return;
-        setLauncherPermissionMode(selectedWorkspace.permissionMode ?? config.defaultPermissionMode);
-        setLauncherSelectedModel(selectedWorkspace.model ?? undefined);
-        setLauncherProviderId(selectedWorkspace.providerId ?? undefined);
-        setLauncherWorkspaceMcpEnabled(selectedWorkspace.mcpEnabledServers ?? []);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- depend on specific project fields, not object ref
-    }, [isLoading, selectedWorkspace?.id, selectedWorkspace?.permissionMode, selectedWorkspace?.model, selectedWorkspace?.providerId, selectedWorkspace?.mcpEnabledServers, config.defaultPermissionMode]);
+        setLauncherPermissionMode((selectedAgent?.permissionMode as PermissionMode | undefined) ?? selectedWorkspace.permissionMode ?? config.defaultPermissionMode);
+        setLauncherSelectedModel(selectedAgent?.model ?? selectedWorkspace.model ?? undefined);
+        setLauncherProviderId(selectedAgent?.providerId ?? selectedWorkspace.providerId ?? undefined);
+        setLauncherWorkspaceMcpEnabled(selectedAgent?.mcpEnabledServers ?? selectedWorkspace.mcpEnabledServers ?? []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- depend on specific agent/project fields, not object ref
+    }, [isLoading, selectedWorkspace?.id, selectedAgent?.permissionMode, selectedAgent?.model, selectedAgent?.providerId, selectedAgent?.mcpEnabledServers, selectedWorkspace?.permissionMode, selectedWorkspace?.model, selectedWorkspace?.providerId, selectedWorkspace?.mcpEnabledServers, config.defaultPermissionMode]);
 
     // Write-back handlers: persist Launcher setting changes to the selected project
 
@@ -219,6 +229,9 @@ export default function Launcher({ onLaunchProject, isStarting, startError: _sta
         setLauncherPermissionMode(mode);
         if (selectedWorkspace) {
             void patchProject(selectedWorkspace.id, { permissionMode: mode });
+            if (selectedWorkspace.agentId) {
+                void patchAgentConfig(selectedWorkspace.agentId, { permissionMode: mode });
+            }
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-create when workspace ID changes
     }, [selectedWorkspace?.id, patchProject]);
@@ -227,6 +240,9 @@ export default function Launcher({ onLaunchProject, isStarting, startError: _sta
         setLauncherSelectedModel(model);
         if (selectedWorkspace) {
             void patchProject(selectedWorkspace.id, { model: model ?? null });
+            if (selectedWorkspace.agentId) {
+                void patchAgentConfig(selectedWorkspace.agentId, { model: model ?? undefined });
+            }
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-create when workspace ID changes
     }, [selectedWorkspace?.id, patchProject]);
@@ -242,6 +258,9 @@ export default function Launcher({ onLaunchProject, isStarting, startError: _sta
             const patch: Partial<Omit<Project, 'id'>> = { providerId: providerId ?? undefined };
             if (model) patch.model = model;
             void patchProject(selectedWorkspace.id, patch);
+            if (selectedWorkspace.agentId) {
+                void patchAgentConfig(selectedWorkspace.agentId, { providerId: providerId ?? undefined, model: model ?? undefined });
+            }
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-create when workspace ID changes
     }, [selectedWorkspace?.id, patchProject, providers]);

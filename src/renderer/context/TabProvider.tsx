@@ -393,9 +393,14 @@ export default function TabProvider({
         lastCompletedTextRef.current = '';
         lastProviderEnvRef.current = undefined;
         lastModelRef.current = undefined;
-        // Clear current session ID - no active session until first message creates one
-        // This ensures history dropdown shows no selection for new conversations
-        setCurrentSessionId(null);
+        // NOTE: Do NOT clear currentSessionId here. The old session ID is the only way
+        // to find the still-running sidecar via getSessionPort(). Setting it to null
+        // causes all subsequent API calls to fail ("No running sidecar for tab") because
+        // getBaseUrl skips session-centric lookup when sessionId is null, and the tab-based
+        // fallback also fails. The history dropdown naturally shows no selection when the
+        // old session is deleted from the list, so no UI impact.
+        // The session ID will be upgraded to the new value when chat:system-init arrives.
+
         // Reset tab title so SortableTabItem falls back to folder name
         onTitleChangeRef.current?.('New Chat');
 
@@ -672,6 +677,19 @@ export default function TabProvider({
                 // System status from SDK (e.g., 'compacting' for context compression)
                 const payload = data as { status: string | null } | null;
                 setSystemStatus(payload?.status ?? null);
+                break;
+            }
+
+            case 'chat:api-retry': {
+                // SDK is retrying API call (rate limit or transient error)
+                // null payload = retry resolved, streaming resumed — clear status
+                const payload = data as { attempt?: number; maxRetries?: number; delayMs?: number } | null;
+                if (payload) {
+                    const retryKey = `api_retry:${payload.attempt ?? 1}:${payload.maxRetries ?? '?'}`;
+                    setSystemStatus(retryKey);
+                } else {
+                    setSystemStatus(null);
+                }
                 break;
             }
 
@@ -982,19 +1000,27 @@ export default function TabProvider({
                     tool_count?: number;
                     duration_ms?: number;
                     assistant_sdk_uuid?: string;
+                    assistant_message_id?: string;
                 } | null;
 
-                // Apply assistant sdkUuid to the just-moved history message.
-                // This avoids the ID mismatch: streaming messages use Date.now() IDs,
-                // backend uses messageSequence IDs, so the separate sdk-uuid event can't
-                // match. Piggybacking on message-complete is reliable.
-                if (completePayload?.assistant_sdk_uuid) {
+                // Apply backend's real message ID + sdkUuid to the just-moved history message.
+                // Streaming messages use Date.now() IDs that don't match backend's messageSequence IDs.
+                // Without this, fork/rewind pass the wrong ID to the backend.
+                if (completePayload?.assistant_sdk_uuid || completePayload?.assistant_message_id) {
                     const uuid = completePayload.assistant_sdk_uuid;
+                    const realId = completePayload.assistant_message_id;
                     setHistoryMessages(prev => {
                         if (prev.length === 0) return prev;
                         const last = prev[prev.length - 1];
-                        if (last.role !== 'assistant' || last.sdkUuid === uuid) return prev;
-                        return [...prev.slice(0, -1), { ...last, sdkUuid: uuid }];
+                        if (last.role !== 'assistant') return prev;
+                        const needsUuid = uuid && last.sdkUuid !== uuid;
+                        const needsId = realId && last.id !== realId;
+                        if (!needsUuid && !needsId) return prev;
+                        return [...prev.slice(0, -1), {
+                            ...last,
+                            ...(needsId ? { id: realId } : {}),
+                            ...(needsUuid ? { sdkUuid: uuid } : {}),
+                        }];
                     });
                 }
                 // Always track message_complete, use defaults if payload is missing
@@ -1267,13 +1293,14 @@ export default function TabProvider({
 
             case 'ask-user-question:request': {
                 // Agent is asking user structured questions
-                const payload = data as { requestId: string; questions: AskUserQuestion[] } | null;
+                const payload = data as { requestId: string; questions: AskUserQuestion[]; previewFormat?: 'html' | 'markdown' } | null;
                 console.log(`[TabProvider] ask-user-question:request received:`, payload);
                 if (payload?.requestId && payload.questions?.length > 0) {
                     console.log(`[TabProvider] Setting pendingAskUserQuestion with ${payload.questions.length} questions`);
                     setPendingAskUserQuestion({
                         requestId: payload.requestId,
                         questions: payload.questions,
+                        previewFormat: payload.previewFormat,
                     });
                     // Send system notification if user is not focused on the app
                     notifyAskUserQuestion();
@@ -1460,6 +1487,13 @@ export default function TabProvider({
                     console.log(`[TabProvider] queue:cancelled queueId=${payload.queueId}`);
                     setQueuedMessages(prev => prev.filter(q => q.queueId !== payload.queueId));
                 }
+                break;
+            }
+
+            case 'config:changed': {
+                // Admin CLI modified config — notify global ConfigProvider to refresh
+                console.log('[TabProvider] config:changed via Admin CLI', data);
+                window.dispatchEvent(new CustomEvent('myagents:config-changed', { detail: data }));
                 break;
             }
 

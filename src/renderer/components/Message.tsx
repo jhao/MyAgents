@@ -261,9 +261,6 @@ const Message = memo(function Message({ message, isLoading = false, onRewind, on
             <div className="mr-2 mb-1 flex items-center gap-1 text-[11px] text-[var(--ink-muted)]">
               {imSource?.includes('group') && <span>👥</span>}
               <span>via {SOURCE_LABELS[imSource as MessageSource] ?? imSource}</span>
-              {message.metadata?.senderName && (
-                <span>· {message.metadata.senderName}</span>
-              )}
             </div>
           )}
           <article className="relative w-fit max-w-[66%] rounded-2xl border border-[var(--line)] bg-[var(--paper-elevated)] px-4 py-3 text-base leading-relaxed text-[var(--ink)] shadow-md select-text">

@@ -38,7 +38,7 @@ import {
     removeProject as removeProjectService,
     touchProject as touchProjectService,
 } from './services/projectService';
-import { migrateImBotConfigsToAgents, persistAgents } from './services/agentConfigService';
+import { migrateImBotConfigsToAgents, persistAgents, ensureAllProjectsHaveAgent, addAgentConfig } from './services/agentConfigService';
 import { isTauriEnvironment } from '@/utils/browserMock';
 
 /**
@@ -215,6 +215,15 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
                 console.log('[ConfigProvider] Repaired agents with missing channels — persisted to disk');
             }
 
+            // Ensure every project has a linked AgentConfig (basicAgent).
+            // Runs after IM migration + normalize so all existing agents are already in place.
+            const basicAgentResult = ensureAllProjectsHaveAgent(loadedConfig, loadedProjects, loadedConfig.defaultPermissionMode);
+            if (basicAgentResult.changed) {
+                await persistAgents(loadedConfig.agents!);
+                await saveProjects(loadedProjects);
+                console.log('[ConfigProvider] Created basicAgent(s) for projects without AgentConfig');
+            }
+
             if (!isMountedRef.current) return;
             setConfig(loadedConfig);
             setProjects(loadedProjects);
@@ -275,6 +284,22 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
         };
     }, []);
 
+    // ============= Listen for Admin CLI config changes (via SSE → window event) =============
+
+    useEffect(() => {
+        const handler = () => {
+            if (!isMountedRef.current) return;
+            loadAppConfig().then(latest => {
+                normalizeAgents(latest);
+                if (isMountedRef.current) setConfig(latest);
+            }).catch(err => {
+                console.error('[ConfigProvider] Failed to refresh config after admin CLI change:', err);
+            });
+        };
+        window.addEventListener('myagents:config-changed', handler);
+        return () => window.removeEventListener('myagents:config-changed', handler);
+    }, []);
+
     // ============= Actions =============
 
     const updateConfig = useCallback(async (updates: Partial<AppConfig>) => {
@@ -321,6 +346,28 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
 
     const addProject = useCallback(async (path: string) => {
         const project = await addProjectService(path);
+
+        // Auto-create basicAgent for new projects (or re-opened projects without agentId)
+        if (!project.agentId) {
+            const agentId = crypto.randomUUID();
+            const basicAgent = {
+                id: agentId,
+                name: project.name,
+                workspacePath: project.path,
+                enabled: false,
+                channels: [] as import('../../shared/types/agent').ChannelConfig[],
+                permissionMode: config.defaultPermissionMode || 'plan',
+                providerId: project.providerId ?? undefined,
+                model: project.model ?? undefined,
+                mcpEnabledServers: project.mcpEnabledServers,
+            } as import('../../shared/types/agent').AgentConfig;
+            await addAgentConfig(basicAgent);
+            await patchProjectService(project.id, { agentId });
+            project.agentId = agentId;
+            // Update config state so agent is immediately available
+            setConfig(prev => ({ ...prev, agents: [...(prev.agents ?? []), basicAgent] }));
+        }
+
         setProjects((prev) => {
             const filtered = prev.filter((p) => p.id !== project.id);
             return [project, ...filtered];

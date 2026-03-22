@@ -51,6 +51,7 @@ let capturedPlugin: CapturedPlugin | null = null;
 let pluginName = 'unknown';
 let gatewayError: string | null = null;
 let gatewayStarted = false; // true once startAccount() has been invoked
+let waitingForQrLogin = false; // true when plugin supports QR login but isn't configured yet
 
 // Streaming sessions (keyed by streamId)
 const streamingSessions = new Map<string, FeishuStreamingSession>();
@@ -62,6 +63,8 @@ let getCapturedToolsFn: (() => CapturedTool[]) | null = null;
 let getCapturedCommandsFn: (() => import('./compat-api').CapturedCommand[]) | null = null;
 /** OpenClaw-format config (channels.{brand}.{...}), set during loadPlugin() */
 let loadedOpenclawConfig: Record<string, unknown> = {};
+/** Current resolved account — shared by sendText/sendMedia closures, updated by /restart-gateway */
+let currentAccount: Record<string, unknown> = {};
 
 async function loadPlugin() {
   // Find the plugin entry point FIRST — we need the module name to infer the channel brand
@@ -196,18 +199,23 @@ async function loadPlugin() {
   }
 
   // Resolve account using the plugin's own config.resolveAccount if available
+  // Pass accountId from pluginConfig (persisted after QR login) so plugins like
+  // WeChat can find credentials saved under that specific accountId on disk.
   const configAccessor = capturedPlugin.raw?.config as Record<string, unknown> | undefined;
-  let account: Record<string, unknown>;
+  const persistedAccountId = pluginConfig.accountId as string | undefined;
+  let account: Record<string, unknown> = currentAccount;
   if (typeof configAccessor?.resolveAccount === 'function') {
     try {
-      account = (configAccessor.resolveAccount as (cfg: unknown, id?: string) => Record<string, unknown>)(openclawCfg);
+      account = (configAccessor.resolveAccount as (cfg: unknown, id?: string) => Record<string, unknown>)(openclawCfg, persistedAccountId);
     } catch (err) {
       console.warn(`[plugin-bridge] resolveAccount failed, using flat config:`, err);
-      account = { accountId: 'default', enabled: true, ...pluginConfig };
+      account = { accountId: persistedAccountId || 'default', enabled: true, ...pluginConfig };
     }
   } else {
     account = { accountId: 'default', enabled: true, ...pluginConfig };
   }
+
+  currentAccount = account; // Share with /restart-gateway and sendText/sendMedia closures
 
   // Log account with secrets redacted
   const redactedAccount = Object.fromEntries(
@@ -250,14 +258,25 @@ async function loadPlugin() {
 
   // Validate credentials before starting gateway
   // Check if the plugin's isConfigured function reports the account as configured
-  const isConfigured = capturedPlugin.raw?.config as Record<string, unknown> | undefined;
-  if (typeof isConfigured?.isConfigured === 'function') {
-    const configured = (isConfigured.isConfigured as (a: unknown) => boolean)(account);
+  const configAccessorForCheck = capturedPlugin.raw?.config as Record<string, unknown> | undefined;
+  const supportsQrLogin = typeof capturedPlugin.gateway?.loginWithQrStart === 'function';
+  if (typeof configAccessorForCheck?.isConfigured === 'function') {
+    // OpenClaw signature: isConfigured(account, cfg) → boolean | Promise<boolean>
+    const configuredResult = (configAccessorForCheck.isConfigured as (a: unknown, c: unknown) => boolean | Promise<boolean>)(account, openclawCfg);
+    const configured = configuredResult instanceof Promise ? await configuredResult : configuredResult;
     if (!configured) {
-      const errMsg = 'Plugin reports account is not configured (missing required credentials)';
-      console.error(`[plugin-bridge] ${errMsg}`);
-      gatewayError = errMsg;
-      return; // Don't start gateway — credentials are missing
+      if (supportsQrLogin) {
+        // QR login plugins: isConfigured=false is expected (user hasn't scanned yet).
+        // Keep Bridge alive and healthy — QR login endpoints will handle authentication.
+        waitingForQrLogin = true;
+        console.log('[plugin-bridge] Account not configured, but plugin supports QR login — waiting for /qr-login-start');
+        return; // Skip gateway start — /restart-gateway will start it after QR login
+      } else {
+        const errMsg = 'Plugin reports account is not configured (missing required credentials)';
+        console.error(`[plugin-bridge] ${errMsg}`);
+        gatewayError = errMsg;
+        return; // Don't start gateway — credentials are missing
+      }
     }
   }
 
@@ -267,8 +286,10 @@ async function loadPlugin() {
     const abortController = new AbortController();
     let status: Record<string, unknown> = { running: false, connected: false };
 
+    const resolvedAccountId = (account.accountId as string) || persistedAccountId || 'default';
     const ctx = {
       account,
+      accountId: resolvedAccountId,
       abortSignal: abortController.signal,
       log: console,
       cfg: openclawCfg,
@@ -278,6 +299,8 @@ async function loadPlugin() {
 
     // Don't await — let the gateway run in background (it may be long-lived)
     gatewayStarted = true;
+    // Store context for stopAccount() — OpenClaw expects same context shape
+    (globalThis as Record<string, unknown>).__bridgeGatewayCtx = ctx;
     (startAccount as (ctx: Record<string, unknown>) => Promise<void>)(ctx)
       .then(() => console.log(`[plugin-bridge] Plugin gateway started`))
       .catch((err: unknown) => {
@@ -310,8 +333,10 @@ const server = Bun.serve({
         ok: !gatewayError,
         pluginName,
         pluginId: capturedPlugin?.id || 'unknown',
-        ready: !!capturedPlugin && !gatewayError && gatewayStarted,
+        // Ready when: gateway running OR waiting for QR login (plugin loaded, endpoints available)
+        ready: !!capturedPlugin && !gatewayError && (gatewayStarted || waitingForQrLogin),
         error: gatewayError || undefined,
+        waitingForQrLogin,
       });
     }
 
@@ -324,6 +349,7 @@ const server = Bun.serve({
       const commands = getCapturedCommandsFn
         ? getCapturedCommandsFn().map(c => ({ name: c.name, description: c.description }))
         : [];
+      const supportsQrLogin = typeof capturedPlugin?.gateway?.loginWithQrStart === 'function';
       return Response.json({
         pluginId: capturedPlugin?.id || 'unknown',
         textChunkLimit: outbound?.textChunkLimit ?? 4096,
@@ -341,6 +367,7 @@ const server = Bun.serve({
           hasTools,
           toolGroups,
           commands,
+          supportsQrLogin,
         },
       });
     }
@@ -426,7 +453,9 @@ const server = Bun.serve({
         const body = await req.json() as Record<string, unknown>;
         // Build a temporary account-like object from the provided credentials
         const tempAccount = { accountId: 'default', enabled: true, ...body };
-        const configured = (configCheck.isConfigured as (a: unknown) => boolean)(tempAccount);
+        // OpenClaw signature: isConfigured(account, cfg) → boolean | Promise<boolean>
+        const configuredResult = (configCheck.isConfigured as (a: unknown, c: unknown) => boolean | Promise<boolean>)(tempAccount, loadedOpenclawConfig);
+        const configured = configuredResult instanceof Promise ? await configuredResult : configuredResult;
         if (configured) {
           return Response.json({ ok: true, message: 'Credentials valid (isConfigured passed)' });
         } else {
@@ -687,6 +716,124 @@ const server = Bun.serve({
       }
     }
 
+    // ===== QR Login endpoints (generic OpenClaw gateway protocol) =====
+
+    if (path === '/qr-login-start' && req.method === 'POST') {
+      const loginWithQrStart = capturedPlugin?.gateway?.loginWithQrStart;
+      if (typeof loginWithQrStart !== 'function') {
+        return Response.json({ ok: false, error: 'Plugin does not support QR login' }, { status: 501 });
+      }
+      try {
+        const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+        const result = await (loginWithQrStart as (params: Record<string, unknown>) => Promise<Record<string, unknown>>)(body);
+        // qrDataUrl can be:
+        // 1. data:image/png;base64,... (WhatsApp) — pass through, frontend renders as <img>
+        // 2. https://... (WeChat) — a URL to be QR-encoded, NOT an image to download.
+        //    The frontend will use the `qrcode` library to encode this URL into a QR image.
+        //    WeChat's qrcode_img_content is a web page URL, not a direct image.
+        // Both cases: return as-is. Frontend handles rendering.
+        return Response.json({ ok: true, ...result });
+      } catch (err) {
+        return Response.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+      }
+    }
+
+    if (path === '/qr-login-wait' && req.method === 'POST') {
+      const loginWithQrWait = capturedPlugin?.gateway?.loginWithQrWait;
+      if (typeof loginWithQrWait !== 'function') {
+        return Response.json({ ok: false, error: 'Plugin does not support QR login' }, { status: 501 });
+      }
+      try {
+        const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+        // loginWithQrWait may long-poll (up to 35s for WeChat), so no timeout here
+        const result = await (loginWithQrWait as (params: Record<string, unknown>) => Promise<Record<string, unknown>>)(body);
+        return Response.json({ ok: true, ...result });
+      } catch (err) {
+        return Response.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+      }
+    }
+
+    if (path === '/restart-gateway' && req.method === 'POST') {
+      // After QR login success, restart the gateway with fresh credentials
+      if (!capturedPlugin) {
+        return Response.json({ ok: false, error: 'No plugin loaded' }, { status: 500 });
+      }
+      try {
+        // 1. Stop current gateway gracefully (abort + explicit stopAccount)
+        const abortCtrl = (globalThis as Record<string, unknown>).__bridgeAbort as AbortController | undefined;
+        if (abortCtrl) abortCtrl.abort();
+        const stopAccount = capturedPlugin.gateway?.stopAccount;
+        if (typeof stopAccount === 'function') {
+          try { await (stopAccount as () => Promise<void>)(); } catch { /* best-effort */ }
+        }
+
+        // 2. Re-resolve account with fresh credentials
+        // CRITICAL: pass accountId from QR login result — plugins like WeChat require
+        // accountId to look up the newly-saved credentials on disk
+        const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+        const qrAccountId = body.accountId as string | undefined;
+        const resolveAccount = capturedPlugin.raw?.config as Record<string, unknown> | undefined;
+        let account: Record<string, unknown> = pluginConfig;
+        if (typeof resolveAccount?.resolveAccount === 'function') {
+          try {
+            account = await (resolveAccount.resolveAccount as (cfg: unknown, id?: string) => Promise<Record<string, unknown>>)(loadedOpenclawConfig, qrAccountId) || pluginConfig;
+          } catch (err) {
+            console.warn('[plugin-bridge] resolveAccount failed after QR login:', err);
+            // If resolve failed but we have an accountId, try building a minimal account
+            if (qrAccountId) {
+              account = { accountId: qrAccountId, enabled: true, configured: true, ...pluginConfig };
+            }
+          }
+        }
+
+        // 3. Check if now configured
+        // OpenClaw signature: isConfigured(account, cfg) → boolean | Promise<boolean>
+        const isConfigured = resolveAccount;
+        if (typeof isConfigured?.isConfigured === 'function') {
+          const configuredResult = (isConfigured.isConfigured as (a: unknown, c: unknown) => boolean | Promise<boolean>)(account, loadedOpenclawConfig);
+          const configured = configuredResult instanceof Promise ? await configuredResult : configuredResult;
+          if (!configured) {
+            return Response.json({ ok: false, error: 'Account still not configured after QR login' }, { status: 400 });
+          }
+        }
+
+        // 4. Update shared account (sendText/sendMedia closures use currentAccount)
+        currentAccount = account;
+        waitingForQrLogin = false; // QR login complete, transitioning to running state
+
+        // 5. Start gateway with new account
+        const startAccount = capturedPlugin.gateway?.startAccount;
+        if (typeof startAccount === 'function') {
+          const newAbort = new AbortController();
+          let status: Record<string, unknown> = { running: false, connected: false };
+          const restartAccountId = (account.accountId as string) || qrAccountId || 'default';
+          const ctx = {
+            account,
+            accountId: restartAccountId,
+            abortSignal: newAbort.signal,
+            log: console,
+            cfg: loadedOpenclawConfig,
+            getStatus: () => status,
+            setStatus: (s: Record<string, unknown>) => { status = s; },
+          };
+          gatewayError = null;
+          gatewayStarted = true;
+          // Store context for stopAccount()
+          (globalThis as Record<string, unknown>).__bridgeGatewayCtx = ctx;
+          (startAccount as (ctx: Record<string, unknown>) => Promise<void>)(ctx)
+            .then(() => console.log('[plugin-bridge] Gateway restarted after QR login'))
+            .catch((err: unknown) => {
+              gatewayError = err instanceof Error ? err.message : String(err);
+              console.error('[plugin-bridge] Gateway restart error:', gatewayError);
+            });
+          (globalThis as Record<string, unknown>).__bridgeAbort = newAbort;
+        }
+        return Response.json({ ok: true });
+      } catch (err) {
+        return Response.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+      }
+    }
+
     // ===== Lifecycle endpoints =====
 
     if (path === '/stop' && req.method === 'POST') {
@@ -703,11 +850,12 @@ const server = Bun.serve({
       // Abort the gateway via AbortController
       const abortCtrl = (globalThis as Record<string, unknown>).__bridgeAbort as AbortController | undefined;
       if (abortCtrl) abortCtrl.abort();
-      // Also try calling stopAccount if available
+      // Also try calling stopAccount if available — OpenClaw expects same context as startAccount
       const stopAccount = capturedPlugin?.gateway?.stopAccount;
       if (typeof stopAccount === 'function') {
         try {
-          await (stopAccount as () => Promise<void>)();
+          const gatewayCtx = (globalThis as Record<string, unknown>).__bridgeGatewayCtx as Record<string, unknown> | undefined;
+          await (stopAccount as (ctx?: Record<string, unknown>) => Promise<void>)(gatewayCtx);
         } catch (err) {
           console.error('[plugin-bridge] Error stopping plugin gateway:', err);
         }

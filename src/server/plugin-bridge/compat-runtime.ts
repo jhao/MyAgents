@@ -11,9 +11,122 @@
  */
 
 import { tmpdir } from 'os';
-import { join } from 'path';
-import { writeFile, mkdir } from 'fs/promises';
+import { join, basename, extname } from 'path';
+import { fileURLToPath } from 'url';
+import { writeFile, mkdir, readFile } from 'fs/promises';
 import { registerPendingDispatch, type PendingDispatchCallbacks } from './pending-dispatch';
+
+// ===== Media extraction utilities =====
+
+/** MIME types treated as images for Claude Vision API (base64 content blocks). */
+const IMAGE_MIME_PREFIXES = ['image/'];
+
+/** Maximum file size for bridge media transfer (20 MB raw → ~27 MB base64). */
+const MAX_MEDIA_FILE_SIZE = 20 * 1024 * 1024;
+
+/** Fallback MIME type detection by file extension (when plugin provides no MIME). */
+const EXT_TO_MIME: Record<string, string> = {
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+  '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp',
+  '.svg': 'image/svg+xml', '.heic': 'image/heic',
+  '.pdf': 'application/pdf', '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.mp4': 'video/mp4', '.mp3': 'audio/mpeg', '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg', '.silk': 'audio/silk',
+};
+
+type BridgeAttachment = {
+  fileName: string;
+  mimeType: string;
+  data: string; // base64
+  attachmentType: 'image' | 'file';
+};
+
+/**
+ * Extract media from OpenClaw inbound context and convert to bridge attachments.
+ *
+ * OpenClaw plugins set:
+ *   - Single media: ctx.MediaPath + ctx.MediaType
+ *   - Multi media:  ctx.MediaPaths[] + ctx.MediaTypes[]
+ *
+ * We read each file from disk, base64 encode, and classify:
+ *   - image/* → "image" (Rust will base64-encode for Claude Vision API)
+ *   - everything else → "file" (Rust will save to workspace + @path reference)
+ */
+async function extractMediaAttachments(ctx: Record<string, unknown>): Promise<BridgeAttachment[]> {
+  const paths: string[] = [];
+  const types: string[] = [];
+
+  /** Resolve MIME type: use provided type, fall back to extension, then octet-stream.
+   *  Wildcard types like "image/*" are treated as unresolved — need extension inference.
+   *  If still wildcard after extension lookup, default to concrete type (e.g. image/jpeg). */
+  const WILDCARD_DEFAULTS: Record<string, string> = {
+    'image/*': 'image/jpeg', 'video/*': 'video/mp4', 'audio/*': 'audio/wav',
+  };
+  const resolveMime = (mime: string | undefined, filePath: string): string => {
+    if (mime && !mime.endsWith('/*') && mime !== 'application/octet-stream') return mime;
+    const ext = extname(filePath).toLowerCase();
+    const fromExt = EXT_TO_MIME[ext];
+    if (fromExt) return fromExt;
+    // Wildcard MIME with no extension → default to concrete type
+    if (mime && mime.endsWith('/*')) return WILDCARD_DEFAULTS[mime] || 'application/octet-stream';
+    return mime || 'application/octet-stream';
+  };
+
+  // Collect single media
+  if (ctx.MediaPath && typeof ctx.MediaPath === 'string') {
+    paths.push(ctx.MediaPath);
+    types.push(resolveMime(ctx.MediaType as string | undefined, ctx.MediaPath));
+  }
+
+  // Collect multi media (OpenClaw convention: MediaPaths[] aligned with MediaTypes[])
+  if (Array.isArray(ctx.MediaPaths)) {
+    const mediaPaths = ctx.MediaPaths as string[];
+    const mediaTypes = (Array.isArray(ctx.MediaTypes) ? ctx.MediaTypes : []) as string[];
+    for (let i = 0; i < mediaPaths.length; i++) {
+      if (typeof mediaPaths[i] === 'string' && mediaPaths[i]) {
+        // Avoid duplicates if single MediaPath is also in MediaPaths
+        if (!paths.includes(mediaPaths[i])) {
+          paths.push(mediaPaths[i]);
+          types.push(resolveMime(mediaTypes[i], mediaPaths[i]));
+        }
+      }
+    }
+  }
+
+  if (paths.length === 0) return [];
+
+  const attachments: BridgeAttachment[] = [];
+  for (let i = 0; i < paths.length; i++) {
+    const filePath = paths[i];
+    const mimeType = types[i] || 'application/octet-stream';
+    try {
+      // Normalize file:// URLs to filesystem paths (OpenClaw convention)
+      let resolvedPath = filePath;
+      if (filePath.startsWith('file://')) {
+        try { resolvedPath = fileURLToPath(filePath); } catch { continue; }
+      }
+      const buf = await readFile(resolvedPath);
+      if (buf.length > MAX_MEDIA_FILE_SIZE) {
+        console.warn(`[compat-media] File too large, skipping: ${filePath} (${buf.length} bytes, max ${MAX_MEDIA_FILE_SIZE})`);
+        continue;
+      }
+      const data = buf.toString('base64');
+      const isImage = IMAGE_MIME_PREFIXES.some(p => mimeType.startsWith(p));
+      const fileName = basename(filePath) || `media-${Date.now()}${extname(filePath) || ''}`;
+      attachments.push({
+        fileName,
+        mimeType,
+        data,
+        attachmentType: isImage ? 'image' : 'file',
+      });
+      console.log(`[compat-media] Read ${isImage ? 'image' : 'file'}: ${filePath} (${mimeType}, ${buf.length} bytes)`);
+    } catch (err) {
+      console.error(`[compat-media] Failed to read media file: ${filePath}`, err);
+    }
+  }
+  return attachments;
+}
 
 // ===== Text chunking utilities =====
 // Simple implementations matching OpenClaw's text.* API surface.
@@ -142,7 +255,8 @@ export function createCompatRuntime(rustPort: number, botId: string, pluginId: s
         },
 
         finalizeInboundContext(ctx: Record<string, unknown>) {
-          console.log(`[compat-timing] finalizeInboundContext called, Body len=${String(ctx.Body || '').length}`);
+          const hasMedia = Boolean(ctx.MediaPath || (Array.isArray(ctx.MediaPaths) && (ctx.MediaPaths as string[]).length > 0));
+          console.log(`[compat-timing] finalizeInboundContext called, Body len=${String(ctx.Body || '').length}, hasMedia=${hasMedia}${hasMedia ? `, MediaType=${ctx.MediaType || 'unknown'}` : ''}`);
           return ctx;
         },
 
@@ -155,7 +269,11 @@ export function createCompatRuntime(rustPort: number, botId: string, pluginId: s
         },
 
         createReplyDispatcherWithTyping(_params: Record<string, unknown>) {
-          return { dispatch: async () => ({ queuedFinal: 0, counts: {} }) };
+          return {
+            dispatcher: { sendFinalReply: async () => {}, markComplete: () => {}, waitForIdle: async () => {}, sendBlockReply: async () => {} },
+            replyOptions: {},
+            markDispatchIdle: () => {},
+          };
         },
 
         /**
@@ -199,10 +317,11 @@ export function createCompatRuntime(rustPort: number, botId: string, pluginId: s
             return result;
           }
 
-          // Extract fields BEFORE registering pending dispatch (to avoid leak on empty text)
+          // Extract fields BEFORE registering pending dispatch (to avoid leak on empty content)
           const text = String(ctx.BodyForAgent || ctx.Body || ctx.body || ctx.RawBody || '');
-          if (!text.trim()) {
-            console.log('[compat-runtime] Empty message in protocol path, skipping');
+          const mediaAttachments = await extractMediaAttachments(ctx);
+          if (!text.trim() && mediaAttachments.length === 0) {
+            console.log('[compat-runtime] Empty message (no text, no media) in protocol path, skipping');
             return { queuedFinal: 0, counts: {}, dispatcher: { waitForIdle: async () => {} } };
           }
 
@@ -231,7 +350,7 @@ export function createCompatRuntime(rustPort: number, botId: string, pluginId: s
             sendFinalReply: dispatcher.sendFinalReply.bind(dispatcher) as PendingDispatchCallbacks['sendFinalReply'],
           };
 
-          console.log(`[compat-timing] dispatchReplyFromConfig PROTOCOL path: chatId=${chatId} len=${text.length}`);
+          console.log(`[compat-timing] dispatchReplyFromConfig PROTOCOL path: chatId=${chatId} len=${text.length} attachments=${mediaAttachments.length}`);
 
           // POST the inbound message to Rust BEFORE registering pending dispatch,
           // so that if the POST fails we don't leave an orphaned pending dispatch
@@ -254,6 +373,7 @@ export function createCompatRuntime(rustPort: number, botId: string, pluginId: s
                 threadId: threadId || undefined,
                 replyToBody: replyToBody || undefined,
                 groupSystemPrompt: groupSystemPrompt || undefined,
+                attachments: mediaAttachments.length > 0 ? mediaAttachments : undefined,
               }),
             });
             if (!resp.ok) {
@@ -348,13 +468,16 @@ export function createCompatRuntime(rustPort: number, botId: string, pluginId: s
           // Group system prompt (plugin-level custom instruction for group chats)
           const groupSystemPrompt = String(ctx.GroupSystemPrompt || ctx.groupSystemPrompt || '') || undefined;
 
-          if (!text.trim()) {
-            console.log('[compat-runtime] Empty message, skipping');
+          // Extract media from OpenClaw context (images, files, voice, video)
+          const mediaAttachments = await extractMediaAttachments(ctx);
+
+          if (!text.trim() && mediaAttachments.length === 0) {
+            console.log('[compat-runtime] Empty message (no text, no media), skipping');
             return { queuedFinal: 0, counts: {}, dispatcher: { waitForIdle: async () => {} } };
           }
 
           const t0 = Date.now();
-          console.log(`[compat-timing] dispatchReplyWithBufferedBlockDispatcher ENTER: sender=${senderId} chat=${chatId} len=${text.length}`);
+          console.log(`[compat-timing] dispatchReplyWithBufferedBlockDispatcher ENTER: sender=${senderId} chat=${chatId} len=${text.length} attachments=${mediaAttachments.length}`);
 
           try {
             const resp = await fetch(`${rustBaseUrl}/api/im-bridge/message`, {
@@ -375,6 +498,7 @@ export function createCompatRuntime(rustPort: number, botId: string, pluginId: s
                 threadId: threadId || undefined,
                 replyToBody: replyToBody || undefined,
                 groupSystemPrompt: groupSystemPrompt || undefined,
+                attachments: mediaAttachments.length > 0 ? mediaAttachments : undefined,
               }),
             });
 
@@ -428,13 +552,46 @@ export function createCompatRuntime(rustPort: number, botId: string, pluginId: s
             return null;
           }
         },
-        async saveMediaBuffer(buffer: Buffer | Uint8Array, opts?: { ext?: string }) {
-          const dir = join(tmpdir(), 'myagents-media');
+        /**
+         * Save a media buffer to a temp file.
+         * OpenClaw signature: saveMediaBuffer(buffer, contentType, subdir, maxBytes, originalFilename)
+         * - contentType: MIME type string (e.g. "image/jpeg")
+         * - subdir: subdirectory name (e.g. "images")
+         * - maxBytes: size limit (ignored in Bridge mode)
+         * - originalFilename: original filename for extension inference
+         */
+        async saveMediaBuffer(
+          buffer: Buffer | Uint8Array,
+          contentType?: string,
+          subdir?: string,
+          _maxBytes?: number,
+          originalFilename?: string,
+        ) {
+          // Sanitize subdir to prevent path traversal (strip '..', '/', '\')
+          const safeSubdir = (subdir || '').replace(/\.\./g, '').replace(/[/\\]/g, '');
+          const dir = join(tmpdir(), 'myagents-media', safeSubdir);
           await mkdir(dir, { recursive: true });
-          const filename = `media-${Date.now()}${opts?.ext || ''}`;
+          // Infer extension from originalFilename, then contentType
+          let ext = '';
+          if (originalFilename) {
+            const dotIdx = originalFilename.lastIndexOf('.');
+            // Sanitize: only allow alphanumeric + dot in extension (prevent path traversal)
+            if (dotIdx >= 0) ext = originalFilename.slice(dotIdx).replace(/[^a-zA-Z0-9.]/g, '');
+          }
+          if (!ext && contentType) {
+            const mimeToExt: Record<string, string> = {
+              'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif',
+              'image/webp': '.webp', 'video/mp4': '.mp4', 'audio/wav': '.wav',
+              'audio/mpeg': '.mp3', 'audio/ogg': '.ogg', 'audio/silk': '.silk',
+              'application/pdf': '.pdf',
+            };
+            ext = mimeToExt[contentType] || '';
+          }
+          const filename = `media-${Date.now()}${ext}`;
           const filepath = join(dir, filename);
           await writeFile(filepath, buffer);
-          return filepath;
+          // OpenClaw SaveMediaFn returns { path: string }, NOT a bare string
+          return { path: filepath };
         },
       },
 
