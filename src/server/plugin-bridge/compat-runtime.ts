@@ -260,7 +260,11 @@ export function createCompatRuntime(rustPort: number, botId: string, pluginId: s
         },
 
         createReplyDispatcherWithTyping(_params: Record<string, unknown>) {
-          return { dispatch: async () => ({ queuedFinal: 0, counts: {} }) };
+          return {
+            dispatcher: { sendFinalReply: async () => {}, markComplete: () => {}, waitForIdle: async () => {}, sendBlockReply: async () => {} },
+            replyOptions: {},
+            markDispatchIdle: () => {},
+          };
         },
 
         /**
@@ -577,7 +581,8 @@ export function createCompatRuntime(rustPort: number, botId: string, pluginId: s
           const filename = `media-${Date.now()}${ext}`;
           const filepath = join(dir, filename);
           await writeFile(filepath, buffer);
-          return filepath;
+          // OpenClaw SaveMediaFn returns { path: string }, NOT a bare string
+          return { path: filepath };
         },
       },
 
