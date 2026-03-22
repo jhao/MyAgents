@@ -4,6 +4,7 @@
 // Adds: optional override section for provider/model/permission.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Loader2, Power, PowerOff, Trash2 } from 'lucide-react';
+import QRCode from 'qrcode';
 import telegramIcon from '../../ImSettings/assets/telegram.png';
 import feishuIcon from '../../ImSettings/assets/feishu.jpeg';
 import dingtalkIcon from '../../ImSettings/assets/dingtalk.svg';
@@ -430,6 +431,18 @@ export default function ChannelDetailView({
     const [qrStatus, setQrStatus] = useState<'idle' | 'loading' | 'waiting' | 'connected' | 'error'>('idle');
     const qrAbortRef = useRef(false);
     const qrSessionKeyRef = useRef<string | undefined>(undefined);
+    const [qrImageUrl, setQrImageUrl] = useState<string | null>(null);
+
+    // Convert qrDataUrl to renderable image (URL → QR-encode, data:image → pass through)
+    useEffect(() => {
+        if (!qrDataUrl) { setQrImageUrl(null); return; }
+        if (qrDataUrl.startsWith('data:image/')) { setQrImageUrl(qrDataUrl); return; }
+        let cancelled = false;
+        QRCode.toDataURL(qrDataUrl, { width: 200, margin: 2, color: { dark: '#000000', light: '#ffffff' } })
+            .then((url: string) => { if (!cancelled) setQrImageUrl(url); })
+            .catch(() => { if (!cancelled) setQrImageUrl(null); });
+        return () => { cancelled = true; };
+    }, [qrDataUrl]);
 
     const startDetailQrLogin = useCallback(async () => {
         if (!isTauriEnvironment() || !isRunning) return;
@@ -719,8 +732,8 @@ export default function ChannelDetailView({
                                     {qrStatus === 'loading' && (
                                         <Loader2 className="h-6 w-6 animate-spin text-[var(--ink-muted)]" />
                                     )}
-                                    {(qrStatus === 'waiting') && qrDataUrl && (
-                                        <img src={qrDataUrl} alt="扫码登录" className="h-40 w-40 rounded-lg" style={{ imageRendering: 'pixelated' }} />
+                                    {(qrStatus === 'waiting') && qrImageUrl && (
+                                        <img src={qrImageUrl} alt="扫码登录" className="h-40 w-40 rounded-lg" />
                                     )}
                                     {qrStatus === 'connected' && (
                                         <p className="text-sm font-medium text-[var(--accent-success)]">登录成功</p>

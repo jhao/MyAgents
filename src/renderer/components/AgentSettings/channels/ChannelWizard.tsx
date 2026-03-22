@@ -2,6 +2,7 @@
 // Removes workspace step (Agent already has one), uses cmd_start_agent_channel.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, Copy, ExternalLink, Loader2, Plus, Puzzle, Trash2 } from 'lucide-react';
+import QRCode from 'qrcode';
 import { track } from '@/analytics';
 import { isTauriEnvironment } from '@/utils/browserMock';
 import { useToast } from '@/components/Toast';
@@ -200,6 +201,25 @@ export default function ChannelWizard({
     const [qrStatus, setQrStatus] = useState<'idle' | 'loading' | 'waiting' | 'scanned' | 'connected' | 'error'>('idle');
     const qrAbortRef = useRef(false);
     const qrSessionKeyRef = useRef<string | undefined>(undefined);
+    // Rendered QR image: either the raw data URI (WhatsApp) or QR-encoded from URL (WeChat)
+    const [qrImageUrl, setQrImageUrl] = useState<string | null>(null);
+
+    // Convert qrDataUrl to a renderable image:
+    // - data:image/* → use directly (WhatsApp returns base64 PNG)
+    // - http(s):// URL → encode the URL INTO a QR code image (WeChat returns a URL to be QR-encoded)
+    useEffect(() => {
+        if (!qrDataUrl) { setQrImageUrl(null); return; }
+        if (qrDataUrl.startsWith('data:image/')) {
+            setQrImageUrl(qrDataUrl);
+            return;
+        }
+        // URL needs to be QR-encoded into an image
+        let cancelled = false;
+        QRCode.toDataURL(qrDataUrl, { width: 200, margin: 2, color: { dark: '#000000', light: '#ffffff' } })
+            .then((dataUrl: string) => { if (!cancelled) setQrImageUrl(dataUrl); })
+            .catch(() => { if (!cancelled) setQrImageUrl(null); });
+        return () => { cancelled = true; };
+    }, [qrDataUrl]);
 
     // Derived: QR login detection (from preset or installed plugin's detected capability)
     const isQrLogin = isQrLoginFromPreset || (!promoted && installedPlugin?.supportsQrLogin === true);
@@ -818,8 +838,8 @@ export default function ChannelWizard({
                                     <Loader2 className="h-8 w-8 animate-spin text-[var(--ink-muted)]" />
                                 </div>
                             )}
-                            {(qrStatus === 'waiting' || qrStatus === 'scanned') && qrDataUrl && (
-                                <img src={qrDataUrl} alt="扫码登录" className="h-48 w-48 rounded-xl" />
+                            {(qrStatus === 'waiting' || qrStatus === 'scanned') && qrImageUrl && (
+                                <img src={qrImageUrl} alt="扫码登录" className="h-48 w-48 rounded-xl" />
                             )}
                             {qrStatus === 'connected' && (
                                 <div className="flex h-48 w-48 items-center justify-center rounded-xl bg-[var(--accent-success-subtle)]">

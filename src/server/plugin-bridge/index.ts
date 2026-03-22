@@ -715,24 +715,13 @@ const server = Bun.serve({
       try {
         const body = await req.json().catch(() => ({})) as Record<string, unknown>;
         const result = await (loginWithQrStart as (params: Record<string, unknown>) => Promise<Record<string, unknown>>)(body);
-        // If qrDataUrl is an HTTP URL (not a data URI), download and convert to base64.
-        // Tauri WebView CSP blocks external <img src="https://...">, so we must inline it.
-        // WhatsApp plugin returns data:image/png;base64,... natively; WeChat returns https:// URL.
-        let qrDataUrl = result.qrDataUrl as string | undefined;
-        if (qrDataUrl && /^https?:\/\//i.test(qrDataUrl)) {
-          try {
-            const imgResp = await fetch(qrDataUrl);
-            if (imgResp.ok) {
-              const buf = await imgResp.arrayBuffer();
-              const contentType = imgResp.headers.get('content-type') || 'image/png';
-              const base64 = Buffer.from(buf).toString('base64');
-              qrDataUrl = `data:${contentType};base64,${base64}`;
-            }
-          } catch (e) {
-            console.warn('[plugin-bridge] Failed to download QR image, using original URL:', e);
-          }
-        }
-        return Response.json({ ok: true, ...result, qrDataUrl });
+        // qrDataUrl can be:
+        // 1. data:image/png;base64,... (WhatsApp) — pass through, frontend renders as <img>
+        // 2. https://... (WeChat) — a URL to be QR-encoded, NOT an image to download.
+        //    The frontend will use the `qrcode` library to encode this URL into a QR image.
+        //    WeChat's qrcode_img_content is a web page URL, not a direct image.
+        // Both cases: return as-is. Frontend handles rendering.
+        return Response.json({ ok: true, ...result });
       } catch (err) {
         return Response.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, { status: 500 });
       }
