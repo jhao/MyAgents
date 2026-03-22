@@ -500,15 +500,17 @@ export default function ChannelWizard({
     }, [buildChannelConfig, agent, channelId, platform, refreshConfig]);
 
     // Auto-start QR login when entering step 1 for QR plugins.
-    // Use a ref to avoid re-triggering: qrStatus changes (loading/waiting/etc.)
-    // would cause cleanup → abort → stuck. Only abort on unmount or step change.
+    // CRITICAL: startQrLogin must NOT be in deps — it depends on `agent` which changes
+    // after refreshConfig(), causing cleanup → abort → stuck. Use ref for stable access.
+    const startQrLoginRef = useRef(startQrLogin);
+    startQrLoginRef.current = startQrLogin;
     const qrStartedRef = useRef(false);
     useEffect(() => {
         if (!isQrLogin || step !== 1 || qrStartedRef.current) return;
         qrStartedRef.current = true;
-        startQrLogin();
-        return () => { qrAbortRef.current = true; };
-    }, [isQrLogin, step, startQrLogin]);
+        startQrLoginRef.current();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isQrLogin, step]);
 
     // Handle "Next" for all steps
     const handleNext = useCallback(async () => {
