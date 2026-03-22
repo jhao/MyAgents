@@ -57,11 +57,20 @@ async function extractMediaAttachments(ctx: Record<string, unknown>): Promise<Br
   const paths: string[] = [];
   const types: string[] = [];
 
-  /** Resolve MIME type: use provided type, fall back to extension, then octet-stream. */
+  /** Resolve MIME type: use provided type, fall back to extension, then octet-stream.
+   *  Wildcard types like "image/*" are treated as unresolved — need extension inference.
+   *  If still wildcard after extension lookup, default to concrete type (e.g. image/jpeg). */
+  const WILDCARD_DEFAULTS: Record<string, string> = {
+    'image/*': 'image/jpeg', 'video/*': 'video/mp4', 'audio/*': 'audio/wav',
+  };
   const resolveMime = (mime: string | undefined, filePath: string): string => {
-    if (mime && mime !== 'application/octet-stream') return mime;
+    if (mime && !mime.endsWith('/*') && mime !== 'application/octet-stream') return mime;
     const ext = extname(filePath).toLowerCase();
-    return EXT_TO_MIME[ext] || mime || 'application/octet-stream';
+    const fromExt = EXT_TO_MIME[ext];
+    if (fromExt) return fromExt;
+    // Wildcard MIME with no extension → default to concrete type
+    if (mime && mime.endsWith('/*')) return WILDCARD_DEFAULTS[mime] || 'application/octet-stream';
+    return mime || 'application/octet-stream';
   };
 
   // Collect single media
