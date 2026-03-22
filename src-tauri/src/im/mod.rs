@@ -3745,13 +3745,24 @@ pub fn schedule_agent_auto_start<R: Runtime>(app_handle: AppHandle<R>) {
                 };
                 if has_credentials {
                     let bot_id = channel.id.clone();
-                    // Dedup: skip if channel already running in agent state
+                    // Dedup: skip if channel already running (and healthy) in agent state.
+                    // If channel exists but is Error/Stopped, remove it to allow restart.
                     {
-                        let agents_guard = agent_state.lock().await;
-                        if let Some(agent) = agents_guard.get(&agent_config.id) {
+                        let mut agents_guard = agent_state.lock().await;
+                        if let Some(agent) = agents_guard.get_mut(&agent_config.id) {
                             if agent.channels.contains_key(&bot_id) {
-                                ulog_info!("[agent] Channel {} already running in agent {}, skipping auto-start", bot_id, agent_config.id);
-                                continue;
+                                let is_dead = {
+                                    let ch = agent.channels.get(&bot_id).unwrap();
+                                    let health_state = ch.bot_instance.health.get_state().await;
+                                    matches!(health_state.status, types::ImStatus::Error | types::ImStatus::Stopped)
+                                };
+                                if is_dead {
+                                    ulog_info!("[agent] Channel {} in agent {} is dead, removing for auto-restart", bot_id, agent_config.id);
+                                    agent.channels.remove(&bot_id);
+                                } else {
+                                    ulog_info!("[agent] Channel {} already running in agent {}, skipping auto-start", bot_id, agent_config.id);
+                                    continue;
+                                }
                             }
                         }
                     }
@@ -5149,31 +5160,42 @@ pub async fn cmd_start_agent_channel(
     agentConfig: AgentConfigRust,
     channelConfig: ChannelConfigRust,
 ) -> Result<ChannelStatus, String> {
-    // Dedup: check if channel is already running in agent state
+    // Dedup: check if channel is already running in agent state.
+    // If channel exists but is in Error/Stopped state, remove it to allow restart.
     {
-        let agents_guard = agentState.lock().await;
-        if let Some(agent) = agents_guard.get(&agentId) {
+        let mut agents_guard = agentState.lock().await;
+        if let Some(agent) = agents_guard.get_mut(&agentId) {
             if agent.channels.contains_key(&channelId) {
-                ulog_warn!("[agent] Channel {} already running in agent {}, skipping start", channelId, agentId);
-                let ch = agent.channels.get(&channelId)
-                    .ok_or_else(|| format!("[agent] Channel {} disappeared from agent {}", channelId, agentId))?;
-                let health_state = ch.bot_instance.health.get_state().await;
-                let active_sessions = ch.bot_instance.router.lock().await.active_sessions();
-                return Ok(ChannelStatus {
-                    channel_id: channelId,
-                    channel_type: ch.bot_instance.config.platform.clone(),
-                    name: ch.bot_instance.config.name.clone(),
-                    status: health_state.status,
-                    bot_username: health_state.bot_username,
-                    uptime_seconds: ch.bot_instance.started_at.elapsed().as_secs(),
-                    last_message_at: health_state.last_message_at,
-                    active_sessions,
-                    error_message: health_state.error_message,
-                    restart_count: health_state.restart_count,
-                    buffered_messages: health_state.buffered_messages,
-                    bind_url: None,
-                    bind_code: Some(ch.bot_instance.bind_code.clone()),
-                });
+                let is_dead = {
+                    let ch = agent.channels.get(&channelId).unwrap();
+                    let health_state = ch.bot_instance.health.get_state().await;
+                    matches!(health_state.status, types::ImStatus::Error | types::ImStatus::Stopped)
+                };
+                if is_dead {
+                    ulog_info!("[agent] Channel {} in agent {} is dead, removing to allow restart", channelId, agentId);
+                    agent.channels.remove(&channelId);
+                } else {
+                    ulog_warn!("[agent] Channel {} already running in agent {}, skipping start", channelId, agentId);
+                    let ch = agent.channels.get(&channelId)
+                        .ok_or_else(|| format!("[agent] Channel {} disappeared from agent {}", channelId, agentId))?;
+                    let health_state = ch.bot_instance.health.get_state().await;
+                    let active_sessions = ch.bot_instance.router.lock().await.active_sessions();
+                    return Ok(ChannelStatus {
+                        channel_id: channelId,
+                        channel_type: ch.bot_instance.config.platform.clone(),
+                        name: ch.bot_instance.config.name.clone(),
+                        status: health_state.status,
+                        bot_username: health_state.bot_username,
+                        uptime_seconds: ch.bot_instance.started_at.elapsed().as_secs(),
+                        last_message_at: health_state.last_message_at,
+                        active_sessions,
+                        error_message: health_state.error_message,
+                        restart_count: health_state.restart_count,
+                        buffered_messages: health_state.buffered_messages,
+                        bind_url: None,
+                        bind_code: Some(ch.bot_instance.bind_code.clone()),
+                    });
+                }
             }
         }
     } // agents_guard dropped
