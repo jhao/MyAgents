@@ -35,6 +35,7 @@ import {
   getEnabledMcpServerIds,
   resolveProvider,
 } from '@/config/configService';
+import { patchAgentConfig, getAgentById } from '@/config/services/agentConfigService';
 import { CUSTOM_EVENTS, isPendingSessionId } from '../../shared/constants';
 import type { InitialMessage } from '@/types/tab';
 // CronTaskConfig type is used via useCronTask hook
@@ -155,13 +156,12 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
   // Get config to find current project provider
   const { config, projects, providers, patchProject, apiKeys, providerVerifyStatus, refreshProviderData } = useConfig();
   const currentProject = projects.find((p) => p.path === agentDir);
-  // Agent workspaces should NOT write config back to project via patchProject
-  // (Agent config is managed separately via cmd_update_agent_config)
-  const isAgentWorkspace = currentProject?.isAgent ?? false;
-  // Local provider state: snapshot project's providerId at creation, independent thereafter.
+  // AgentConfig is source of truth for AI settings, Project is fallback for non-agent workspaces
+  const currentAgent = currentProject?.agentId ? getAgentById(config, currentProject.agentId) : undefined;
+  // Local provider state: snapshot from AgentConfig (priority) or Project at creation.
   // Prevents cross-tab pollution when another tab patches the shared project.
   const [selectedProviderId, setSelectedProviderId] = useState<string | undefined>(
-    currentProject?.providerId ?? config.defaultProviderId ?? undefined
+    currentAgent?.providerId ?? currentProject?.providerId ?? config.defaultProviderId ?? undefined
   );
   const currentProvider = resolveProvider(selectedProviderId, providers, apiKeys, providerVerifyStatus);
 
@@ -183,10 +183,10 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
   const [showWorkspaceConfig, setShowWorkspaceConfig] = useState(false); // Workspace config panel
   const [workspaceRefreshKey, _setWorkspaceRefreshKey] = useState(0); // Key to trigger workspace refresh
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(
-    currentProject?.permissionMode ?? 'auto'
+    (currentAgent?.permissionMode as PermissionMode | undefined) ?? currentProject?.permissionMode ?? 'auto'
   );
   const [selectedModel, setSelectedModel] = useState<string | undefined>(
-    currentProject?.model ?? currentProvider?.primaryModel
+    currentAgent?.model ?? currentProject?.model ?? currentProvider?.primaryModel
   );
   // Cron task state
   const [showCronSettings, setShowCronSettings] = useState(false);
@@ -508,7 +508,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
   const [mcpServers, setMcpServers] = useState<McpServerDefinition[]>([]);
   const [globalMcpEnabled, setGlobalMcpEnabled] = useState<string[]>([]);
   const [workspaceMcpEnabled, setWorkspaceMcpEnabled] = useState<string[]>(
-    currentProject?.mcpEnabledServers ?? []
+    currentAgent?.mcpEnabledServers ?? currentProject?.mcpEnabledServers ?? []
   );
 
   // Track which session's cron task state has been loaded
@@ -627,7 +627,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
         // CRITICAL: Always sync effective MCP servers to backend on initial load
         // This ensures the Agent SDK has correct MCP config (including empty = no MCP)
         // Without this, backend currentMcpServers stays null and falls back to file config
-        const workspaceEnabled = currentProject?.mcpEnabledServers ?? [];
+        const workspaceEnabled = currentAgent?.mcpEnabledServers ?? currentProject?.mcpEnabledServers ?? [];
         const effectiveServers = servers.filter(s =>
           enabledIds.includes(s.id) && workspaceEnabled.includes(s.id)
         );
@@ -644,8 +644,8 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
       }
     };
     loadMcpConfig();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- Only reload when project MCP config changes
-  }, [currentProject?.mcpEnabledServers]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Only reload when agent/project MCP config changes
+  }, [currentAgent?.mcpEnabledServers, currentProject?.mcpEnabledServers]);
 
   // Load enabled agents and sync to backend
   const loadAndSyncAgents = useCallback(async () => {
@@ -727,8 +727,11 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
 
     // Persist to project config (patchProject updates disk AND projects React state,
     // keeping currentProject.mcpEnabledServers in sync for tab-activate sync at L672)
-    if (currentProject && !isAgentWorkspace) {
+    if (currentProject) {
       void patchProject(currentProject.id, { mcpEnabledServers: newEnabled });
+      if (currentProject?.agentId) {
+        void patchAgentConfig(currentProject.agentId, { mcpEnabledServers: newEnabled });
+      }
     }
 
     // Get the effective MCP servers and send to backend
@@ -765,18 +768,21 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
   useEffect(() => {
     if (!currentProject || projectSyncedRef.current || hadInitialMessage.current) return;
     projectSyncedRef.current = true;
-    // permissionMode: null means "use global default" (per Project type contract)
-    setPermissionMode(currentProject.permissionMode ?? config.defaultPermissionMode);
+    // AgentConfig is source of truth, Project is fallback for non-agent workspaces
+    const effectivePermission = (currentAgent?.permissionMode as PermissionMode | undefined) ?? currentProject.permissionMode ?? config.defaultPermissionMode;
+    setPermissionMode(effectivePermission);
     // Sync provider (useState initializer runs when currentProject is still undefined).
     // Re-arm providerInitRef to suppress the deferred provider-change effect (fires next render)
     // that would otherwise override the project-stored model with provider's primaryModel.
-    if (currentProject.providerId) {
-      setSelectedProviderId(currentProject.providerId);
+    const effectiveProvider = currentAgent?.providerId ?? currentProject.providerId;
+    if (effectiveProvider) {
+      setSelectedProviderId(effectiveProvider);
       providerInitRef.current = true;
     }
     // Skip model override when joining existing sidecar — adoption effect will set the correct model
-    if (currentProject.model && !joinedExistingSidecarRef.current) {
-      setSelectedModel(currentProject.model);
+    const effectiveModel = currentAgent?.model ?? currentProject.model;
+    if (effectiveModel && !joinedExistingSidecarRef.current) {
+      setSelectedModel(effectiveModel);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- one-time sync when project first loads
   }, [currentProject?.id]);
@@ -792,6 +798,9 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
     if (fallback) {
       setSelectedModel(fallback);
       void patchProject(currentProject.id, { model: fallback });
+      if (currentProject?.agentId) {
+        void patchAgentConfig(currentProject.agentId, { model: fallback });
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to specific sub-properties, not full object refs
   }, [currentProject?.id, currentProvider?.id, currentProvider?.models, currentProvider?.primaryModel, selectedModel, patchProject]);
@@ -887,7 +896,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
         }
 
         // 3. Sync effective MCP servers to backend for next message
-        const workspaceEnabled = currentProject?.mcpEnabledServers ?? [];
+        const workspaceEnabled = currentAgent?.mcpEnabledServers ?? currentProject?.mcpEnabledServers ?? [];
         const effectiveServers = servers.filter(s =>
           enabledIds.includes(s.id) && workspaceEnabled.includes(s.id)
         );
@@ -949,8 +958,11 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
       // Provider unchanged but caller passed a specific model — treat as model change
       if (targetModel) {
         setSelectedModel(targetModel);
-        if (currentProject && !isAgentWorkspace) {
+        if (currentProject) {
           void patchProject(currentProject.id, { model: targetModel });
+          if (currentProject?.agentId) {
+            void patchAgentConfig(currentProject.agentId, { model: targetModel });
+          }
         }
       }
       return;
@@ -973,8 +985,11 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
     providerInitRef.current = true;
 
     // Write back to project (last-writer-wins for new tabs)
-    if (currentProject && !isAgentWorkspace) {
+    if (currentProject) {
       void patchProject(currentProject.id, { providerId, model: model ?? null });
+      if (currentProject?.agentId) {
+        void patchAgentConfig(currentProject.agentId, { providerId, model: model ?? undefined });
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- narrowed deps
   }, [selectedProviderId, currentProject?.id, patchProject, providers]);
@@ -990,8 +1005,11 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
     track('model_switch', { model });
 
     setSelectedModel(model);
-    if (currentProject && !isAgentWorkspace) {
+    if (currentProject) {
       void patchProject(currentProject.id, { model });
+      if (currentProject?.agentId) {
+        void patchAgentConfig(currentProject.agentId, { model });
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- narrowed to .id to avoid recreating on unrelated project changes
   }, [selectedModel, currentProject?.id, patchProject]);
@@ -999,8 +1017,11 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
   // Handle permission mode change with project write-back
   const handlePermissionModeChange = useCallback((mode: PermissionMode) => {
     setPermissionMode(mode);
-    if (currentProject && !isAgentWorkspace) {
+    if (currentProject) {
       void patchProject(currentProject.id, { permissionMode: mode });
+      if (currentProject?.agentId) {
+        void patchAgentConfig(currentProject.agentId, { permissionMode: mode });
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- narrowed to .id to avoid recreating on unrelated project changes
   }, [currentProject?.id, patchProject]);

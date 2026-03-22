@@ -47,8 +47,22 @@ export default function WorkspaceGeneralTab({ agentDir }: WorkspaceGeneralTabPro
     if (!project || toggling) return;
     setToggling(true);
     try {
-      if (!project.isAgent || !agent) {
-        // First time: create AgentConfig + mark project
+      if (agent && !agent.enabled) {
+        // Upgrade existing basicAgent to proactive mode
+        await patchAgentConfig(agent.id, {
+          enabled: true,
+          heartbeat: agent.heartbeat ?? {
+            ...DEFAULT_HEARTBEAT_CONFIG,
+            enabled: true,
+            activeHours: { start: '08:00', end: '22:00', timezone: 'Asia/Shanghai' },
+          },
+        });
+        if (!project.isAgent) {
+          await patchProject(project.id, { isAgent: true });
+        }
+        toastRef.current.success('主动 Agent 模式已开启');
+      } else if (!agent) {
+        // Fallback: create AgentConfig if somehow missing (shouldn't happen after migration)
         const newAgent: AgentConfig = {
           id: crypto.randomUUID(),
           name: project.displayName || project.name || agentDir.split('/').pop() || 'Agent',

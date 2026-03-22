@@ -140,6 +140,73 @@ export function migrateImBotConfigsToAgents(config: AppConfig, projects: Project
   return config;
 }
 
+// ============= BasicAgent Auto-Creation (v0.1.49) =============
+
+/**
+ * Ensure every Project has a linked AgentConfig (basicAgent).
+ * Runs at startup after migrateImBotConfigsToAgents().
+ *
+ * - Projects without agentId → create basicAgent with AI fields copied from Project
+ * - Projects with agentId but orphaned (agent deleted) → recreate basicAgent
+ * - Projects already linked to a valid agent → skip
+ *
+ * Returns { changed } so caller can decide whether to persist.
+ */
+export function ensureAllProjectsHaveAgent(
+  config: AppConfig,
+  projects: Project[],
+  defaultPermissionMode?: string,
+): { changed: boolean } {
+  const agents = config.agents ?? [];
+  const agentMap = new Map(agents.map(a => [a.id, a]));
+  let changed = false;
+  let createdCount = 0;
+
+  for (const project of projects) {
+    // Skip if already linked to a valid agent
+    if (project.agentId && agentMap.has(project.agentId)) {
+      continue;
+    }
+
+    // Also check by workspacePath (agent exists but project.agentId is stale/missing)
+    const normalized = project.path.replace(/\\/g, '/');
+    const existingByPath = agents.find(a => a.workspacePath.replace(/\\/g, '/') === normalized);
+    if (existingByPath) {
+      // Fix orphaned reference
+      project.agentId = existingByPath.id;
+      changed = true;
+      continue;
+    }
+
+    // Create basicAgent — AI fields from Project (fallback to defaults)
+    const agentId = crypto.randomUUID();
+    const basicAgent: AgentConfig = {
+      id: agentId,
+      name: project.displayName || project.name,
+      workspacePath: project.path,
+      enabled: false,
+      channels: [],
+      providerId: project.providerId ?? undefined,
+      model: project.model ?? undefined,
+      permissionMode: project.permissionMode || defaultPermissionMode || 'plan',
+      mcpEnabledServers: project.mcpEnabledServers,
+    };
+
+    agents.push(basicAgent);
+    agentMap.set(agentId, basicAgent);
+    project.agentId = agentId;
+    changed = true;
+    createdCount++;
+  }
+
+  if (changed) {
+    config.agents = agents;
+    console.log(`[agentConfigService] ensureAllProjectsHaveAgent: created ${createdCount} basicAgent(s), total agents: ${agents.length}`);
+  }
+
+  return { changed };
+}
+
 // ============= Persistence Helpers =============
 
 /**
