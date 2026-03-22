@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.49] - 2026-03-23
+
+### Added
+- **AgentConfig 通用化架构**：每个工作区自动创建 basicAgent，AgentConfig 成为 model/provider/permissionMode/MCP 的单一数据源，Tab 输入栏与 Agent 设置面板双向同步
+- **Plugin Bridge 附件传递**：支持图片/文件/语音/视频在 IM 和 AI 之间双向传递
+- **Self-Config CLI**：内置 `myagents` CLI 让 AI Agent 通过 Bash 自主配置 MCP/Model/Agent
+- **QR 扫码登录**：Channel 详情页支持 QR 扫码登录（微信等 OpenClaw 插件）
+- **Cron 跨 Channel 投递**：桌面端创建的定时任务可发送结果到 IM Channel
+- **Sidecar 自解析架构**：消除 IM Bot 对物化视图的依赖，Sidecar 启动时自行解析 AgentConfig
+- **运行时 fallback 链**：Bun/Node.js 每个场景增加系统级兜底
+- **微信 OpenClaw 插件支持**：npmSpec 清洗 + SDK shim 补全 + QR 扫码登录
+
+### Improved
+- **Claude Agent SDK 升级**：0.2.45 → 0.2.80，适配新功能
+- **Node.js 运行时优先级翻转**：系统 Node.js 优先（用户维护、npm 更可靠），内置兜底
+- **Helper 小助手增强**：self-config Skill 自动同步 + 行动优先原则 + description 精准化
+- **model add/remove**：支持通过 CLI 添加/删除自定义模型供应商 + 完整 mcp test/model verify
+
+### Fixed
+- **删除当前 session 后断联**：resetSession 不再清空 sessionId，避免 Tab 与 Sidecar 失联
+- **安全修复（cross-review）**：路径穿越 + 原型污染 + CLI flag 泄漏 + 6 项安全修复
+- **IM Bot 供应商被 Heartbeat 重置**：4 项 provider 迁移修复
+- **心跳误报 + 错误螺旋**：HEARTBEAT_OK 误报 + 连续失败后 IM 暂停通知
+- **Rewind/Fork 修复**：UUID 校验 + JSONL 持久化不同步 + fork UUID 校验误判
+- **QR 登录全链路修复**：sessionKey 透传、CSP 图片策略、超时自动重试、凭证持久化
+- **Plugin Bridge 协议对齐**：gateway context 补全 + isConfigured 签名修正 + MIME 类型处理
+- **工作区卡片 channel tag**：统一短名称显示，与最近任务一致
+- **SDK 0.2.80 兼容**：exports 限制导致 cli.js 解析失败
+- **飞书用户名**：优先 nickname 显示
+
+### Security
+- 路径穿越防护、原型污染防护、CLI flag 泄漏修复
+
+---
+
 ## [0.1.46] - 2026-03-20
 
 ### Improved
