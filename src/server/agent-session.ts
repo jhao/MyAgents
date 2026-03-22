@@ -1096,7 +1096,7 @@ export function pinMcpPackageVersions(args: string[]): string[] {
  * 3. External (stdio/sse/http) — subprocess or remote servers, user-configured.
  *
  * Execution strategy for external stdio:
- * - For npx commands: Uses bundled bun (bun x), fallback to npx if bun unavailable
+ * - For npx commands: system npx → bundled Node.js npx → bun x
  * - For other commands: Uses user-specified command directly (node/python etc.)
  * - Strips proxy env vars to prevent MCP WebSocket breakage
  */
@@ -1196,11 +1196,14 @@ function buildSdkMcpServers(): Record<string, SdkMcpServerConfig | typeof cronTo
             args = ['-y', ...args];
             console.log(`[agent] MCP ${server.id}: Using system npx (${systemNpx})`);
           } else {
-            // 2. Fallback to bundled Node.js npx
+            // 2. Fallback to bundled Node.js npx (use absolute path for deterministic resolution)
             const nodeDir = getNodeDir();
             if (nodeDir) {
+              // eslint-disable-next-line @typescript-eslint/no-require-imports
+              const { join: pathJoin } = require('path');
+              command = process.platform === 'win32' ? pathJoin(nodeDir, 'npx.cmd') : pathJoin(nodeDir, 'npx');
               args = ['-y', ...args];
-              console.log(`[agent] MCP ${server.id}: System npx not found, using bundled Node.js npx (${nodeDir})`);
+              console.log(`[agent] MCP ${server.id}: System npx not found, using bundled Node.js npx (${command})`);
             } else {
               // 3. Last resort: bun x or derive npx from system node
               const runtime = getBundledRuntimePath();
@@ -2075,8 +2078,11 @@ export function buildClaudeSessionEnv(providerEnv?: ProviderEnv): NodeJS.Process
 
   // System Node.js directories — preferred over bundled for MCP/npm ecosystem reliability.
   // User-maintained Node.js is less likely to have broken npm than our bundled version.
+  // Only add directories that actually exist to avoid polluting PATH with ghost entries.
   for (const dir of getSystemNodeDirs()) {
-    essentialPaths.push(dir);
+    if (existsSync(dir)) {
+      essentialPaths.push(dir);
+    }
   }
 
   // Bundled Node.js directory — fallback for users without system Node.js

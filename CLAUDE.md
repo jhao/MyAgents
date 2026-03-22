@@ -71,7 +71,7 @@ npm run typecheck && npm run lint  # 代码质量检查
 
 **分层原则**：Bun 跑我们自己的代码（启动快、行为可控），Node.js 跑社区生态代码（MCP Server / npm 包，设计目标是 Node.js，Bun 兼容性存在系统性缺陷）。
 
-**PATH 注入**：`buildClaudeSessionEnv()` 构造 SDK 子进程的 PATH，决定 AI Bash 工具能找到哪些命令。优先级：`bundledBunDir` → `bundledNodeDir` → `~/.myagents/bin` → 系统路径。
+**PATH 注入**：`buildClaudeSessionEnv()` 构造 SDK 子进程的 PATH，决定 AI Bash 工具能找到哪些命令。优先级：`bundledBunDir` → `systemNodeDirs`（用户安装的 Node.js） → `bundledNodeDir` → `~/.myagents/bin` → 系统路径。Node.js 系统优先（用户维护、npm 更可靠），Bun 内置优先（跑我们自己的代码）。
 
 **运行时发现**：`src/server/utils/runtime.ts` 提供 `getBundledRuntimePath()`（Bun）、`getBundledNodePath()`（Node.js）。
 

@@ -3812,7 +3812,7 @@ async function main() {
       }
 
       // POST /api/mcp/enable - Validate and enable MCP server
-      // For preset MCP (npx): warmup bun cache
+      // For preset MCP (npx): warmup npm/npx cache (system npx → bundled npx → bun x)
       // For custom MCP: check if command exists
       if (pathname === '/api/mcp/enable' && request.method === 'POST') {
         try {
@@ -4075,7 +4075,7 @@ async function main() {
 
             // Preset MCP (isBuiltin: true) with npx → warmup to download and cache package
             if (server.isBuiltin && command === 'npx') {
-              const { getBundledNodeDir, getBundledRuntimePath, isBunRuntime } = await import('./utils/runtime');
+              const { getBundledNodeDir, getBundledRuntimePath, isBunRuntime, getSystemNpxPaths, findExistingPath } = await import('./utils/runtime');
               const { pinMcpPackageVersions } = await import('./agent-session');
               const args = pinMcpPackageVersions(server.args || []);
 
@@ -4083,13 +4083,29 @@ async function main() {
               const { getShellEnv } = await import('./utils/shell');
               const baseEnv = getShellEnv();
 
-              // Dual runtime: prefer bundled Node.js npx, fallback to bun x
+              // Priority: system npx → bundled Node.js npx → bun x
+              const systemNpx = findExistingPath(getSystemNpxPaths());
               const nodeDir = getBundledNodeDir();
               let warmupCmd: string;
               let warmupArgs: string[];
 
-              if (nodeDir) {
-                // Bundled Node.js: warmup with npx (uses same npm cache as actual execution)
+              if (systemNpx) {
+                // 1. System npx available — most reliable, user-maintained
+                warmupCmd = systemNpx;
+                warmupArgs = ['-y', ...args, '--help'];
+
+                // Ensure system npx's directory is in PATH (GUI-launched apps may have minimal PATH)
+                const { dirname } = await import('path');
+                const npxDir = dirname(systemNpx);
+                const pathKey = process.platform === 'win32' ? 'Path' : 'PATH';
+                const sep = process.platform === 'win32' ? ';' : ':';
+                if (!(baseEnv[pathKey] || '').includes(npxDir)) {
+                  baseEnv[pathKey] = npxDir + sep + (baseEnv[pathKey] || '');
+                }
+
+                console.log(`[api/mcp/enable] Warming up with system npx: ${warmupArgs.join(' ')}`);
+              } else if (nodeDir) {
+                // 2. Fallback to bundled Node.js npx
                 const npxPath = process.platform === 'win32'
                   ? join(nodeDir, 'npx.cmd')
                   : join(nodeDir, 'npx');
@@ -4103,14 +4119,14 @@ async function main() {
 
                 console.log(`[api/mcp/enable] Warming up with bundled npx: ${warmupArgs.join(' ')}`);
               } else {
-                // Fallback: use bun x
+                // 3. Last resort: bun x
                 const runtime = getBundledRuntimePath();
                 if (!isBunRuntime(runtime)) {
                   return jsonResponse({
                     success: false,
                     error: {
                       type: 'runtime_error',
-                      message: '内置运行时不可用（Node.js 和 Bun 均未找到）',
+                      message: '运行时不可用（系统/内置 Node.js 和 Bun 均未找到）',
                     }
                   });
                 }

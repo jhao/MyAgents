@@ -157,7 +157,7 @@ function getSystemBunPaths(): string[] {
  * Get system Node.js directories where node/npm/npx are co-located.
  * Single source of truth — node, npm, npx share the same directories.
  */
-function getSystemNodeDirs(): string[] {
+export function getSystemNodeDirs(): string[] {
   if (isWindows()) {
     const programFiles = process.env.PROGRAMFILES;
     const programFilesX86 = process.env['PROGRAMFILES(X86)'];
