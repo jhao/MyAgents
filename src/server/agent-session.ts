@@ -5838,6 +5838,11 @@ async function* messageGenerator(): AsyncGenerator<SDKUserMessage> {
       // Reset cross-turn guard: this turn starts fresh, no timeout/replacement yet.
       imCallbackNulledDuringTurn = false;
       isStreamingMessage = true;
+    } else if (imStreamCallback) {
+      // Mid-turn injection WITH an active IM callback: this is a new IM message that was
+      // queued during session restart (e.g., MCP config change). The flag may have been set
+      // to true during the restart. Reset it so delta/block-end events are forwarded.
+      imCallbackNulledDuringTurn = false;
     }
     console.log(`[messageGenerator] Yielding message, wasQueued=${item.wasQueued}, midTurn=${isMidTurnInjection}`);
     yield {

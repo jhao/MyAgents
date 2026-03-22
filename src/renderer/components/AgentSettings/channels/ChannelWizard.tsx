@@ -1393,7 +1393,7 @@ export default function ChannelWizard({
                         nextIcon: <Check className="h-4 w-4" />,
                     })}
 
-                    {(isFeishu || isDingtalk || isOpenClaw) ? (
+                    {(isFeishu || isDingtalk || (isOpenClaw && !isQrLogin)) ? (
                         botStatus?.bindCode && (
                             <BindCodePanel
                                 bindCode={botStatus.bindCode}
@@ -1401,6 +1401,15 @@ export default function ChannelWizard({
                                 platformName={isOpenClaw ? platformLabel : isDingtalk ? '钉钉' : '飞书'}
                             />
                         )
+                    ) : isQrLogin ? (
+                        <div className="rounded-xl border border-[var(--line)] bg-[var(--paper-elevated)] p-5">
+                            <div className="space-y-3">
+                                <label className="text-sm font-medium text-[var(--ink)]">用户绑定</label>
+                                <p className="text-xs text-[var(--ink-muted)]">
+                                    扫码即可使用，无需手动绑定用户。
+                                </p>
+                            </div>
+                        </div>
                     ) : (
                         <>
                             {botStatus?.bindUrl && (
@@ -1419,7 +1428,7 @@ export default function ChannelWizard({
                         </>
                     )}
 
-                    {(isFeishu || isDingtalk || isOpenClaw) && allowedUsers.length > 0 && (
+                    {(isFeishu || isDingtalk || (isOpenClaw && !isQrLogin)) && allowedUsers.length > 0 && (
                         <div className="rounded-xl border border-[var(--line)] bg-[var(--paper-elevated)] p-5">
                             <WhitelistManager
                                 users={allowedUsers}

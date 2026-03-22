@@ -270,7 +270,7 @@ export function createCompatRuntime(rustPort: number, botId: string, pluginId: s
 
         createReplyDispatcherWithTyping(_params: Record<string, unknown>) {
           return {
-            dispatcher: { sendFinalReply: async () => {}, markComplete: () => {}, waitForIdle: async () => {}, sendBlockReply: async () => {} },
+            dispatcher: { _isStub: true, sendFinalReply: async () => {}, markComplete: () => {}, waitForIdle: async () => {}, sendBlockReply: async () => {} },
             replyOptions: {},
             markDispatchIdle: () => {},
           };
@@ -296,7 +296,8 @@ export function createCompatRuntime(rustPort: number, botId: string, pluginId: s
           const replyOptions = params.replyOptions as Record<string, (...args: unknown[]) => unknown> | undefined;
           const hasProtocolCallbacks = dispatcher
             && typeof dispatcher.sendFinalReply === 'function'
-            && typeof dispatcher.markComplete === 'function';
+            && typeof dispatcher.markComplete === 'function'
+            && !(dispatcher as Record<string, unknown>)._isStub;
 
           if (!hasProtocolCallbacks) {
             // Fallback: no protocol callbacks, use old bypass path

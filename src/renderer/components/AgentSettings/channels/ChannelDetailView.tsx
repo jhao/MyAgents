@@ -776,13 +776,22 @@ export default function ChannelDetailView({
                                 hasWhitelistUsers={(channel.allowedUsers?.length ?? 0) > 0}
                             />
                         )}
-                        <WhitelistManager
-                            users={channel.allowedUsers ?? []}
-                            onChange={async (users) => {
-                                await patchChannel({ allowedUsers: users });
-                            }}
-                            platform={channel.type}
-                        />
+                        {isQrLoginPlugin ? (
+                            <div className="space-y-3">
+                                <label className="text-sm font-medium text-[var(--ink)]">用户绑定</label>
+                                <p className="text-xs text-[var(--ink-muted)]">
+                                    扫码即可使用，无需手动绑定用户。
+                                </p>
+                            </div>
+                        ) : (
+                            <WhitelistManager
+                                users={channel.allowedUsers ?? []}
+                                onChange={async (users) => {
+                                    await patchChannel({ allowedUsers: users });
+                                }}
+                                platform={channel.type}
+                            />
+                        )}
                     </div>
                 )}
             </div>
