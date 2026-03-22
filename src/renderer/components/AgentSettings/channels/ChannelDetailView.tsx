@@ -119,6 +119,7 @@ export default function ChannelDetailView({
     const [groupsExpanded, setGroupsExpanded] = useState<boolean | null>(null);
     const [overridesExpanded, setOverridesExpanded] = useState(false);
     const [pluginMissing, setPluginMissing] = useState(false);
+    const [installedPlugin, setInstalledPlugin] = useState<InstalledPlugin | null>(null);
 
     // Whether credentials are filled
     const hasCredentials = channel
@@ -149,8 +150,9 @@ export default function ChannelDetailView({
                 const { invoke } = await import('@tauri-apps/api/core');
                 const plugins = await invoke<InstalledPlugin[]>('cmd_list_openclaw_plugins');
                 if (!cancelled) {
-                    const found = plugins.some(p => p.pluginId === channel.openclawPluginId);
+                    const found = plugins.find(p => p.pluginId === channel.openclawPluginId);
                     setPluginMissing(!found);
+                    if (found) setInstalledPlugin(found);
                 }
             } catch {
                 // Ignore
@@ -419,6 +421,66 @@ export default function ChannelDetailView({
 
     const isRunning = botStatus?.status === 'online' || botStatus?.status === 'connecting';
     const isOpenClaw = isOpenClawPlatform(channel.type);
+    const promoted = isOpenClaw ? findPromotedByPlatform(channel.type) : undefined;
+    const isQrLoginPlugin = promoted?.authType === 'qrLogin' || installedPlugin?.supportsQrLogin === true;
+
+    // QR Login state for detail page (used when plugin needs QR auth)
+    const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+    const [qrMessage, setQrMessage] = useState('');
+    const [qrStatus, setQrStatus] = useState<'idle' | 'loading' | 'waiting' | 'connected' | 'error'>('idle');
+    const qrAbortRef = useRef(false);
+
+    const startDetailQrLogin = useCallback(async () => {
+        if (!isTauriEnvironment() || !isRunning) return;
+        qrAbortRef.current = false;
+        setQrStatus('loading');
+        setQrMessage('正在获取二维码...');
+        try {
+            const { invoke } = await import('@tauri-apps/api/core');
+            const startResult = await invoke<{ ok: boolean; qrDataUrl?: string; message?: string }>(
+                'cmd_plugin_qr_login_start', { agentId: agent.id, channelId: channel.id }
+            );
+            if (!startResult.ok || !startResult.qrDataUrl) {
+                throw new Error(startResult.message || '获取二维码失败');
+            }
+            if (!isMountedRef.current) return;
+            setQrDataUrl(startResult.qrDataUrl);
+            setQrStatus('waiting');
+            setQrMessage(`请使用${promoted?.name || channel.name || '对应 App'}扫描二维码`);
+            // Poll for scan completion
+            while (!qrAbortRef.current && isMountedRef.current) {
+                try {
+                    const waitResult = await invoke<{ ok: boolean; connected?: boolean; message?: string }>(
+                        'cmd_plugin_qr_login_wait', { agentId: agent.id, channelId: channel.id }
+                    );
+                    if (!isMountedRef.current || qrAbortRef.current) return;
+                    if (waitResult.connected) {
+                        setQrStatus('connected');
+                        setQrMessage('登录成功！');
+                        await invoke('cmd_plugin_restart_gateway', { agentId: agent.id, channelId: channel.id });
+                        toastRef.current.success('扫码登录成功');
+                        return;
+                    }
+                    if (waitResult.message) setQrMessage(waitResult.message);
+                } catch (err) {
+                    if (!isMountedRef.current || qrAbortRef.current) return;
+                    const errMsg = err instanceof Error ? err.message : String(err);
+                    if (!/timeout|expired|ETIMEDOUT/i.test(errMsg)) {
+                        setQrStatus('error');
+                        setQrMessage(`登录失败: ${errMsg}`);
+                        return;
+                    }
+                    // Refresh QR on timeout/expired
+                    try {
+                        const r = await invoke<{ ok: boolean; qrDataUrl?: string }>('cmd_plugin_qr_login_start', { agentId: agent.id, channelId: channel.id });
+                        if (r.ok && r.qrDataUrl) { setQrDataUrl(r.qrDataUrl); setQrMessage('二维码已刷新，请重新扫描'); }
+                    } catch { setQrStatus('error'); setQrMessage('二维码获取失败'); return; }
+                }
+            }
+        } catch (err) {
+            if (isMountedRef.current) { setQrStatus('error'); setQrMessage(`失败: ${err}`); }
+        }
+    }, [isRunning, agent.id, channel.id, channel.name, promoted?.name]);
 
     // Platform icon for header
     const detailPlatformIcon = (() => {
@@ -634,7 +696,40 @@ export default function ChannelDetailView({
                 </button>
                 {isBindingExpanded && (
                     <div className="space-y-5 px-5 pb-5">
-                        {isRunning && (channel.type === 'feishu' || channel.type === 'dingtalk' || isOpenClaw) && botStatus?.bindCode && (
+                        {/* QR Login section for plugins that use QR authentication (e.g. WeChat) */}
+                        {isRunning && isQrLoginPlugin && (
+                            <div className="rounded-xl border border-dashed border-[var(--line)] bg-[var(--paper-inset)] p-4">
+                                <div className="flex flex-col items-center gap-3">
+                                    {qrStatus === 'idle' && (
+                                        <button
+                                            onClick={startDetailQrLogin}
+                                            className="rounded-lg bg-[var(--button-primary-bg)] px-4 py-2 text-sm font-medium text-[var(--button-primary-text)] hover:bg-[var(--button-primary-bg-hover)]"
+                                        >
+                                            扫码登录
+                                        </button>
+                                    )}
+                                    {qrStatus === 'loading' && (
+                                        <Loader2 className="h-6 w-6 animate-spin text-[var(--ink-muted)]" />
+                                    )}
+                                    {(qrStatus === 'waiting') && qrDataUrl && (
+                                        <img src={qrDataUrl} alt="扫码登录" className="h-40 w-40 rounded-lg" style={{ imageRendering: 'pixelated' }} />
+                                    )}
+                                    {qrStatus === 'connected' && (
+                                        <p className="text-sm font-medium text-[var(--accent-success)]">登录成功</p>
+                                    )}
+                                    {qrStatus === 'error' && (
+                                        <button
+                                            onClick={() => { setQrStatus('idle'); }}
+                                            className="rounded-lg bg-[var(--button-primary-bg)] px-3 py-1.5 text-xs font-medium text-[var(--button-primary-text)] hover:bg-[var(--button-primary-bg-hover)]"
+                                        >
+                                            重试
+                                        </button>
+                                    )}
+                                    {qrMessage && <p className="text-xs text-[var(--ink-muted)]">{qrMessage}</p>}
+                                </div>
+                            </div>
+                        )}
+                        {isRunning && (channel.type === 'feishu' || channel.type === 'dingtalk' || (isOpenClaw && !isQrLoginPlugin)) && botStatus?.bindCode && (
                             <BindCodePanel
                                 bindCode={botStatus.bindCode}
                                 hasWhitelistUsers={(channel.allowedUsers?.length ?? 0) > 0}
