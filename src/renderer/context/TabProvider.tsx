@@ -393,9 +393,14 @@ export default function TabProvider({
         lastCompletedTextRef.current = '';
         lastProviderEnvRef.current = undefined;
         lastModelRef.current = undefined;
-        // Clear current session ID - no active session until first message creates one
-        // This ensures history dropdown shows no selection for new conversations
-        setCurrentSessionId(null);
+        // NOTE: Do NOT clear currentSessionId here. The old session ID is the only way
+        // to find the still-running sidecar via getSessionPort(). Setting it to null
+        // causes all subsequent API calls to fail ("No running sidecar for tab") because
+        // getBaseUrl skips session-centric lookup when sessionId is null, and the tab-based
+        // fallback also fails. The history dropdown naturally shows no selection when the
+        // old session is deleted from the list, so no UI impact.
+        // The session ID will be upgraded to the new value when chat:system-init arrives.
+
         // Reset tab title so SortableTabItem falls back to folder name
         onTitleChangeRef.current?.('New Chat');
 
