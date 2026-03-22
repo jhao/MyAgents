@@ -19,15 +19,17 @@ import {
   loadProjects,
   saveProjects,
   redactSecret,
+  findProvider,
+  getProvidersDir,
+  loadCustomProviderFiles,
   type AdminAppConfig,
   type AgentConfigSlim,
   type ChannelConfigSlim,
 } from './utils/admin-config';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, unlinkSync } from 'fs';
 import { resolve } from 'path';
 import { setMcpServers, getMcpServers, getAgentState } from './agent-session';
 import { broadcast } from './sse';
-import { getHomeDirOrNull } from './utils/platform';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -860,50 +862,7 @@ function hasDangerousKeySegment(key: string): boolean {
 // Provider file I/O (~/.myagents/providers/{id}.json)
 // ---------------------------------------------------------------------------
 
-function getProvidersDir(): string {
-  const home = getHomeDirOrNull();
-  if (!home) throw new Error('Cannot determine home directory');
-  return resolve(home, '.myagents', 'providers');
-}
-
-/** Find a provider by ID (preset + custom) */
-function findProvider(id: string): Record<string, unknown> | null {
-  // Check presets first
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { PRESET_PROVIDERS } = require('../renderer/config/types');
-    const preset = (PRESET_PROVIDERS as Array<Record<string, unknown>>)?.find(
-      (p: Record<string, unknown>) => p.id === id
-    );
-    if (preset) return preset;
-  } catch { /* ignore */ }
-
-  // Check custom providers
-  const dir = getProvidersDir();
-  const filePath = resolve(dir, `${id}.json`);
-  if (existsSync(filePath)) {
-    try {
-      return JSON.parse(readFileSync(filePath, 'utf-8')) as Record<string, unknown>;
-    } catch { /* ignore */ }
-  }
-  return null;
-}
-
-/** Load all custom provider files */
-function loadCustomProviderFiles(): Array<Record<string, unknown>> {
-  const dir = getProvidersDir();
-  if (!existsSync(dir)) return [];
-  try {
-    return readdirSync(dir)
-      .filter(f => f.endsWith('.json'))
-      .map(f => {
-        try {
-          return JSON.parse(readFileSync(resolve(dir, f), 'utf-8')) as Record<string, unknown>;
-        } catch { return null; }
-      })
-      .filter((p): p is Record<string, unknown> => p !== null && !!p.id);
-  } catch { return []; }
-}
+// findProvider, getProvidersDir, loadCustomProviderFiles → imported from admin-config.ts
 
 /** Save a custom provider JSON file */
 function saveCustomProviderFile(provider: Record<string, unknown>): void {

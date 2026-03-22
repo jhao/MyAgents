@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, symlinkSync, lstatSync, readFileSyn
 import { join, resolve, sep } from 'path';
 import { createRequire } from 'module';
 import { query, getSessionMessages as sdkGetSessionMessages, type Query, type SDKUserMessage, type AgentDefinition, type HookInput, type HookJSONOutput, type PostToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
-import { getScriptDir, getBundledBunDir, getBundledNodeDir, getAgentBrowserCliPath } from './utils/runtime';
+import { getScriptDir, getBundledBunDir, getBundledNodeDir, getAgentBrowserCliPath, getSystemNodeDirs } from './utils/runtime';
 import { getCrossPlatformEnv, isSkillBlockedOnPlatform } from './utils/platform';
 import { processImage, resizeToolImageContent } from './utils/imageResize';
 import { cronToolsServer, getCronTaskContext, clearCronTaskContext } from './tools/cron-tools';
@@ -1174,7 +1174,9 @@ function buildSdkMcpServers(): Record<string, SdkMcpServerConfig | typeof cronTo
       let command = server.command;
       let args = server.args || [];
 
-      // For npx commands: prefer bundled Node.js npx → system npx → bun x
+      // For npx commands: prefer system npx → bundled Node.js npx → bun x
+      // System Node.js is maintained by the user's package manager, more reliable than our bundled npm.
+      // Bundled Node.js serves as fallback for users who don't have Node.js installed.
       if (command === 'npx') {
         if (server.isBuiltin) {
           // Pin @latest to known versions to avoid npm registry check on every startup
@@ -1183,29 +1185,29 @@ function buildSdkMcpServers(): Record<string, SdkMcpServerConfig | typeof cronTo
           // Dual runtime strategy: MCP servers are community npm packages designed for
           // Node.js. Running them under Bun causes compatibility issues (Playwright pipe
           // transport, axios adapter, postinstall scripts, etc.).
-          // Priority: bundled Node.js npx → system npx → bun x
+          // Priority: system npx → bundled Node.js npx → bun x
           // eslint-disable-next-line @typescript-eslint/no-require-imports
           const { getBundledNodeDir: getNodeDir, getBundledRuntimePath, isBunRuntime, getSystemNpxPaths, findExistingPath } = require('./utils/runtime');
-          const nodeDir = getNodeDir();
+          const systemNpx = findExistingPath(getSystemNpxPaths());
 
-          if (nodeDir) {
-            // 1. Bundled Node.js available — use npx natively
+          if (systemNpx) {
+            // 1. System npx available — most reliable, user-maintained
+            command = systemNpx;
             args = ['-y', ...args];
-            console.log(`[agent] MCP ${server.id}: Using bundled Node.js npx (${nodeDir})`);
+            console.log(`[agent] MCP ${server.id}: Using system npx (${systemNpx})`);
           } else {
-            // 2. Try system npx (user-installed Node.js)
-            const systemNpx = findExistingPath(getSystemNpxPaths());
-            if (systemNpx) {
-              command = systemNpx;
+            // 2. Fallback to bundled Node.js npx
+            const nodeDir = getNodeDir();
+            if (nodeDir) {
               args = ['-y', ...args];
-              console.log(`[agent] MCP ${server.id}: Bundled Node.js not found, using system npx (${systemNpx})`);
+              console.log(`[agent] MCP ${server.id}: System npx not found, using bundled Node.js npx (${nodeDir})`);
             } else {
               // 3. Last resort: bun x or derive npx from system node
               const runtime = getBundledRuntimePath();
               if (isBunRuntime(runtime)) {
                 command = runtime;
                 args = ['x', ...args];
-                console.log(`[agent] MCP ${server.id}: No Node.js found (bundled or system), falling back to bun x`);
+                console.log(`[agent] MCP ${server.id}: No Node.js found (system or bundled), falling back to bun x`);
               } else {
                 // getBundledRuntimePath found a system node — derive npx from same dir
                 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -2071,7 +2073,13 @@ export function buildClaudeSessionEnv(providerEnv?: ProviderEnv): NodeJS.Process
     essentialPaths.push(bundledBunDir);
   }
 
-  // Bundled Node.js directory — MCP servers, AI bash `node`/`npm`/`npx` commands
+  // System Node.js directories — preferred over bundled for MCP/npm ecosystem reliability.
+  // User-maintained Node.js is less likely to have broken npm than our bundled version.
+  for (const dir of getSystemNodeDirs()) {
+    essentialPaths.push(dir);
+  }
+
+  // Bundled Node.js directory — fallback for users without system Node.js
   if (bundledNodeDir) {
     essentialPaths.push(bundledNodeDir);
   }

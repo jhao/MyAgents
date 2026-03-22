@@ -6,7 +6,7 @@
  * Atomicity is guaranteed by write-to-tmp → rename pattern.
  */
 
-import { readFileSync, writeFileSync, copyFileSync, existsSync, renameSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, copyFileSync, existsSync, renameSync, mkdirSync, readdirSync } from 'fs';
 import { resolve } from 'path';
 import { getHomeDirOrNull } from './platform';
 import type { McpServerDefinition } from '../../renderer/config/types';
@@ -244,4 +244,166 @@ export function getEffectiveMcpServers(projectPath: string): McpServerDefinition
 export function redactSecret(value: string): string {
   if (value.length <= 10) return '****';
   return value.slice(0, 4) + '****' + value.slice(-4);
+}
+
+/** Path to custom provider files directory */
+export function getProvidersDir(): string {
+  const home = getHomeDirOrNull();
+  if (!home) throw new Error('Cannot determine home directory');
+  return resolve(home, '.myagents', 'providers');
+}
+
+/** Find a provider by ID: checks PRESET_PROVIDERS first, then custom files in ~/.myagents/providers/ */
+export function findProvider(id: string): Record<string, unknown> | null {
+  // Check presets first
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { PRESET_PROVIDERS } = require('../../renderer/config/types');
+    const preset = (PRESET_PROVIDERS as Array<Record<string, unknown>>)?.find(
+      (p: Record<string, unknown>) => p.id === id
+    );
+    if (preset) return preset;
+  } catch { /* ignore */ }
+
+  // Check custom providers
+  try {
+    const dir = getProvidersDir();
+    const filePath = resolve(dir, `${id}.json`);
+    if (existsSync(filePath)) {
+      return JSON.parse(readFileSync(filePath, 'utf-8')) as Record<string, unknown>;
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+/** Load all custom provider files from ~/.myagents/providers/ */
+export function loadCustomProviderFiles(): Array<Record<string, unknown>> {
+  try {
+    const dir = getProvidersDir();
+    if (!existsSync(dir)) return [];
+    return readdirSync(dir)
+      .filter(f => f.endsWith('.json'))
+      .map(f => {
+        try {
+          return JSON.parse(readFileSync(resolve(dir, f), 'utf-8')) as Record<string, unknown>;
+        } catch { return null; }
+      })
+      .filter((p): p is Record<string, unknown> => p !== null && !!p.id);
+  } catch { return []; }
+}
+
+// ---------------------------------------------------------------------------
+// Provider resolution (Sidecar self-resolve — eliminates dependency on providerEnvJson snapshots)
+// ---------------------------------------------------------------------------
+
+/** Provider environment for SDK subprocess (structural match with ProviderEnv in agent-session.ts) */
+export interface ResolvedProviderEnv {
+  baseUrl?: string;
+  apiKey?: string;
+  authType?: 'auth_token' | 'api_key' | 'both' | 'auth_token_clear_api_key';
+  apiProtocol?: 'anthropic' | 'openai';
+  maxOutputTokens?: number;
+  upstreamFormat?: 'chat_completions' | 'responses';
+}
+
+/**
+ * Resolve provider environment from providerId by looking up the real provider definition
+ * (preset or custom) and API key from config. Handles ALL providers including custom ones.
+ *
+ * Returns undefined for subscription providers or if provider/key not found.
+ */
+export function resolveProviderEnv(
+  providerId: string,
+  config?: AdminAppConfig,
+): ResolvedProviderEnv | undefined {
+  if (!providerId) return undefined;
+
+  const provider = findProvider(providerId);
+  if (!provider) return undefined;
+
+  // Subscription providers don't use providerEnv (SDK uses built-in OAuth)
+  if (provider.type === 'subscription') return undefined;
+
+  // Get API key from config
+  const c = config ?? loadConfig();
+  const apiKey = (c.providerApiKeys ?? {})[providerId];
+  if (!apiKey) return undefined;
+
+  // Extract provider config fields (same shape as frontend Chat.tsx builds)
+  const providerConfig = (provider.config ?? {}) as Record<string, unknown>;
+  const result: ResolvedProviderEnv = {
+    baseUrl: providerConfig.baseUrl ? String(providerConfig.baseUrl) : undefined,
+    apiKey,
+    authType: (provider.authType as ResolvedProviderEnv['authType']) ?? 'both',
+  };
+  if (provider.apiProtocol) result.apiProtocol = provider.apiProtocol as ResolvedProviderEnv['apiProtocol'];
+  if (provider.maxOutputTokens) result.maxOutputTokens = Number(provider.maxOutputTokens);
+  if (provider.upstreamFormat) result.upstreamFormat = provider.upstreamFormat as ResolvedProviderEnv['upstreamFormat'];
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Workspace config resolution (Sidecar self-resolve at startup)
+// ---------------------------------------------------------------------------
+
+/** Result of self-resolution for a workspace */
+export interface WorkspaceResolvedConfig {
+  mcpServers: McpServerDefinition[];
+  providerEnv: ResolvedProviderEnv | undefined;
+  model: string | undefined;
+}
+
+/**
+ * Resolve the complete AI configuration for a workspace by reading source data from disk.
+ *
+ * This eliminates the dependency on pre-serialized snapshot fields (providerEnvJson, mcpServersJson)
+ * that can fail to save or go stale. The Sidecar calls this during initializeAgent() so IM Bot
+ * sessions work correctly without the frontend having been opened first.
+ *
+ * For desktop Chat sessions, the frontend's /api/mcp/set and per-message providerEnv will
+ * override the self-resolved values — so there is no conflict.
+ */
+export function resolveWorkspaceConfig(agentDir: string): WorkspaceResolvedConfig {
+  const config = loadConfig();
+
+  // Normalize path separators for cross-platform matching
+  const normalizedDir = agentDir.replace(/\\/g, '/');
+
+  // Find matching agent by workspace path
+  const agents = (config.agents ?? []) as Array<Record<string, unknown>>;
+  const agent = agents.find(a =>
+    typeof a.workspacePath === 'string' && a.workspacePath.replace(/\\/g, '/') === normalizedDir
+  );
+
+  // --- Resolve MCP ---
+  // Uses the existing getEffectiveMcpServers which does: global enabled ∩ project enabled
+  // For agent workspaces, mcpEnabledServers is synced to both project and agent.
+  const mcpServers = getEffectiveMcpServers(agentDir);
+
+  // --- Resolve Provider ---
+  let providerEnv: ResolvedProviderEnv | undefined;
+  const providerId = agent?.providerId as string | undefined;
+  if (providerId) {
+    providerEnv = resolveProviderEnv(providerId, config);
+  }
+  // Fallback: if runtime resolution failed, try the persisted snapshot (backward compat)
+  if (!providerEnv && agent?.providerEnvJson) {
+    try {
+      providerEnv = JSON.parse(agent.providerEnvJson as string) as ResolvedProviderEnv;
+    } catch { /* ignore malformed snapshot */ }
+  }
+
+  // --- Resolve Model ---
+  const model = (agent?.model as string | undefined) ?? undefined;
+
+  if (mcpServers.length > 0 || providerEnv || model) {
+    console.log(
+      `[admin-config] resolveWorkspaceConfig: ` +
+      `provider=${providerId ?? 'subscription'}, model=${model ?? 'default'}, ` +
+      `mcp=${mcpServers.length} server(s)${agent ? '' : ' (no agent match)'}`
+    );
+  }
+
+  return { mcpServers, providerEnv, model };
 }
