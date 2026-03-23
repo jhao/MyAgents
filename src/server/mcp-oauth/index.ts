@@ -16,7 +16,7 @@
 
 import { discoverOAuth } from './discovery';
 import { dynamicRegister } from './registration';
-import { startAuthorizationFlow, isFlowPending } from './authorization';
+import { startAuthorizationFlow, bindCallbackServer, isFlowPending } from './authorization';
 import { emitTokenChange, refreshToken } from './token-manager';
 import {
   getServerState,
@@ -97,6 +97,7 @@ export async function authorizeServer(
   let tokenEndpoint: string;
   let scopes: string[] | undefined;
   let callbackPort: number | undefined;
+  let existingServer: { server: import('http').Server; port: number } | undefined;
 
   if (manualConfig?.clientId) {
     // === Manual mode ===
@@ -123,43 +124,28 @@ export async function authorizeServer(
     tokenEndpoint = discovery.tokenEndpoint;
     scopes = discovery.scopesSupported;
 
-    // Dynamic registration: always register fresh to get a redirect_uri matching the
-    // current callback port. We can't reuse a previous registration because the port
-    // was random and will differ — reusing would cause redirect_uri_mismatch.
-    // The registration endpoint is cheap (no approval step) so re-registering is fine.
+    // Dynamic registration: bind callback server FIRST (keeps port alive),
+    // then register with its actual port as redirect_uri.
+    // This avoids the TOCTOU race of bind→close→register→rebind.
     if (discovery.registrationEndpoint) {
-      const http = await import('http');
-      const tempPort = await new Promise<number>((resolve, reject) => {
-        const tmp = http.createServer();
-        tmp.listen(0, '127.0.0.1', () => {
-          const addr = tmp.address();
-          if (addr && typeof addr === 'object') {
-            const port = addr.port;
-            tmp.close(() => resolve(port));
-          } else {
-            tmp.close();
-            reject(new Error('Failed to get temporary port'));
-          }
-        });
-        tmp.on('error', reject);
-      });
-
-      const redirectUri = `http://127.0.0.1:${tempPort}/callback`;
+      const bound = await bindCallbackServer(0);
+      const redirectUri = `http://127.0.0.1:${bound.port}/callback`;
       const registration = await dynamicRegister(
         discovery.registrationEndpoint,
         redirectUri,
         scopes,
       );
       updateServerState(serverId, { registration });
-      callbackPort = tempPort;
       clientId = registration.clientId;
       clientSecret = registration.clientSecret;
+      // Pass the already-bound server to startAuthorizationFlow (no re-bind needed)
+      existingServer = bound;
     } else {
       throw new Error('Server does not support dynamic registration. Please provide Client ID manually.');
     }
   }
 
-  // Start the authorization flow
+  // Start the authorization flow (reuse bound server if available)
   const { authUrl, waitForToken } = await startAuthorizationFlow(serverId, {
     clientId,
     clientSecret,
@@ -167,7 +153,7 @@ export async function authorizeServer(
     tokenEndpoint,
     scopes,
     callbackPort,
-  });
+  }, existingServer);
 
   // Wrap waitForToken to store token and emit event
   const waitForCompletion = waitForToken.then((token: OAuthTokenData | null) => {

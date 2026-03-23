@@ -52,7 +52,6 @@ const JSON_EVENTS = new Set([
     'chat:task-started',    // Background task (SDK Task tool) started
     'chat:task-notification', // Background task completed/failed/stopped
     'mcp:oauth-expired',    // MCP OAuth token expired (trigger re-auth prompt)
-    'mcp:oauth-refreshed',  // MCP OAuth token refreshed (silent UI update)
     'queue:added',     // Message queued (confirmation)
     'queue:started',   // Queued message started executing
     'queue:cancelled', // Queued message cancelled

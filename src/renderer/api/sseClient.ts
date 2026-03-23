@@ -26,8 +26,7 @@ const JSON_EVENTS = new Set([
   'chat:logs',
   'chat:status',
   'chat:agent-error',
-  'mcp:oauth-expired',
-  'mcp:oauth-refreshed'
+  'mcp:oauth-expired'
 ]);
 
 const STRING_EVENTS = new Set([

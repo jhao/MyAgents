@@ -61,18 +61,24 @@ function migrateFromLegacy(): McpOAuthStateStore {
   }
 }
 
-/** Load the full OAuth state store from disk */
+// In-memory cache — avoids disk I/O on every getServerState() / resolveAuthHeaders() call
+let memoryCache: McpOAuthStateStore | null = null;
+
+/** Load the full OAuth state store (from memory cache or disk) */
 export function loadStateStore(): McpOAuthStateStore {
+  if (memoryCache) return memoryCache;
   try {
     if (existsSync(STATE_FILE)) {
       const raw = readFileSync(STATE_FILE, 'utf-8');
-      return JSON.parse(raw) as McpOAuthStateStore;
+      memoryCache = JSON.parse(raw) as McpOAuthStateStore;
+      return memoryCache;
     }
     // First load — try migration from legacy
     const migrated = migrateFromLegacy();
     if (Object.keys(migrated).length > 0) {
       saveStateStore(migrated);
     }
+    memoryCache = migrated;
     return migrated;
   } catch (err) {
     console.error('[mcp-oauth] Failed to load state store:', err);
@@ -80,8 +86,9 @@ export function loadStateStore(): McpOAuthStateStore {
   }
 }
 
-/** Save the full state store to disk (atomic write via tmp+rename) */
+/** Save the full state store to disk (atomic write via tmp+rename) and update cache */
 export function saveStateStore(store: McpOAuthStateStore): void {
+  memoryCache = store;
   try {
     ensureDir();
     const tmpFile = STATE_FILE + '.tmp';

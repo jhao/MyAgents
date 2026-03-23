@@ -164,6 +164,10 @@ export function startTokenRefreshScheduler(): void {
   schedulerTimer = setInterval(async () => {
     const store = loadStateStore();
 
+    // Collect refresh tasks and run them in parallel so one slow server
+    // doesn't block checks for others (each has its own 15s timeout)
+    const tasks: Promise<void>[] = [];
+
     for (const [serverId, state] of Object.entries(store)) {
       if (!state.token?.expiresAt) continue;
 
@@ -172,23 +176,23 @@ export function startTokenRefreshScheduler(): void {
       if (timeToExpiry <= 0) {
         // Already expired
         if (state.token.refreshToken) {
-          const refreshed = await refreshToken(serverId);
-          if (refreshed) {
-            emitTokenChange(serverId, 'refreshed');
-          } else {
-            emitTokenChange(serverId, 'expired');
-          }
+          tasks.push(refreshToken(serverId).then(r => {
+            emitTokenChange(serverId, r ? 'refreshed' : 'expired');
+          }));
         } else {
           emitTokenChange(serverId, 'expired');
         }
       } else if (timeToExpiry < REFRESH_BUFFER_MS && state.token.refreshToken) {
         // Expiring soon — proactive refresh
-        const refreshed = await refreshToken(serverId);
-        if (refreshed) {
-          emitTokenChange(serverId, 'refreshed');
-        }
-        // If proactive refresh fails, don't emit expired yet — still valid until actual expiry
+        tasks.push(refreshToken(serverId).then(r => {
+          if (r) emitTokenChange(serverId, 'refreshed');
+          // If proactive refresh fails, don't emit expired yet — still valid until actual expiry
+        }));
       }
+    }
+
+    if (tasks.length > 0) {
+      await Promise.allSettled(tasks);
     }
   }, SCHEDULER_INTERVAL_MS);
 

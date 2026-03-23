@@ -123,61 +123,22 @@ async function exchangeCodeForToken(
 
 // ===== Callback Server =====
 
-function startCallbackServer(
-  serverId: string,
+/**
+ * Bind a bare HTTP server to a local port.
+ * No request handler — caller installs one later.
+ * Exported for use by index.ts to get a port before dynamic registration (avoids TOCTOU).
+ */
+export function bindCallbackServer(
   port: number,
-  onCode: (code: string, state: string) => void,
-  onError: (error: string) => void,
 ): Promise<{ server: http.Server; port: number }> {
   return new Promise((resolve, reject) => {
-    const server = http.createServer((req, res) => {
-      const url = new URL(req.url ?? '/', 'http://127.0.0.1');
-
-      if (url.pathname === '/callback') {
-        const code = url.searchParams.get('code');
-        const state = url.searchParams.get('state');
-        const error = url.searchParams.get('error');
-
-        if (error) {
-          const desc = url.searchParams.get('error_description') || error;
-          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-          res.end(buildCallbackHtml(false, `Authorization failed: ${escapeHtml(desc)}`));
-          onError(desc);
-          return;
-        }
-
-        if (code && state) {
-          const flow = pendingFlows.get(serverId);
-          if (flow && state !== flow.state) {
-            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-            res.end(buildCallbackHtml(false, 'Authorization failed: state parameter mismatch'));
-            onError('State parameter mismatch');
-            return;
-          }
-          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-          res.end(buildCallbackHtml(true, 'Authorization successful! You can close this tab.'));
-          onCode(code, state);
-          return;
-        }
-
-        res.writeHead(400, { 'Content-Type': 'text/plain' });
-        res.end('Missing code or state parameter');
-        return;
-      }
-
-      res.writeHead(404);
-      res.end('Not found');
-    });
-
+    const server = http.createServer();
     server.on('error', (err) => {
       reject(new Error(`Callback server error: ${err.message}`));
     });
-
-    // port=0 means OS picks random available port
     server.listen(port, '127.0.0.1', () => {
       const addr = server.address();
       if (addr && typeof addr === 'object') {
-        console.log(`[mcp-oauth] Callback server for ${serverId} started on port ${addr.port}`);
         resolve({ server, port: addr.port });
       } else {
         reject(new Error('Failed to get callback server address'));
@@ -210,11 +171,15 @@ export function cancelFlow(serverId: string): void {
 /**
  * Start the OAuth 2.0 Authorization Code Flow with PKCE.
  *
+ * If existingServer is provided, reuses it (bound by caller via bindCallbackServer).
+ * Otherwise creates a new callback server on the configured port.
+ *
  * @returns authUrl to open in browser + waitForToken promise
  */
 export async function startAuthorizationFlow(
   serverId: string,
   config: AuthorizationConfig,
+  existingServer?: { server: http.Server; port: number },
 ): Promise<{ authUrl: string; waitForToken: Promise<OAuthTokenData | null> }> {
   // Cancel any existing flow
   cancelFlow(serverId);
@@ -222,23 +187,17 @@ export async function startAuthorizationFlow(
   const pkce = generatePKCE();
   const state = randomBytes(16).toString('hex');
 
-  // Start callback server
-  const callbackPort = config.callbackPort || 0;
-  const { server: srv, port: srvPort } = await startCallbackServer(
-    serverId,
-    callbackPort,
-    // onCode — handled inside the token promise
-    () => {},
-    // onError — handled inside the token promise
-    () => {},
-  );
+  // Use existing server or bind a new one
+  const { server: srv, port: srvPort } = existingServer
+    ?? await bindCallbackServer(config.callbackPort || 0);
 
-  // Build redirect URI with actual port
+  console.log(`[mcp-oauth] Callback server for ${serverId} on port ${srvPort}`);
+
   const redirectUri = `http://127.0.0.1:${srvPort}/callback`;
 
   // Create token promise — resolved when callback is received
   const tokenPromise = new Promise<OAuthTokenData | null>((resolveToken) => {
-    // Replace the callback server's request handler with one that uses our resolve
+    // Install the request handler on the server
     srv.removeAllListeners('request');
     srv.on('request', (req: http.IncomingMessage, res: http.ServerResponse) => {
       const url = new URL(req.url ?? '/', 'http://127.0.0.1');
@@ -269,7 +228,6 @@ export async function startAuthorizationFlow(
           res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
           res.end(buildCallbackHtml(true, 'Authorization successful! You can close this tab.'));
 
-          // Exchange code for token
           exchangeCodeForToken(
             code,
             config.tokenEndpoint,
@@ -298,7 +256,6 @@ export async function startAuthorizationFlow(
       res.end('Not found');
     });
 
-    // Store flow state for state validation and cleanup
     pendingFlows.set(serverId, {
       serverId,
       config,
