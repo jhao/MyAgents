@@ -230,9 +230,11 @@ const ModelTagList = React.memo(function ModelTagList({
     );
 });
 
-/** Default args for Playwright MCP: isolated mode for concurrent sessions + storage capability for login state persistence */
+/** Default args for Playwright MCP: persistent profile mode (preserves login state, single-session) */
 async function getPlaywrightDefaultArgs(): Promise<string[]> {
-    return ['--isolated', '--caps=storage'];
+    const home = await homeDir();
+    const profilePath = await join(home, '.playwright-mcp-profile');
+    return [`--user-data-dir=${profilePath}`];
 }
 
 /** Playwright device presets shared between parser and UI */
@@ -576,21 +578,61 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
 
     // Playwright MCP custom settings dialog
     const [playwrightSettings, setPlaywrightSettings] = useState<{
+        mode: 'persistent' | 'isolated';
         headless: boolean;
         browser: string;
         device: string;
         customDevice: string;
+        userDataDir: string;
         extraArgs: string[];
         newArg: string;
     } | null>(null);
 
-    // Storage state info for Playwright browser settings UI
+    // Storage state info for Playwright browser settings UI (isolated mode)
     const [storageStateInfo, setStorageStateInfo] = useState<{
         exists: boolean;
         cookieCount: number;
         domains: string[];
         lastModified: string | null;
+        cookies: Array<{ name: string; value: string; domain: string; path: string; secure: boolean; httpOnly: boolean }>;
     } | null>(null);
+
+    // Cookie add/edit form (null = closed, object = open)
+    const [cookieForm, setCookieForm] = useState<{
+        editIndex: number | null; // null = adding new, number = editing existing
+        domain: string;
+        name: string;
+        value: string;
+        path: string;
+    } | null>(null);
+
+    // Shared helper: reload storage state info from ~/.myagents/browser-storage-state.json
+    const reloadStorageStateInfo = async () => {
+        try {
+            const home = await homeDir();
+            const ssPath = await join(home, '.myagents', 'browser-storage-state.json');
+            const { exists: fileExists, readTextFile, stat: fsStat } = await import('@tauri-apps/plugin-fs');
+            if (await fileExists(ssPath)) {
+                const content = await readTextFile(ssPath);
+                const parsed = JSON.parse(content);
+                const rawCookies = (parsed.cookies ?? []) as Array<{ name: string; value: string; domain: string; path: string; secure?: boolean; httpOnly?: boolean }>;
+                const cookies = rawCookies.map(c => ({
+                    name: String(c.name ?? ''), value: String(c.value ?? ''), domain: String(c.domain ?? ''),
+                    path: String(c.path ?? '/'), secure: !!c.secure, httpOnly: !!c.httpOnly,
+                }));
+                const domains = [...new Set(cookies.map(c => c.domain.replace(/^\./, '')))].sort() as string[];
+                const fileStat = await fsStat(ssPath).catch(() => null);
+                setStorageStateInfo({
+                    exists: true, cookieCount: cookies.length, domains, cookies,
+                    lastModified: fileStat?.mtime ? new Date(fileStat.mtime).toLocaleString() : null,
+                });
+            } else {
+                setStorageStateInfo({ exists: false, cookieCount: 0, domains: [], cookies: [], lastModified: null });
+            }
+        } catch {
+            setStorageStateInfo({ exists: false, cookieCount: 0, domains: [], cookies: [], lastModified: null });
+        }
+    };
 
     const [mcpFormMode, setMcpFormMode] = useState<'form' | 'json'>('form');
     const [mcpJsonInput, setMcpJsonInput] = useState('');
@@ -835,14 +877,15 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
             let browser = '';
             let device = '';
             let customDevice = '';
+            let userDataDir = '';
+            let mode: 'persistent' | 'isolated' = 'persistent'; // default
             const extraArgs: string[] = [];
-
-            // Internally managed args that are not user-editable
-            const managedPrefixes = ['--isolated', '--caps=', '--storage-state=', '--user-data-dir='];
 
             for (const arg of rawArgs) {
                 if (arg === '--headless') {
                     headless = true;
+                } else if (arg === '--isolated') {
+                    mode = 'isolated';
                 } else if (arg.startsWith('--browser=')) {
                     browser = arg.slice('--browser='.length);
                 } else if (arg.startsWith('--device=')) {
@@ -853,38 +896,20 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                         device = '__custom__';
                         customDevice = val;
                     }
-                } else if (managedPrefixes.some(p => arg.startsWith(p))) {
-                    // Skip internally managed args — they are always injected automatically
+                } else if (arg.startsWith('--user-data-dir=')) {
+                    userDataDir = arg.slice('--user-data-dir='.length);
+                } else if (arg.startsWith('--storage-state=')) {
+                    // Skip: dynamically injected by backend
                 } else {
                     extraArgs.push(arg);
                 }
             }
 
-            // Load storage state info for the status display
-            try {
-                const home = await homeDir();
-                const ssPath = await join(home, '.myagents', 'browser-storage-state.json');
-                const { exists: fileExists, readTextFile, stat: fsStat } = await import('@tauri-apps/plugin-fs');
-                if (await fileExists(ssPath)) {
-                    const content = await readTextFile(ssPath);
-                    const parsed = JSON.parse(content);
-                    const cookies = parsed.cookies ?? [];
-                    const domains = [...new Set(cookies.map((c: { domain: string }) => c.domain.replace(/^\./, '')))].sort() as string[];
-                    const fileStat = await fsStat(ssPath).catch(() => null);
-                    setStorageStateInfo({
-                        exists: true,
-                        cookieCount: cookies.length,
-                        domains,
-                        lastModified: fileStat?.mtime ? new Date(fileStat.mtime).toLocaleString() : null,
-                    });
-                } else {
-                    setStorageStateInfo({ exists: false, cookieCount: 0, domains: [], lastModified: null });
-                }
-            } catch {
-                setStorageStateInfo({ exists: false, cookieCount: 0, domains: [], lastModified: null });
-            }
+            // Load storage state info for isolated mode display
+            await reloadStorageStateInfo();
 
-            setPlaywrightSettings({ headless, browser, device, customDevice, extraArgs, newArg: '' });
+            setCookieForm(null); // Reset cookie form from previous session
+            setPlaywrightSettings({ mode, headless, browser, device, customDevice, userDataDir, extraArgs, newArg: '' });
             return;
         }
 
@@ -953,13 +978,123 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
         }
     };
 
+    // Save cookie to storage-state JSON file
+    const handleSaveCookie = async () => {
+        if (!cookieForm) return;
+        const { editIndex, domain, name, value, path } = cookieForm;
+        if (!domain.trim() || !name.trim() || !value.trim()) {
+            toast.error('域名、名称和值不能为空');
+            return;
+        }
+        try {
+            const home = await homeDir();
+            const ssPath = await join(home, '.myagents', 'browser-storage-state.json');
+            const { exists: fileExists, readTextFile, writeTextFile } = await import('@tauri-apps/plugin-fs');
+
+            // Load existing or create new
+            let storageState: { cookies: Array<Record<string, unknown>>; origins: Array<Record<string, unknown>> } = { cookies: [], origins: [] };
+            if (await fileExists(ssPath)) {
+                try {
+                    storageState = JSON.parse(await readTextFile(ssPath));
+                } catch { /* corrupt file, start fresh */ }
+            }
+
+            const domainVal = domain.trim().startsWith('.') ? domain.trim() : `.${domain.trim()}`;
+            const pathVal = path.trim() || '/';
+
+            if (editIndex !== null && editIndex < storageState.cookies.length) {
+                // Preserve original metadata (expires, httpOnly, secure, sameSite) when editing
+                const existing = storageState.cookies[editIndex];
+                storageState.cookies[editIndex] = {
+                    ...existing,
+                    name: name.trim(),
+                    value: value.trim(),
+                    domain: domainVal,
+                    path: pathVal,
+                };
+            } else {
+                // New cookie: use sensible defaults
+                storageState.cookies.push({
+                    name: name.trim(),
+                    value: value.trim(),
+                    domain: domainVal,
+                    path: pathVal,
+                    expires: -1,
+                    httpOnly: false,
+                    secure: true,
+                    sameSite: 'Lax',
+                });
+            }
+
+            // Ensure ~/.myagents/ exists (writeTextFile may fail if dir missing)
+            const myagentsDir = await join(home, '.myagents');
+            const { mkdir } = await import('@tauri-apps/plugin-fs');
+            await mkdir(myagentsDir, { recursive: true }).catch(() => {});
+            await writeTextFile(ssPath, JSON.stringify(storageState, null, 2));
+
+            setCookieForm(null);
+            toast.success(editIndex !== null ? 'Cookie 已更新' : 'Cookie 已添加');
+            await reloadStorageStateInfo();
+        } catch {
+            toast.error('保存失败');
+        }
+    };
+
+    // Delete a cookie from storage-state JSON
+    const handleDeleteCookie = async (idx: number) => {
+        try {
+            const home = await homeDir();
+            const ssPath = await join(home, '.myagents', 'browser-storage-state.json');
+            const { readTextFile, writeTextFile } = await import('@tauri-apps/plugin-fs');
+            const storageState = JSON.parse(await readTextFile(ssPath));
+            storageState.cookies.splice(idx, 1);
+            await writeTextFile(ssPath, JSON.stringify(storageState, null, 2));
+            toast.success('Cookie 已删除');
+            await reloadStorageStateInfo();
+        } catch {
+            toast.error('删除失败');
+        }
+    };
+
     const handleSavePlaywright = async () => {
         if (!playwrightSettings) return;
         try {
-            // --isolated and --caps=storage are always included:
-            // - isolated: each session gets its own browser (no SingletonLock conflict)
-            // - caps=storage: enables browser_storage_state tool for login state persistence
-            const args: string[] = ['--isolated', '--caps=storage'];
+            const args: string[] = [];
+
+            const home = await homeDir();
+
+            // Mode-specific args
+            if (playwrightSettings.mode === 'isolated') {
+                args.push('--isolated');
+                // Merge 'storage' capability into any existing --caps= from extra args
+                const existingCapsIdx = playwrightSettings.extraArgs.findIndex(a => a.startsWith('--caps='));
+                if (existingCapsIdx !== -1) {
+                    const existingCaps = playwrightSettings.extraArgs[existingCapsIdx].slice('--caps='.length);
+                    const capsSet = new Set(existingCaps.split(',').map(c => c.trim()).filter(Boolean));
+                    capsSet.add('storage');
+                    // Replace in extraArgs copy (don't mutate state)
+                    const extraArgsCopy = [...playwrightSettings.extraArgs];
+                    extraArgsCopy[existingCapsIdx] = `--caps=${[...capsSet].join(',')}`;
+                    args.push(...extraArgsCopy.filter(a => !a.startsWith('--caps=')));
+                    args.push(extraArgsCopy[existingCapsIdx]);
+                } else {
+                    args.push('--caps=storage');
+                }
+            } else {
+                // Persistent mode: use user-data-dir
+                let dir = playwrightSettings.userDataDir.trim();
+                // Expand ~ to home directory (tilde is a shell feature, not resolved by argv)
+                if (dir.startsWith('~/') || dir === '~') {
+                    dir = await join(home, dir.slice(2));
+                }
+                if (dir) {
+                    args.push(`--user-data-dir=${dir}`);
+                } else {
+                    const defaultProfile = await join(home, '.playwright-mcp-profile');
+                    args.push(`--user-data-dir=${defaultProfile}`);
+                }
+            }
+
             if (playwrightSettings.headless) {
                 args.push('--headless');
             }
@@ -974,7 +1109,11 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                     args.push(`--device=${deviceName}`);
                 }
             }
-            args.push(...playwrightSettings.extraArgs);
+            // Add extra args (skip --caps= in isolated mode — already merged above)
+            const filteredExtraArgs = playwrightSettings.mode === 'isolated'
+                ? playwrightSettings.extraArgs.filter(a => !a.startsWith('--caps='))
+                : playwrightSettings.extraArgs;
+            args.push(...filteredExtraArgs);
 
             await atomicModifyConfig(config => ({
                 ...config,
@@ -3533,53 +3672,192 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                 )}
                             </div>
 
-                            {/* Storage State Info */}
+                            {/* Browser Mode Selector */}
                             <div>
-                                <label className="block text-sm font-medium text-[var(--ink)] mb-1">登录态管理</label>
-                                <p className="text-xs text-[var(--ink-muted)] mb-2">
-                                    每个对话使用独立浏览器实例（支持多对话并发），登录状态通过 Storage State 跨对话共享
-                                </p>
-                                {storageStateInfo && (
-                                    <div className="rounded-lg border border-[var(--line)] bg-[var(--paper-inset)] px-3 py-2.5">
-                                        {storageStateInfo.exists ? (
-                                            <div className="flex items-center justify-between">
-                                                <div className="min-w-0">
-                                                    <div className="text-xs text-[var(--ink)]">
-                                                        <span className="text-[var(--success)]">&#10003;</span>
-                                                        {' '}已保存 &middot; {storageStateInfo.cookieCount} 个 cookies &middot; {storageStateInfo.domains.length} 个站点
-                                                    </div>
-                                                    {storageStateInfo.lastModified && (
-                                                        <div className="text-xs text-[var(--ink-muted)] mt-0.5">
-                                                            上次更新: {storageStateInfo.lastModified}
+                                <label className="block text-sm font-medium text-[var(--ink)] mb-2">浏览器模式</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button
+                                        onClick={() => setPlaywrightSettings(prev => prev ? { ...prev, mode: 'persistent' } : null)}
+                                        className={`rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                                            playwrightSettings.mode === 'persistent'
+                                                ? 'border-[var(--accent)] bg-[var(--accent)]/5'
+                                                : 'border-[var(--line)] hover:border-[var(--line-strong)]'
+                                        }`}
+                                    >
+                                        <div className={`text-xs font-medium ${playwrightSettings.mode === 'persistent' ? 'text-[var(--accent)]' : 'text-[var(--ink)]'}`}>
+                                            持久化模式
+                                        </div>
+                                        <div className="text-[10px] text-[var(--ink-muted)] mt-0.5 leading-tight">
+                                            登录态完整保留，同一时间仅一个对话可使用
+                                        </div>
+                                    </button>
+                                    <button
+                                        onClick={() => setPlaywrightSettings(prev => prev ? { ...prev, mode: 'isolated' } : null)}
+                                        className={`rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                                            playwrightSettings.mode === 'isolated'
+                                                ? 'border-[var(--accent)] bg-[var(--accent)]/5'
+                                                : 'border-[var(--line)] hover:border-[var(--line-strong)]'
+                                        }`}
+                                    >
+                                        <div className={`text-xs font-medium ${playwrightSettings.mode === 'isolated' ? 'text-[var(--accent)]' : 'text-[var(--ink)]'}`}>
+                                            独立模式
+                                        </div>
+                                        <div className="text-[10px] text-[var(--ink-muted)] mt-0.5 leading-tight">
+                                            多对话可同时使用，登录态通过快照共享
+                                        </div>
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Persistent Mode: user-data-dir + warning */}
+                            {playwrightSettings.mode === 'persistent' && (
+                                <div>
+                                    <label className="block text-sm font-medium text-[var(--ink)] mb-1">浏览器数据目录</label>
+                                    <input
+                                        type="text"
+                                        value={playwrightSettings.userDataDir}
+                                        onChange={e => setPlaywrightSettings(prev => prev ? { ...prev, userDataDir: e.target.value } : null)}
+                                        placeholder="~/.playwright-mcp-profile"
+                                        className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper)] px-3 py-2 text-sm text-[var(--ink)] placeholder-[var(--ink-muted)]/50 outline-none focus:border-[var(--accent)] font-mono"
+                                    />
+                                    <div className="mt-2 rounded-lg bg-[var(--warning-bg)] px-3 py-2 text-xs text-[var(--warning)]">
+                                        持久化模式下，同一时间只能有一个对话使用浏览器，其他对话需等待
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Isolated Mode: storage state + cookie management */}
+                            {playwrightSettings.mode === 'isolated' && (
+                                <div className="space-y-3">
+                                    <div>
+                                        <div className="flex items-center justify-between mb-1.5">
+                                            <label className="text-sm font-medium text-[var(--ink)]">登录态管理</label>
+                                            <button
+                                                onClick={() => setCookieForm({ editIndex: null, domain: '', name: '', value: '', path: '/' })}
+                                                className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-[var(--accent)] hover:bg-[var(--accent)]/10 transition-colors"
+                                            >
+                                                <Plus className="h-3 w-3" />
+                                                添加 Cookie
+                                            </button>
+                                        </div>
+                                        <p className="text-xs text-[var(--ink-muted)] mb-2">
+                                            每个对话使用独立浏览器，登录状态通过 Cookie 快照跨对话共享
+                                        </p>
+                                    </div>
+
+                                    {/* Cookie List */}
+                                    {storageStateInfo && storageStateInfo.cookies.length > 0 ? (
+                                        <div className="rounded-lg border border-[var(--line)] overflow-hidden">
+                                            {storageStateInfo.cookies.map((cookie, idx) => (
+                                                <div key={idx} className={`flex items-center justify-between px-3 py-2 ${idx > 0 ? 'border-t border-[var(--line)]' : ''}`}>
+                                                    <div className="min-w-0 flex-1">
+                                                        <div className="flex items-center gap-1.5">
+                                                            <span className="text-xs font-medium text-[var(--ink)] truncate">{cookie.name}</span>
+                                                            <span className="text-[10px] text-[var(--ink-muted)]">{cookie.domain}</span>
                                                         </div>
-                                                    )}
+                                                        <div className="text-[10px] text-[var(--ink-muted)] truncate mt-0.5 font-mono max-w-[280px]">{cookie.value}</div>
+                                                    </div>
+                                                    <div className="flex items-center gap-1 shrink-0 ml-2">
+                                                        <button
+                                                            onClick={() => setCookieForm({
+                                                                editIndex: idx,
+                                                                domain: cookie.domain,
+                                                                name: cookie.name,
+                                                                value: cookie.value,
+                                                                path: cookie.path,
+                                                            })}
+                                                            className="rounded p-1 text-[var(--ink-muted)] hover:bg-[var(--paper-inset)] hover:text-[var(--ink)]"
+                                                        >
+                                                            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleDeleteCookie(idx)}
+                                                            className="rounded p-1 text-[var(--ink-muted)] hover:bg-[var(--error-bg)] hover:text-[var(--error)]"
+                                                        >
+                                                            <X className="h-3 w-3" />
+                                                        </button>
+                                                    </div>
                                                 </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="rounded-lg border border-dashed border-[var(--line)] bg-[var(--paper-inset)] px-3 py-4 text-center">
+                                            <div className="text-xs text-[var(--ink-muted)]">
+                                                暂无已保存的 Cookie
+                                            </div>
+                                            <div className="text-[10px] text-[var(--ink-muted)] mt-0.5">
+                                                AI 使用浏览器登录后会自动保存，也可手动添加
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Cookie Add/Edit Form (inline) */}
+                                    {cookieForm && (
+                                        <div className="rounded-lg border border-[var(--accent)]/30 bg-[var(--paper)] p-3 space-y-2.5">
+                                            <div className="text-xs font-medium text-[var(--ink)]">
+                                                {cookieForm.editIndex !== null ? '编辑 Cookie' : '添加 Cookie'}
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <div>
+                                                    <label className="block text-[10px] text-[var(--ink-muted)] mb-0.5">域名 *</label>
+                                                    <input
+                                                        type="text"
+                                                        value={cookieForm.domain}
+                                                        onChange={e => setCookieForm(prev => prev ? { ...prev, domain: e.target.value } : null)}
+                                                        placeholder="example.com"
+                                                        className="w-full rounded-md border border-[var(--line)] bg-[var(--paper)] px-2.5 py-1.5 text-xs text-[var(--ink)] placeholder-[var(--ink-muted)]/50 outline-none focus:border-[var(--accent)] font-mono"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-[10px] text-[var(--ink-muted)] mb-0.5">路径</label>
+                                                    <input
+                                                        type="text"
+                                                        value={cookieForm.path}
+                                                        onChange={e => setCookieForm(prev => prev ? { ...prev, path: e.target.value } : null)}
+                                                        placeholder="/"
+                                                        className="w-full rounded-md border border-[var(--line)] bg-[var(--paper)] px-2.5 py-1.5 text-xs text-[var(--ink)] placeholder-[var(--ink-muted)]/50 outline-none focus:border-[var(--accent)] font-mono"
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label className="block text-[10px] text-[var(--ink-muted)] mb-0.5">名称 *</label>
+                                                <input
+                                                    type="text"
+                                                    value={cookieForm.name}
+                                                    onChange={e => setCookieForm(prev => prev ? { ...prev, name: e.target.value } : null)}
+                                                    placeholder="session_id"
+                                                    className="w-full rounded-md border border-[var(--line)] bg-[var(--paper)] px-2.5 py-1.5 text-xs text-[var(--ink)] placeholder-[var(--ink-muted)]/50 outline-none focus:border-[var(--accent)] font-mono"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-[10px] text-[var(--ink-muted)] mb-0.5">值 *</label>
+                                                <input
+                                                    type="text"
+                                                    value={cookieForm.value}
+                                                    onChange={e => setCookieForm(prev => prev ? { ...prev, value: e.target.value } : null)}
+                                                    placeholder="abc123..."
+                                                    className="w-full rounded-md border border-[var(--line)] bg-[var(--paper)] px-2.5 py-1.5 text-xs text-[var(--ink)] placeholder-[var(--ink-muted)]/50 outline-none focus:border-[var(--accent)] font-mono"
+                                                />
+                                            </div>
+                                            <div className="flex justify-end gap-2 pt-1">
                                                 <button
-                                                    onClick={async () => {
-                                                        try {
-                                                            const home = await homeDir();
-                                                            const ssPath = await join(home, '.myagents', 'browser-storage-state.json');
-                                                            const { remove: fsRemove } = await import('@tauri-apps/plugin-fs');
-                                                            await fsRemove(ssPath);
-                                                            setStorageStateInfo({ exists: false, cookieCount: 0, domains: [], lastModified: null });
-                                                            toast.success('登录态已清除');
-                                                        } catch {
-                                                            toast.error('清除失败');
-                                                        }
-                                                    }}
-                                                    className="shrink-0 rounded-md px-2 py-1 text-xs text-[var(--error)] hover:bg-[var(--error-bg)]"
+                                                    onClick={() => setCookieForm(null)}
+                                                    className="rounded-md px-3 py-1.5 text-xs text-[var(--ink-muted)] hover:bg-[var(--paper-inset)]"
                                                 >
-                                                    清除登录态
+                                                    取消
+                                                </button>
+                                                <button
+                                                    onClick={handleSaveCookie}
+                                                    disabled={!cookieForm.domain.trim() || !cookieForm.name.trim() || !cookieForm.value.trim()}
+                                                    className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40"
+                                                >
+                                                    {cookieForm.editIndex !== null ? '更新' : '添加'}
                                                 </button>
                                             </div>
-                                        ) : (
-                                            <div className="text-xs text-[var(--ink-muted)]">
-                                                未保存登录态 &middot; AI 使用浏览器登录网站后会自动保存
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
 
                             {/* Advanced Section Divider */}
                             <div className="border-t border-[var(--line)] pt-4">
@@ -3589,7 +3867,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                             {/* Extra Args */}
                             <div>
                                 <label className="block text-sm font-medium text-[var(--ink)] mb-1">额外参数</label>
-                                <p className="text-xs text-[var(--ink-muted)] mb-2">如 --proxy-server=... --caps=vision,pdf 等</p>
+                                <p className="text-xs text-[var(--ink-muted)] mb-2">如 --proxy-server=... 等（独立模式下 --caps= 会自动合并 storage）</p>
                                 <div className="space-y-2">
                                     {playwrightSettings.extraArgs.map((arg, idx) => (
                                         <div key={idx} className="flex items-center gap-2">
