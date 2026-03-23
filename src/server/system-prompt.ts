@@ -46,6 +46,10 @@ You will periodically receive heartbeat messages (a user message wrapped in tags
 When you receive one, follow its instructions.
 </myagents-heartbeat-instructions>`;
 
+const TMPL_BROWSER_STORAGE_STATE = `<myagents-browser-storage-instructions>
+当你使用浏览器工具完成任务后（特别是涉及用户登录操作后），请调用 browser_storage_state 工具将当前浏览器的登录状态保存到 ~/.myagents/browser-storage-state.json，以便后续对话复用登录态。
+</myagents-browser-storage-instructions>`;
+
 // ===== Variable replacement =====
 // Supports {{varName}} simple substitution + {{#if varName}}...{{else}}...{{/if}} conditional blocks
 
@@ -63,7 +67,12 @@ function renderTemplate(template: string, vars: Record<string, string>): string 
 
 // ===== Main entry =====
 
-export function buildSystemPromptAppend(scenario: InteractionScenario): string {
+export interface SystemPromptOptions {
+  /** Whether Playwright MCP with storage capability is enabled in this session */
+  playwrightStorageEnabled?: boolean;
+}
+
+export function buildSystemPromptAppend(scenario: InteractionScenario, options?: SystemPromptOptions): string {
   const parts: string[] = [];
 
   // L1: Base identity (always)
@@ -98,6 +107,11 @@ export function buildSystemPromptAppend(scenario: InteractionScenario): string {
 
   if (scenario.type === 'im' || scenario.type === 'agent-channel') {
     parts.push(TMPL_HEARTBEAT);
+  }
+
+  // L3: Browser storage state save instruction (when Playwright with --caps=storage is active)
+  if (options?.playwrightStorageEnabled) {
+    parts.push(TMPL_BROWSER_STORAGE_STATE);
   }
 
   return parts.join('\n\n');

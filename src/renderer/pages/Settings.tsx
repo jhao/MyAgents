@@ -230,11 +230,9 @@ const ModelTagList = React.memo(function ModelTagList({
     );
 });
 
-/** Default args for Playwright MCP: persistent browser profile to preserve login state */
+/** Default args for Playwright MCP: isolated mode for concurrent sessions + storage capability for login state persistence */
 async function getPlaywrightDefaultArgs(): Promise<string[]> {
-    const home = await homeDir();
-    const profilePath = await join(home, '.playwright-mcp-profile');
-    return [`--user-data-dir=${profilePath}`];
+    return ['--isolated', '--caps=storage'];
 }
 
 /** Playwright device presets shared between parser and UI */
@@ -582,9 +580,16 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
         browser: string;
         device: string;
         customDevice: string;
-        userDataDir: string;
         extraArgs: string[];
         newArg: string;
+    } | null>(null);
+
+    // Storage state info for Playwright browser settings UI
+    const [storageStateInfo, setStorageStateInfo] = useState<{
+        exists: boolean;
+        cookieCount: number;
+        domains: string[];
+        lastModified: string | null;
     } | null>(null);
 
     const [mcpFormMode, setMcpFormMode] = useState<'form' | 'json'>('form');
@@ -594,6 +599,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
     // OAuth state for MCP servers
     const [mcpOAuthStatus, setMcpOAuthStatus] = useState<Record<string, 'disconnected' | 'connecting' | 'connected' | 'expired' | 'error'>>({});
     const [mcpOAuthConnecting, setMcpOAuthConnecting] = useState<string | null>(null);
+    const [mcpOAuthProbe, setMcpOAuthProbe] = useState<Record<string, { required: boolean; supportsDynamicRegistration?: boolean; scopes?: string[] }>>({});
 
     const [mcpForm, setMcpForm] = useState<{
         id: string;
@@ -608,10 +614,11 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
         headers: Record<string, string>;
         newHeaderKey: string;
         newHeaderValue: string;
-        // OAuth fields
+        // OAuth fields (manual mode fallback)
         oauthClientId: string;
         oauthClientSecret: string;
         oauthScopes: string;
+        oauthCallbackPort: string;
         oauthAuthUrl: string;
         oauthTokenUrl: string;
     }>({
@@ -630,6 +637,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
         oauthClientId: '',
         oauthClientSecret: '',
         oauthScopes: '',
+        oauthCallbackPort: '',
         oauthAuthUrl: '',
         oauthTokenUrl: '',
     });
@@ -773,7 +781,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
         setMcpForm({
             id: '', name: '', type: 'stdio', command: '', args: [], newArg: '', url: '',
             env: {}, newEnvKey: '', headers: {}, newHeaderKey: '', newHeaderValue: '',
-            oauthClientId: '', oauthClientSecret: '', oauthScopes: '', oauthAuthUrl: '', oauthTokenUrl: '',
+            oauthClientId: '', oauthClientSecret: '', oauthScopes: '', oauthCallbackPort: '', oauthAuthUrl: '', oauthTokenUrl: '',
         });
         setMcpHeadersExpanded(false);
         setMcpOAuthExpanded(false);
@@ -827,8 +835,10 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
             let browser = '';
             let device = '';
             let customDevice = '';
-            let userDataDir = '';
             const extraArgs: string[] = [];
+
+            // Internally managed args that are not user-editable
+            const managedPrefixes = ['--isolated', '--caps=', '--storage-state=', '--user-data-dir='];
 
             for (const arg of rawArgs) {
                 if (arg === '--headless') {
@@ -843,14 +853,38 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                         device = '__custom__';
                         customDevice = val;
                     }
-                } else if (arg.startsWith('--user-data-dir=')) {
-                    userDataDir = arg.slice('--user-data-dir='.length);
+                } else if (managedPrefixes.some(p => arg.startsWith(p))) {
+                    // Skip internally managed args — they are always injected automatically
                 } else {
                     extraArgs.push(arg);
                 }
             }
 
-            setPlaywrightSettings({ headless, browser, device, customDevice, userDataDir, extraArgs, newArg: '' });
+            // Load storage state info for the status display
+            try {
+                const home = await homeDir();
+                const ssPath = await join(home, '.myagents', 'browser-storage-state.json');
+                const { exists: fileExists, readTextFile, stat: fsStat } = await import('@tauri-apps/plugin-fs');
+                if (await fileExists(ssPath)) {
+                    const content = await readTextFile(ssPath);
+                    const parsed = JSON.parse(content);
+                    const cookies = parsed.cookies ?? [];
+                    const domains = [...new Set(cookies.map((c: { domain: string }) => c.domain.replace(/^\./, '')))].sort() as string[];
+                    const fileStat = await fsStat(ssPath).catch(() => null);
+                    setStorageStateInfo({
+                        exists: true,
+                        cookieCount: cookies.length,
+                        domains,
+                        lastModified: fileStat?.mtime ? new Date(fileStat.mtime).toLocaleString() : null,
+                    });
+                } else {
+                    setStorageStateInfo({ exists: false, cookieCount: 0, domains: [], lastModified: null });
+                }
+            } catch {
+                setStorageStateInfo({ exists: false, cookieCount: 0, domains: [], lastModified: null });
+            }
+
+            setPlaywrightSettings({ headless, browser, device, customDevice, extraArgs, newArg: '' });
             return;
         }
 
@@ -922,10 +956,10 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
     const handleSavePlaywright = async () => {
         if (!playwrightSettings) return;
         try {
-            const args: string[] = [];
-            if (playwrightSettings.userDataDir.trim()) {
-                args.push(`--user-data-dir=${playwrightSettings.userDataDir.trim()}`);
-            }
+            // --isolated and --caps=storage are always included:
+            // - isolated: each session gets its own browser (no SingletonLock conflict)
+            // - caps=storage: enables browser_storage_state tool for login state persistence
+            const args: string[] = ['--isolated', '--caps=storage'];
             if (playwrightSettings.headless) {
                 args.push('--headless');
             }
@@ -1060,30 +1094,50 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
         }
     };
 
-    // OAuth: start OAuth flow for an MCP server
-    const handleMcpOAuthConnect = async (serverId: string, serverUrl: string) => {
-        if (!mcpForm.oauthClientId) {
+    // OAuth: probe MCP server for OAuth requirements
+    const handleMcpOAuthProbe = async (serverId: string, mcpUrl: string) => {
+        if (!mcpUrl) return;
+        try {
+            const result = await apiPostJson<{ success: boolean; required?: boolean; supportsDynamicRegistration?: boolean; scopes?: string[] }>('/api/mcp/oauth/discover', {
+                serverId, mcpUrl,
+            });
+            if (result.success && result.required) {
+                setMcpOAuthProbe(prev => ({ ...prev, [serverId]: { required: true, supportsDynamicRegistration: result.supportsDynamicRegistration, scopes: result.scopes } }));
+            } else {
+                setMcpOAuthProbe(prev => ({ ...prev, [serverId]: { required: false } }));
+            }
+        } catch { /* ignore probe errors */ }
+    };
+
+    // OAuth: start OAuth flow (auto mode = no clientId, manual mode = with clientId)
+    const handleMcpOAuthConnect = async (serverId: string, serverUrl: string, manual?: boolean) => {
+        if (manual && !mcpForm.oauthClientId) {
             toast.error('请填写 Client ID');
             return;
         }
         setMcpOAuthConnecting(serverId);
         try {
-            const result = await apiPostJson<{ success: boolean; authUrl?: string; error?: string }>('/api/mcp/oauth/start', {
+            const payload: Record<string, unknown> = {
                 serverId,
                 serverUrl: serverUrl || mcpForm.url,
-                clientId: mcpForm.oauthClientId,
-                clientSecret: mcpForm.oauthClientSecret || undefined,
-                scopes: mcpForm.oauthScopes ? mcpForm.oauthScopes.split(/[\s,]+/).filter(Boolean) : undefined,
-                authorizationUrl: mcpForm.oauthAuthUrl || undefined,
-                tokenUrl: mcpForm.oauthTokenUrl || undefined,
-            });
+            };
+            // Manual mode: include user-provided credentials
+            if (manual && mcpForm.oauthClientId) {
+                payload.clientId = mcpForm.oauthClientId;
+                payload.clientSecret = mcpForm.oauthClientSecret || undefined;
+                payload.scopes = mcpForm.oauthScopes ? mcpForm.oauthScopes.split(/[\s,]+/).filter(Boolean) : undefined;
+                payload.callbackPort = mcpForm.oauthCallbackPort ? parseInt(mcpForm.oauthCallbackPort, 10) : undefined;
+                payload.authorizationUrl = mcpForm.oauthAuthUrl || undefined;
+                payload.tokenUrl = mcpForm.oauthTokenUrl || undefined;
+            }
+
+            const result = await apiPostJson<{ success: boolean; authUrl?: string; error?: string }>('/api/mcp/oauth/start', payload);
             if (result.success && result.authUrl) {
-                // Open browser for authorization
                 const { openExternal } = await import('@/utils/openExternal');
                 await openExternal(result.authUrl);
                 toast.success('已在浏览器中打开授权页面，请完成授权');
                 setMcpOAuthStatus(prev => ({ ...prev, [serverId]: 'connecting' }));
-                // Poll for token status — use functional state update to avoid stale closure
+                // Poll for token status
                 const pollInterval = setInterval(async () => {
                     try {
                         const status = await apiGetJson<{ success: boolean; status: string }>(`/api/mcp/oauth/status/${encodeURIComponent(serverId)}`);
@@ -1093,7 +1147,6 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                             setMcpOAuthConnecting(null);
                             toast.success('OAuth 授权成功');
                         } else if (status.success && status.status === 'disconnected') {
-                            // Flow was cancelled or failed — check via functional update
                             setMcpOAuthConnecting(prev => {
                                 if (prev === serverId) {
                                     clearInterval(pollInterval);
@@ -1105,7 +1158,6 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                         }
                     } catch { /* ignore poll errors */ }
                 }, 2000);
-                // Stop polling after 5 minutes
                 setTimeout(() => {
                     clearInterval(pollInterval);
                     setMcpOAuthConnecting(null);
@@ -1156,6 +1208,7 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
             oauthClientId: '',
             oauthClientSecret: '',
             oauthScopes: '',
+            oauthCallbackPort: '',
             oauthAuthUrl: '',
             oauthTokenUrl: '',
         });
@@ -3479,17 +3532,52 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                 )}
                             </div>
 
-                            {/* User Data Dir */}
+                            {/* Storage State Info */}
                             <div>
-                                <label className="block text-sm font-medium text-[var(--ink)] mb-1">浏览器数据目录</label>
-                                <input
-                                    type="text"
-                                    value={playwrightSettings.userDataDir}
-                                    onChange={e => setPlaywrightSettings(prev => prev ? { ...prev, userDataDir: e.target.value } : null)}
-                                    placeholder="~/.playwright-mcp-profile"
-                                    className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper)] px-3 py-2 text-sm text-[var(--ink)] placeholder-[var(--ink-muted)]/50 outline-none focus:border-[var(--accent)] font-mono"
-                                />
-                                <p className="mt-1 text-xs text-[var(--ink-muted)]">持久化浏览器数据（登录态、Cookie 等）。留空则每次使用临时目录</p>
+                                <label className="block text-sm font-medium text-[var(--ink)] mb-1">登录态管理</label>
+                                <p className="text-xs text-[var(--ink-muted)] mb-2">
+                                    每个对话使用独立浏览器实例（支持多对话并发），登录状态通过 Storage State 跨对话共享
+                                </p>
+                                {storageStateInfo && (
+                                    <div className="rounded-lg border border-[var(--line)] bg-[var(--paper-inset)] px-3 py-2.5">
+                                        {storageStateInfo.exists ? (
+                                            <div className="flex items-center justify-between">
+                                                <div className="min-w-0">
+                                                    <div className="text-xs text-[var(--ink)]">
+                                                        <span className="text-[var(--success)]">&#10003;</span>
+                                                        {' '}已保存 &middot; {storageStateInfo.cookieCount} 个 cookies &middot; {storageStateInfo.domains.length} 个站点
+                                                    </div>
+                                                    {storageStateInfo.lastModified && (
+                                                        <div className="text-xs text-[var(--ink-muted)] mt-0.5">
+                                                            上次更新: {storageStateInfo.lastModified}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <button
+                                                    onClick={async () => {
+                                                        try {
+                                                            const home = await homeDir();
+                                                            const ssPath = await join(home, '.myagents', 'browser-storage-state.json');
+                                                            const { remove: fsRemove } = await import('@tauri-apps/plugin-fs');
+                                                            await fsRemove(ssPath);
+                                                            setStorageStateInfo({ exists: false, cookieCount: 0, domains: [], lastModified: null });
+                                                            toast.success('登录态已清除');
+                                                        } catch {
+                                                            toast.error('清除失败');
+                                                        }
+                                                    }}
+                                                    className="shrink-0 rounded-md px-2 py-1 text-xs text-[var(--error)] hover:bg-[var(--error-bg)]"
+                                                >
+                                                    清除登录态
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <div className="text-xs text-[var(--ink-muted)]">
+                                                未保存登录态 &middot; AI 使用浏览器登录网站后会自动保存
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
 
                             {/* Advanced Section Divider */}
@@ -4194,100 +4282,172 @@ export default function Settings({ initialSection, initialMcpId, onSectionChange
                                             )}
                                         </div>
 
-                                        {/* OAuth 2.0 Section — collapsible */}
+                                        {/* OAuth 2.0 Section — auto-discover + one-click authorize */}
                                         <div className="rounded-xl border border-[var(--line)] bg-[var(--paper-inset)]">
-                                            <button
-                                                type="button"
-                                                onClick={() => setMcpOAuthExpanded(v => !v)}
-                                                className="flex w-full items-center justify-between p-4 text-sm font-medium text-[var(--ink)]"
-                                            >
-                                                <span className="flex items-center gap-2">
-                                                    <Link className="h-4 w-4" /> OAuth 2.0 授权
-                                                </span>
-                                                <span className="flex items-center gap-2">
-                                                    {mcpOAuthStatus[mcpForm.id] === 'connected' && (
-                                                        <span className="flex items-center gap-1 rounded-full bg-[var(--success)]/10 px-2 py-0.5 text-xs text-[var(--success)]">
-                                                            <Check className="h-3 w-3" /> 已连接
-                                                        </span>
-                                                    )}
-                                                    {mcpOAuthStatus[mcpForm.id] === 'expired' && (
-                                                        <span className="flex items-center gap-1 rounded-full bg-[var(--warning)]/10 px-2 py-0.5 text-xs text-[var(--warning)]">
-                                                            <AlertCircle className="h-3 w-3" /> 已过期
-                                                        </span>
-                                                    )}
-                                                    <ChevronDown className={`h-4 w-4 text-[var(--ink-muted)] transition-transform ${mcpOAuthExpanded ? '' : '-rotate-90'}`} />
-                                                </span>
-                                            </button>
-                                            {mcpOAuthExpanded && (
-                                            <div className="border-t border-[var(--line)] px-4 pb-4 pt-3">
-                                            <p className="mb-3 text-xs text-[var(--ink-muted)]">
-                                                部分 MCP 服务器需要 OAuth 2.0 授权（如 Google、GitHub 等）。填写 Client ID 后点击连接即可自动完成授权流程。
-                                            </p>
-
-                                            <div className="space-y-2">
-                                                <input
-                                                    type="text"
-                                                    value={mcpForm.oauthClientId}
-                                                    onChange={(e) => setMcpForm(p => ({ ...p, oauthClientId: e.target.value }))}
-                                                    placeholder="Client ID *"
-                                                    className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2 text-sm font-mono transition-colors focus:border-[var(--focus-border)] focus:outline-none"
-                                                />
-                                                <input
-                                                    type="password"
-                                                    value={mcpForm.oauthClientSecret}
-                                                    onChange={(e) => setMcpForm(p => ({ ...p, oauthClientSecret: e.target.value }))}
-                                                    placeholder="Client Secret（可选）"
-                                                    className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2 text-sm font-mono transition-colors focus:border-[var(--focus-border)] focus:outline-none"
-                                                />
-                                                <input
-                                                    type="text"
-                                                    value={mcpForm.oauthScopes}
-                                                    onChange={(e) => setMcpForm(p => ({ ...p, oauthScopes: e.target.value }))}
-                                                    placeholder="Scopes（空格分隔，如 read write）"
-                                                    className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2 text-sm font-mono transition-colors focus:border-[var(--focus-border)] focus:outline-none"
-                                                />
-                                                <div className="grid grid-cols-2 gap-2">
-                                                    <input
-                                                        type="url"
-                                                        value={mcpForm.oauthAuthUrl}
-                                                        onChange={(e) => setMcpForm(p => ({ ...p, oauthAuthUrl: e.target.value }))}
-                                                        placeholder="Authorization URL（留空自动发现）"
-                                                        className="rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2 text-sm font-mono transition-colors focus:border-[var(--focus-border)] focus:outline-none"
-                                                    />
-                                                    <input
-                                                        type="url"
-                                                        value={mcpForm.oauthTokenUrl}
-                                                        onChange={(e) => setMcpForm(p => ({ ...p, oauthTokenUrl: e.target.value }))}
-                                                        placeholder="Token URL（留空自动发现）"
-                                                        className="rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2 text-sm font-mono transition-colors focus:border-[var(--focus-border)] focus:outline-none"
-                                                    />
-                                                </div>
-                                            </div>
-
-                                            <div className="mt-3 flex items-center gap-2">
-                                                {mcpOAuthStatus[mcpForm.id] === 'connected' ? (
-                                                    <button
-                                                        onClick={() => handleMcpOAuthDisconnect(mcpForm.id)}
-                                                        className="flex items-center gap-1.5 rounded-lg border border-[var(--error)] px-3 py-2 text-sm font-medium text-[var(--error)] transition-colors hover:bg-[var(--error-bg)]"
-                                                    >
-                                                        <Unlink className="h-4 w-4" /> 断开连接
-                                                    </button>
-                                                ) : (
-                                                    <button
-                                                        onClick={() => handleMcpOAuthConnect(mcpForm.id, mcpForm.url)}
-                                                        disabled={!mcpForm.oauthClientId || mcpOAuthConnecting === mcpForm.id}
-                                                        className="flex items-center gap-1.5 rounded-lg border border-[var(--accent)] px-3 py-2 text-sm font-medium text-[var(--accent)] transition-colors hover:bg-[var(--accent)]/10 disabled:opacity-50"
-                                                    >
-                                                        {mcpOAuthConnecting === mcpForm.id ? (
-                                                            <><Loader2 className="h-4 w-4 animate-spin" /> 等待授权...</>
-                                                        ) : (
-                                                            <><Link className="h-4 w-4" /> 连接</>
+                                            <div className="p-4">
+                                                <div className="flex items-center justify-between">
+                                                    <span className="flex items-center gap-2 text-sm font-medium text-[var(--ink)]">
+                                                        <Link className="h-4 w-4" /> OAuth 2.0 授权
+                                                    </span>
+                                                    <span className="flex items-center gap-2">
+                                                        {mcpOAuthStatus[mcpForm.id] === 'connected' && (
+                                                            <span className="flex items-center gap-1 rounded-full bg-[var(--success)]/10 px-2 py-0.5 text-xs text-[var(--success)]">
+                                                                <Check className="h-3 w-3" /> 已授权
+                                                            </span>
                                                         )}
-                                                    </button>
+                                                        {mcpOAuthStatus[mcpForm.id] === 'expired' && (
+                                                            <span className="flex items-center gap-1 rounded-full bg-[var(--warning)]/10 px-2 py-0.5 text-xs text-[var(--warning)]">
+                                                                <AlertCircle className="h-3 w-3" /> 已过期
+                                                            </span>
+                                                        )}
+                                                    </span>
+                                                </div>
+
+                                                {/* Connected state */}
+                                                {mcpOAuthStatus[mcpForm.id] === 'connected' && (
+                                                    <div className="mt-3">
+                                                        <button
+                                                            onClick={() => handleMcpOAuthDisconnect(mcpForm.id)}
+                                                            className="flex items-center gap-1.5 rounded-lg border border-[var(--error)] px-3 py-2 text-sm font-medium text-[var(--error)] transition-colors hover:bg-[var(--error-bg)]"
+                                                        >
+                                                            <Unlink className="h-4 w-4" /> 撤销授权
+                                                        </button>
+                                                    </div>
+                                                )}
+
+                                                {/* Expired state */}
+                                                {mcpOAuthStatus[mcpForm.id] === 'expired' && (
+                                                    <div className="mt-3">
+                                                        <button
+                                                            onClick={() => handleMcpOAuthConnect(mcpForm.id, mcpForm.url)}
+                                                            disabled={mcpOAuthConnecting === mcpForm.id}
+                                                            className="flex items-center gap-1.5 rounded-lg border border-[var(--warning)] px-3 py-2 text-sm font-medium text-[var(--warning)] transition-colors hover:bg-[var(--warning)]/10 disabled:opacity-50"
+                                                        >
+                                                            {mcpOAuthConnecting === mcpForm.id ? (
+                                                                <><Loader2 className="h-4 w-4 animate-spin" /> 等待授权...</>
+                                                            ) : (
+                                                                <><Link className="h-4 w-4" /> 重新授权</>
+                                                            )}
+                                                        </button>
+                                                    </div>
+                                                )}
+
+                                                {/* Not connected — show authorize flow */}
+                                                {mcpOAuthStatus[mcpForm.id] !== 'connected' && mcpOAuthStatus[mcpForm.id] !== 'expired' && (
+                                                    <div className="mt-3 space-y-3">
+                                                        {/* Auto mode: one-click authorize (when probe detected dynamic registration) */}
+                                                        {(!mcpOAuthProbe[mcpForm.id] || mcpOAuthProbe[mcpForm.id]?.supportsDynamicRegistration !== false) && (
+                                                            <div className="flex items-center gap-3">
+                                                                <button
+                                                                    onClick={() => {
+                                                                        if (!mcpOAuthProbe[mcpForm.id]) {
+                                                                            handleMcpOAuthProbe(mcpForm.id, mcpForm.url).then(() => {
+                                                                                handleMcpOAuthConnect(mcpForm.id, mcpForm.url);
+                                                                            });
+                                                                        } else {
+                                                                            handleMcpOAuthConnect(mcpForm.id, mcpForm.url);
+                                                                        }
+                                                                    }}
+                                                                    disabled={mcpOAuthConnecting === mcpForm.id || !mcpForm.url}
+                                                                    className="flex items-center gap-1.5 rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50"
+                                                                >
+                                                                    {mcpOAuthConnecting === mcpForm.id ? (
+                                                                        <><Loader2 className="h-4 w-4 animate-spin" /> 等待授权...</>
+                                                                    ) : (
+                                                                        <><Link className="h-4 w-4" /> 授权登录</>
+                                                                    )}
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setMcpOAuthExpanded(v => !v)}
+                                                                    className="text-xs text-[var(--ink-muted)] hover:text-[var(--ink)] transition-colors"
+                                                                >
+                                                                    {mcpOAuthExpanded ? '收起高级选项' : '手动配置 (高级)'}
+                                                                </button>
+                                                            </div>
+                                                        )}
+
+                                                        {/* Manual fallback note (when probe says no dynamic registration) */}
+                                                        {mcpOAuthProbe[mcpForm.id]?.supportsDynamicRegistration === false && !mcpOAuthExpanded && (
+                                                            <div>
+                                                                <p className="mb-2 text-xs text-[var(--ink-muted)]">
+                                                                    该服务不支持自动注册，请手动配置 OAuth 凭证。
+                                                                </p>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setMcpOAuthExpanded(true)}
+                                                                    className="text-xs text-[var(--accent)] hover:underline"
+                                                                >
+                                                                    展开手动配置
+                                                                </button>
+                                                            </div>
+                                                        )}
+
+                                                        {/* Manual config form (advanced) */}
+                                                        {mcpOAuthExpanded && (
+                                                            <div className="border-t border-[var(--line)] pt-3 space-y-2">
+                                                                <input
+                                                                    type="text"
+                                                                    value={mcpForm.oauthClientId}
+                                                                    onChange={(e) => setMcpForm(p => ({ ...p, oauthClientId: e.target.value }))}
+                                                                    placeholder="Client ID *"
+                                                                    className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2 text-sm font-mono transition-colors focus:border-[var(--focus-border)] focus:outline-none"
+                                                                />
+                                                                <input
+                                                                    type="password"
+                                                                    value={mcpForm.oauthClientSecret}
+                                                                    onChange={(e) => setMcpForm(p => ({ ...p, oauthClientSecret: e.target.value }))}
+                                                                    placeholder="Client Secret（可选）"
+                                                                    className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2 text-sm font-mono transition-colors focus:border-[var(--focus-border)] focus:outline-none"
+                                                                />
+                                                                <div className="grid grid-cols-2 gap-2">
+                                                                    <input
+                                                                        type="text"
+                                                                        value={mcpForm.oauthScopes}
+                                                                        onChange={(e) => setMcpForm(p => ({ ...p, oauthScopes: e.target.value }))}
+                                                                        placeholder="Scopes（空格分隔）"
+                                                                        className="rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2 text-sm font-mono transition-colors focus:border-[var(--focus-border)] focus:outline-none"
+                                                                    />
+                                                                    <input
+                                                                        type="text"
+                                                                        value={mcpForm.oauthCallbackPort}
+                                                                        onChange={(e) => setMcpForm(p => ({ ...p, oauthCallbackPort: e.target.value.replace(/\D/g, '') }))}
+                                                                        placeholder="回调端口（留空随机）"
+                                                                        className="rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2 text-sm font-mono transition-colors focus:border-[var(--focus-border)] focus:outline-none"
+                                                                    />
+                                                                </div>
+                                                                <div className="grid grid-cols-2 gap-2">
+                                                                    <input
+                                                                        type="url"
+                                                                        value={mcpForm.oauthAuthUrl}
+                                                                        onChange={(e) => setMcpForm(p => ({ ...p, oauthAuthUrl: e.target.value }))}
+                                                                        placeholder="Authorization URL（留空自动发现）"
+                                                                        className="rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2 text-sm font-mono transition-colors focus:border-[var(--focus-border)] focus:outline-none"
+                                                                    />
+                                                                    <input
+                                                                        type="url"
+                                                                        value={mcpForm.oauthTokenUrl}
+                                                                        onChange={(e) => setMcpForm(p => ({ ...p, oauthTokenUrl: e.target.value }))}
+                                                                        placeholder="Token URL（留空自动发现）"
+                                                                        className="rounded-lg border border-[var(--line)] bg-[var(--paper-elevated)] px-3 py-2 text-sm font-mono transition-colors focus:border-[var(--focus-border)] focus:outline-none"
+                                                                    />
+                                                                </div>
+                                                                <button
+                                                                    onClick={() => handleMcpOAuthConnect(mcpForm.id, mcpForm.url, true)}
+                                                                    disabled={!mcpForm.oauthClientId || mcpOAuthConnecting === mcpForm.id}
+                                                                    className="flex items-center gap-1.5 rounded-lg border border-[var(--accent)] px-3 py-2 text-sm font-medium text-[var(--accent)] transition-colors hover:bg-[var(--accent)]/10 disabled:opacity-50"
+                                                                >
+                                                                    {mcpOAuthConnecting === mcpForm.id ? (
+                                                                        <><Loader2 className="h-4 w-4 animate-spin" /> 等待授权...</>
+                                                                    ) : (
+                                                                        <><Link className="h-4 w-4" /> 手动连接</>
+                                                                    )}
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 )}
                                             </div>
-                                        </div>
-                                        )}
                                         </div>
                                     </>
                                 )}
