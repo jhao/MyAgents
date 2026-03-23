@@ -50,7 +50,10 @@ function buildHistoryContextFromMap(params) {
 }
 
 function buildPendingHistoryContextFromMap(params) {
-  return params.currentMessage;
+  // Same as buildHistoryContextFromMap — pending entries are stored in the same map
+  // by recordPendingHistoryEntry. Returning only currentMessage would drop
+  // "messages since your last reply" context in group chats.
+  return buildHistoryContextFromMap(params);
 }
 
 function clearHistoryEntries(params) {
@@ -68,7 +71,11 @@ function recordPendingHistoryEntry(params) {
   const map = params.historyMap ?? params.map;
   if (!key || !map) return [];
   const entries = map.get(key) ?? [];
-  const entry = { sender: params.sender, body: params.body, timestamp: Date.now() };
+  // openclaw-lark passes the full history object as params.entry (with sender, body, etc.)
+  // Fall back to params.sender/params.body for callers that pass flat fields.
+  const entry = params.entry
+    ? { ...params.entry, timestamp: params.entry.timestamp ?? Date.now() }
+    : { sender: params.sender, body: params.body, timestamp: Date.now() };
   entries.push(entry);
   const limit = params.limit ?? DEFAULT_GROUP_HISTORY_LIMIT;
   while (entries.length > limit) entries.shift();
