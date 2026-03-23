@@ -4052,6 +4052,211 @@ pub fn schedule_agent_auto_start<R: Runtime>(app_handle: AppHandle<R>) {
 }
 
 
+/// Monitor agent channels and auto-restart dead ones (Error/Stopped).
+/// Periodically scans all agent channels, restarts dead ones using the same
+/// dedup + create_bot_instance pattern as schedule_agent_auto_start.
+pub async fn monitor_agent_channels(
+    app_handle: AppHandle,
+    shutdown: Arc<std::sync::atomic::AtomicBool>,
+) {
+    use std::sync::atomic::Ordering::Relaxed;
+
+    const CHECK_INTERVAL_SECS: u64 = 30;
+    const MAX_CONSECUTIVE_FAILURES: u32 = 5;
+    const BACKOFF_BASE_SECS: u64 = 30;
+    const MAX_BACKOFF_SECS: u64 = 300;
+
+    // Initial delay: let auto-start finish first
+    tokio::time::sleep(Duration::from_secs(15)).await;
+    ulog_info!("[agent-monitor] Agent channel health monitor started");
+
+    // Track per-channel: consecutive failures + next retry timestamp
+    let mut failure_counts: HashMap<String, u32> = HashMap::new();
+    let mut next_retry: HashMap<String, tokio::time::Instant> = HashMap::new();
+
+    loop {
+        tokio::time::sleep(Duration::from_secs(CHECK_INTERVAL_SECS)).await;
+        if shutdown.load(Relaxed) {
+            break;
+        }
+
+        use tauri::Manager;
+        let agent_state = app_handle.state::<ManagedAgents>();
+        let sidecar_manager = app_handle.state::<ManagedSidecarManager>();
+
+        // Phase 1: Find dead channels — snapshot health refs under lock, check outside
+        let channel_health_refs: Vec<(String, String, Arc<crate::im::health::HealthManager>)> = {
+            let agents_guard = agent_state.lock().await;
+            let mut refs = Vec::new();
+            for (agent_id, agent) in agents_guard.iter() {
+                for (channel_id, channel) in agent.channels.iter() {
+                    refs.push((
+                        agent_id.clone(),
+                        channel_id.clone(),
+                        Arc::clone(&channel.bot_instance.health),
+                    ));
+                }
+            }
+            refs
+            // lock dropped here
+        };
+
+        let mut dead_channels: Vec<(String, String)> = Vec::new();
+        for (agent_id, channel_id, health) in &channel_health_refs {
+            let state = health.get_state().await;
+            if matches!(state.status, types::ImStatus::Error | types::ImStatus::Stopped) {
+                dead_channels.push((agent_id.clone(), channel_id.clone()));
+            }
+        }
+
+        if dead_channels.is_empty() {
+            failure_counts.clear();
+            next_retry.clear();
+            continue;
+        }
+
+        // Phase 2: Read configs from disk for restart
+        let agent_configs = read_agent_configs_from_disk();
+        if agent_configs.is_empty() {
+            continue;
+        }
+
+        let now = tokio::time::Instant::now();
+
+        for (agent_id, channel_id) in &dead_channels {
+            if shutdown.load(Relaxed) {
+                break;
+            }
+
+            let count = failure_counts.entry(channel_id.clone()).or_insert(0);
+            if *count >= MAX_CONSECUTIVE_FAILURES {
+                continue;
+            }
+
+            // Skip if backoff hasn't elapsed yet (non-blocking)
+            if let Some(&retry_at) = next_retry.get(channel_id) {
+                if now < retry_at {
+                    continue;
+                }
+            }
+
+            // Find matching config from disk
+            let agent_cfg = match agent_configs.iter().find(|a| a.id == *agent_id) {
+                Some(c) => c,
+                None => continue,
+            };
+            if !agent_cfg.enabled {
+                continue;
+            }
+            let channel_cfg = match agent_cfg.channels.iter().find(|c| c.id == *channel_id) {
+                Some(c) => c,
+                None => continue,
+            };
+            if !channel_cfg.enabled {
+                continue;
+            }
+
+            let mut im_config = channel_cfg.to_im_config(agent_cfg);
+            im_config.heartbeat_config = Some(types::HeartbeatConfig {
+                enabled: false,
+                ..types::HeartbeatConfig::default()
+            });
+
+            // Remove dead channel — shut down old instance properly first
+            let old_instance: Option<ImBotInstance> = {
+                let mut agents_guard = agent_state.lock().await;
+                if let Some(agent) = agents_guard.get_mut(agent_id) {
+                    agent.channels.remove(channel_id).map(|ch| ch.bot_instance)
+                } else {
+                    None
+                }
+            };
+            if let Some(instance) = old_instance {
+                let _ = shutdown_bot_instance(instance, &sidecar_manager, channel_id).await;
+            }
+
+            ulog_info!(
+                "[agent-monitor] Auto-restarting channel {} of agent {}",
+                channel_id,
+                agent_id
+            );
+
+            match create_bot_instance(
+                &app_handle,
+                &sidecar_manager,
+                channel_id.clone(),
+                im_config,
+                Some(agent_id.clone()),
+            )
+            .await
+            {
+                Ok((bot_instance, _status)) => {
+                    failure_counts.remove(channel_id);
+                    next_retry.remove(channel_id);
+
+                    // Re-insert into agent state
+                    let mut agents_guard = agent_state.lock().await;
+                    if let Some(agent) = agents_guard.get_mut(agent_id) {
+                        let link = AgentChannelLink {
+                            channel_id: channel_id.clone(),
+                            agent_id: agent_id.clone(),
+                            last_active_channel: Arc::clone(&agent.last_active_channel),
+                        };
+                        *bot_instance.agent_link.write().await = Some(link);
+
+                        agent.channels.insert(
+                            channel_id.clone(),
+                            ChannelInstance {
+                                channel_id: channel_id.clone(),
+                                bot_instance,
+                            },
+                        );
+                    }
+                    drop(agents_guard);
+
+                    ulog_info!(
+                        "[agent-monitor] Channel {} restarted successfully",
+                        channel_id
+                    );
+                    let _ = app_handle.emit(
+                        "agent:status-changed",
+                        serde_json::json!({
+                            "agentId": agent_id,
+                            "event": "channel_auto_restarted",
+                            "channelId": channel_id,
+                        }),
+                    );
+                }
+                Err(e) => {
+                    *count += 1;
+                    // Schedule next retry with exponential backoff
+                    let backoff = std::cmp::min(
+                        BACKOFF_BASE_SECS.saturating_mul(2u64.saturating_pow(*count - 1)),
+                        MAX_BACKOFF_SECS,
+                    );
+                    next_retry.insert(
+                        channel_id.clone(),
+                        now + Duration::from_secs(backoff),
+                    );
+                    ulog_error!(
+                        "[agent-monitor] Failed to restart channel {} (attempt {}, next retry in {}s): {}",
+                        channel_id,
+                        count,
+                        backoff,
+                        e
+                    );
+                }
+            }
+        }
+
+        // Clean up stale failure_counts for channels no longer tracked
+        let live_channel_ids: std::collections::HashSet<String> =
+            dead_channels.iter().map(|(_, cid)| cid.clone()).collect();
+        failure_counts.retain(|cid, _| live_channel_ids.contains(cid));
+        next_retry.retain(|cid, _| live_channel_ids.contains(cid));
+    }
+}
+
 // ===== Tauri Commands =====
 
 #[deprecated(note = "Use cmd_start_agent_channel instead")]
