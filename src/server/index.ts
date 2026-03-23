@@ -34,6 +34,10 @@ import {
   handleAgentList, handleAgentEnable, handleAgentDisable, handleAgentSet,
   handleAgentChannelList, handleAgentChannelAdd, handleAgentChannelRemove,
   handleConfigGet, handleConfigSet, handleStatus, handleReload, handleHelp,
+  handleVersion,
+  handleCronList, handleCronCreate, handleCronStop, handleCronStart, handleCronDelete, handleCronUpdate, handleCronRuns, handleCronStatus,
+  handlePluginList, handlePluginInstall, handlePluginUninstall,
+  handleAgentRuntimeStatus,
 } from './admin-api';
 import { setImMediaContext } from './tools/im-media-tool';
 import { setImBridgeToolsContext } from './tools/im-bridge-tools';
@@ -1026,6 +1030,24 @@ async function routeAdminApi(pathname: string, payload: Record<string, unknown>)
   if (route === 'agent/channel/add') return handleAgentChannelAdd(payload as Parameters<typeof handleAgentChannelAdd>[0]);
   if (route === 'agent/channel/remove') return handleAgentChannelRemove(payload as Parameters<typeof handleAgentChannelRemove>[0]);
 
+  // Agent runtime status
+  if (route === 'agent/runtime-status') return await handleAgentRuntimeStatus();
+
+  // Cron task commands
+  if (route === 'cron/list') return await handleCronList(payload as Parameters<typeof handleCronList>[0]);
+  if (route === 'cron/add') return await handleCronCreate(payload);
+  if (route === 'cron/start') return await handleCronStart(payload as Parameters<typeof handleCronStart>[0]);
+  if (route === 'cron/stop') return await handleCronStop(payload as Parameters<typeof handleCronStop>[0]);
+  if (route === 'cron/remove') return await handleCronDelete(payload as Parameters<typeof handleCronDelete>[0]);
+  if (route === 'cron/update') return await handleCronUpdate(payload as Parameters<typeof handleCronUpdate>[0]);
+  if (route === 'cron/runs') return await handleCronRuns(payload as Parameters<typeof handleCronRuns>[0]);
+  if (route === 'cron/status') return await handleCronStatus(payload as Parameters<typeof handleCronStatus>[0]);
+
+  // Plugin commands
+  if (route === 'plugin/list') return await handlePluginList();
+  if (route === 'plugin/install') return await handlePluginInstall(payload as Parameters<typeof handlePluginInstall>[0]);
+  if (route === 'plugin/remove') return await handlePluginUninstall(payload as Parameters<typeof handlePluginUninstall>[0]);
+
   // Config commands
   if (route === 'config/get') return handleConfigGet(payload as Parameters<typeof handleConfigGet>[0]);
   if (route === 'config/set') return handleConfigSet(payload as Parameters<typeof handleConfigSet>[0]);
@@ -1033,6 +1055,7 @@ async function routeAdminApi(pathname: string, payload: Record<string, unknown>)
   // System commands
   if (route === 'status') return handleStatus();
   if (route === 'reload') return handleReload(payload.workspacePath as string | undefined);
+  if (route === 'version') return handleVersion();
   if (route === 'help') return handleHelp(payload as Parameters<typeof handleHelp>[0]);
 
   return { success: false, error: `Unknown admin route: ${pathname}` };

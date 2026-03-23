@@ -3171,12 +3171,7 @@ async fn finalize_block<A: adapter::ImStreamAdapter>(
         if let Some(ref did) = draft_id {
             if text.len() <= max_len {
                 if let Err(e) = adapter.finalize_message(chat_id, did, text).await {
-                    ulog_warn!("[im] Finalize edit failed: {}, delete+resend", e);
-                    // Delete the original message to avoid duplication (platforms
-                    // that don't support edit likely sent a real message, not a draft)
-                    if let Err(e2) = adapter.delete_message(chat_id, did).await {
-                        ulog_warn!("[im-stream] delete_message (edit fallback) failed: {}", e2);
-                    }
+                    ulog_warn!("[im] Finalize edit failed: {}, sending as new message", e);
                     if let Err(e2) = adapter.send_message(chat_id, text).await {
                         ulog_warn!("[im-stream] send_message (finalize fallback) failed: {}", e2);
                     }

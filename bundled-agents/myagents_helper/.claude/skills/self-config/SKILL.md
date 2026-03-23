@@ -1,17 +1,19 @@
 ---
 name: self-config
 description: >-
-  通过内置 myagents CLI 直接帮用户完成应用配置与验证。覆盖：MCP 工具接入/启禁用/环境变量/连通性测试，
+  通过内置 myagents CLI 直接帮用户完成应用配置与管理。覆盖：MCP 工具接入/启禁用/环境变量/连通性测试，
   模型服务商添加/删除/设置 API Key/验证连通性/切换默认模型，Agent Channel（IM Bot）管理，
-  通用配置读写，查看运行状态，热加载配置。当用户说"帮我配一下"、"接入这个工具"、"添加这个模型"、
-  "测试下能不能用"、"看看现在配了什么"、"设置 xx"等配置或诊断类请求时触发。
+  定时任务（cron）查看/创建/启停/删除/执行记录，OpenClaw 社区插件安装/卸载/列表，Agent 运行时状态查看，
+  通用配置读写，查看运行状态/版本，热加载配置。当用户说"帮我配一下"、"接入这个工具"、"添加这个模型"、
+  "测试下能不能用"、"看看现在配了什么"、"设置 xx"、"定时任务"、"cron"、"装个插件"、
+  "查看 Agent 状态"、"版本号"等配置、管理或诊断类请求时触发。
 ---
 
 # Self-Config — 应用自我配置
 
-你可以通过内置的 `myagents` CLI 管理应用配置，包括 MCP 工具、模型服务、Agent/Channel 等。
+你可以通过内置的 `myagents` CLI 管理应用的几乎所有方面——MCP 工具、模型服务、Agent/Channel、定时任务、社区插件等。
 
-这个 CLI 是专门为你设计的——你通过 Bash 工具执行命令，就可以帮用户完成各种配置操作，不需要让用户手动去 Settings 页面操作。
+这个 CLI 是专门为你设计的——你通过 Bash 工具执行命令，就可以帮用户完成各种配置和管理操作，不需要让用户手动去 Settings 页面操作。
 
 ## 使用模式
 
@@ -147,8 +149,52 @@ myagents model add \
    - 飞书: `--feishu-app-id <id>` + `--feishu-app-secret <secret>`
    - 钉钉: `--dingtalk-client-id <id>` + `--dingtalk-client-secret <secret>`
 
+### 管理定时任务
+
+定时任务让 AI 按计划自动执行工作——数据汇总、监控告警、定期报告等。
+
+```bash
+myagents cron list                              # 列出所有定时任务
+myagents cron add --name "日报" --prompt "生成今日工作汇总" --schedule "0 18 * * *" --workspace /path
+myagents cron start <taskId>                    # 启动已停止的任务
+myagents cron stop <taskId>                     # 停止运行中的任务
+myagents cron remove <taskId>                   # 删除任务
+myagents cron runs <taskId>                     # 查看执行历史
+myagents cron status                            # 查看任务概览（总数/运行中/下次执行）
+```
+
+调度方式有三种：
+- `--schedule "*/30 * * * *"` — 标准 cron 表达式
+- `--every 15` — 每 N 分钟
+- 一次性任务（通过 API 的 `at` 类型）
+
+### 管理社区插件
+
+OpenClaw 社区插件让 Agent 可以连接更多 IM 平台（微信、Slack 等）。
+
+```bash
+myagents plugin list                            # 列出已安装的插件
+myagents plugin install @anthropic/wechat       # 从 npm 安装插件
+myagents plugin remove @anthropic/wechat        # 卸载（须先停止使用该插件的 Channel）
+```
+
+安装可能需要 10-30 秒（npm install），耐心等待即可。卸载前会检查是否有运行中的 Channel 依赖该插件。
+
+### 查看 Agent 运行时状态
+
+查看所有 Agent 及其 Channel 的实时连接状态——在线/离线/错误、运行时长、最近消息时间等。
+
+```bash
+myagents agent runtime-status                   # 查看所有 Agent 运行时状态
+```
+
+这和 `myagents agent list` 的区别：`list` 看的是配置（config.json 里写了什么），`status --runtime` 看的是运行时（实际连接状态、uptime、错误信息）。
+
 ### 查看和修改通用配置
 
-- `myagents config get <key>` 读取（支持点号路径如 `proxySettings.host`）
-- `myagents config set <key> <value>` 修改
-- `myagents status` 查看整体运行状态
+```bash
+myagents config get <key>                       # 读取（支持点号路径如 proxySettings.host）
+myagents config set <key> <value>               # 修改
+myagents status                                 # 查看整体运行状态
+myagents version                                # 查看应用版本号
+```
