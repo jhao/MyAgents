@@ -40,11 +40,31 @@ export function emitTokenChange(serverId: string, event: TokenChangeEvent): void
 
 // ===== Token Refresh =====
 
+// Single-flight guard: prevents concurrent refresh calls for the same server.
+// With rotating refresh tokens, two concurrent refreshes would use the same
+// refresh_token — the second call would fail because the token was already consumed.
+const refreshInFlight = new Map<string, Promise<OAuthTokenData | null>>();
+
 /**
  * Refresh an expired/expiring token using the refresh_token grant.
+ * Single-flight: concurrent calls for the same serverId share one request.
  * Returns new token data or null if refresh fails.
  */
 export async function refreshToken(serverId: string): Promise<OAuthTokenData | null> {
+  // Return existing in-flight refresh if one is running
+  const existing = refreshInFlight.get(serverId);
+  if (existing) return existing;
+
+  const promise = refreshTokenInner(serverId);
+  refreshInFlight.set(serverId, promise);
+  try {
+    return await promise;
+  } finally {
+    refreshInFlight.delete(serverId);
+  }
+}
+
+async function refreshTokenInner(serverId: string): Promise<OAuthTokenData | null> {
   const state = getServerState(serverId);
   if (!state?.token?.refreshToken) {
     console.warn(`[mcp-oauth] No refresh token for ${serverId}`);

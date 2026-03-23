@@ -28,6 +28,7 @@ interface PendingFlow {
   callbackServer: http.Server;
   state: string;
   resolve: (token: OAuthTokenData | null) => void;
+  timeoutHandle: ReturnType<typeof setTimeout>;
 }
 
 const pendingFlows = new Map<string, PendingFlow>();
@@ -152,6 +153,7 @@ export function bindCallbackServer(
 function cleanupFlow(serverId: string): void {
   const flow = pendingFlows.get(serverId);
   if (flow) {
+    clearTimeout(flow.timeoutHandle);
     try { flow.callbackServer.close(); } catch { /* noop */ }
     pendingFlows.delete(serverId);
   }
@@ -256,6 +258,17 @@ export async function startAuthorizationFlow(
       res.end('Not found');
     });
 
+    // Auto-cleanup timer — stored on flow so cancelFlow() can clear it
+    // (prevents stale timer from cancelling a restarted flow for the same serverId)
+    const timeoutHandle = setTimeout(() => {
+      if (pendingFlows.has(serverId)) {
+        console.warn(`[mcp-oauth] Authorization flow timed out for ${serverId}`);
+        const timedOutFlow = pendingFlows.get(serverId);
+        timedOutFlow?.resolve(null);
+        cleanupFlow(serverId);
+      }
+    }, 5 * 60 * 1000);
+
     pendingFlows.set(serverId, {
       serverId,
       config,
@@ -264,6 +277,7 @@ export async function startAuthorizationFlow(
       callbackServer: srv,
       state,
       resolve: resolveToken,
+      timeoutHandle,
     });
   });
 
@@ -282,16 +296,6 @@ export async function startAuthorizationFlow(
 
   const authUrl = `${config.authorizationEndpoint}?${params.toString()}`;
   console.log(`[mcp-oauth] Authorization flow started for ${serverId}`);
-
-  // Auto-cleanup after 5 minutes
-  setTimeout(() => {
-    if (pendingFlows.has(serverId)) {
-      console.warn(`[mcp-oauth] Authorization flow timed out for ${serverId}`);
-      const timedOutFlow = pendingFlows.get(serverId);
-      timedOutFlow?.resolve(null);
-      cleanupFlow(serverId);
-    }
-  }, 5 * 60 * 1000);
 
   return { authUrl, waitForToken: tokenPromise };
 }
