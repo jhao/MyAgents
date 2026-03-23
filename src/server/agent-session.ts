@@ -3404,7 +3404,11 @@ export async function initializeAgent(
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { resolveWorkspaceConfig } = require('./utils/admin-config');
       const resolved = resolveWorkspaceConfig(agentDir);
-      if (currentMcpServers === null && resolved.mcpServers.length > 0) {
+      // Only self-resolve MCP for sessions with initialPrompt (IM/Cron).
+      // Tab sessions must NOT self-resolve: the frontend's /api/mcp/set is the
+      // authoritative source, and self-resolve produces slightly different field
+      // structures (env/args) that trigger a fingerprint mismatch → abort → 30s delay.
+      if (hasInitialPrompt && currentMcpServers === null && resolved.mcpServers.length > 0) {
         currentMcpServers = resolved.mcpServers;
         console.log(`[agent] self-resolved ${resolved.mcpServers.length} MCP server(s): ${resolved.mcpServers.map((s: { id: string }) => s.id).join(', ')}`);
       }
