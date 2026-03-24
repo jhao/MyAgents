@@ -360,7 +360,7 @@ const server = Bun.serve({
           media: capabilities?.media ?? false,
           reactions: capabilities?.reactions ?? false,
           threads: capabilities?.threads ?? false,
-          edit: capabilities?.edit ?? false,
+          edit: !!capturedPlugin?.editMessage || !!(capabilities?.edit),
           blockStreaming: capabilities?.blockStreaming ?? false,
           streaming: hasCardKitStreaming,
           streamingCardKit: hasCardKitStreaming,
