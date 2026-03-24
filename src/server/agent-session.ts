@@ -3347,6 +3347,16 @@ function loadMessagesFromStorage(storedMessages: SessionMessage[]): void {
     }
   }
 
+  // Seed currentSessionUuids from disk messages so that rewind works immediately
+  // after loading a resume session (before SDK system_init populates them at runtime).
+  // Without this, rewinding during pre-warm window fails UUID validation → new session → context lost.
+  // Safe because sessionRegistered=true means we're resuming the same session ID.
+  for (const msg of messages) {
+    if (msg.sdkUuid) {
+      currentSessionUuids.add(msg.sdkUuid);
+    }
+  }
+
   // Seed Bridge thought_signature cache from persisted tool_use blocks
   // (Gemini thinking models require round-tripping this field; the cache is lost on sidecar restart)
   const thoughtSigEntries: Array<{ id: string; thought_signature: string }> = [];
