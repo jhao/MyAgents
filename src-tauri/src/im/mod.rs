@@ -4900,11 +4900,26 @@ async fn update_bot_config_internal<R: Runtime>(
                 }
                 let ports = router.active_sidecar_ports();
                 // Provider env sync (parsed from patch string)
+                // MUST POST even when clearing (empty → null) so Bun's setSessionProviderEnv()
+                // detects the change and restarts the session with correct environment.
                 let parsed_provider_env: Option<serde_json::Value> = patch_provider_env.as_ref()
                     .and_then(|s| if s.is_empty() { None } else { serde_json::from_str(s).ok() });
                 if patch_provider_env.is_some() {
                     for port in &ports {
-                        router.sync_ai_config(*port, None, None, parsed_provider_env.as_ref()).await;
+                        if let Some(ref penv) = parsed_provider_env {
+                            router.sync_ai_config(*port, None, None, Some(penv)).await;
+                        } else {
+                            // Clearing provider (switch to subscription) — POST null explicitly.
+                            // sync_ai_config skips None provider_env, so POST directly.
+                            let url = format!("http://127.0.0.1:{}/api/provider/set", *port);
+                            match router.http_client().post(&url)
+                                .json(&json!({ "providerEnv": null }))
+                                .send().await
+                            {
+                                Ok(_) => ulog_info!("[im] Cleared provider env on port {}", port),
+                                Err(e) => ulog_warn!("[im] Failed to clear provider env on port {}: {}", port, e),
+                            }
+                        }
                     }
                 }
                 // Model sync
@@ -6007,7 +6022,19 @@ pub async fn cmd_update_agent_config(
             if !ports.is_empty() {
                 if patch.provider_env_json.is_some() {
                     for port in &ports {
-                        router.sync_ai_config(*port, None, None, parsed_provider_env.as_ref()).await;
+                        if let Some(ref penv) = parsed_provider_env {
+                            router.sync_ai_config(*port, None, None, Some(penv)).await;
+                        } else {
+                            // Clearing provider — POST null so Bun detects the change
+                            let url = format!("http://127.0.0.1:{}/api/provider/set", *port);
+                            match router.http_client().post(&url)
+                                .json(&json!({ "providerEnv": null }))
+                                .send().await
+                            {
+                                Ok(_) => ulog_info!("[im] Cleared provider env on port {}", port),
+                                Err(e) => ulog_warn!("[im] Failed to clear provider env on port {}: {}", port, e),
+                            }
+                        }
                     }
                 }
                 if patch.model.is_some() {

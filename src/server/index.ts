@@ -6386,7 +6386,8 @@ async function main() {
         try {
           const payload = await request.json() as { providerEnv?: Record<string, unknown> };
           const { setSessionProviderEnv } = await import('./agent-session');
-          setSessionProviderEnv(payload?.providerEnv as import('./agent-session').ProviderEnv | undefined);
+          // Normalize null → undefined (Rust sends { "providerEnv": null } when clearing)
+          setSessionProviderEnv((payload?.providerEnv ?? undefined) as import('./agent-session').ProviderEnv | undefined);
           return jsonResponse({ success: true });
         } catch (error) {
           console.error('[api/provider/set] Error:', error);

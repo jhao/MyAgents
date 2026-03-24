@@ -958,14 +958,69 @@ export function getSessionProviderEnv(): ProviderEnv | undefined {
   return currentProviderEnv;
 }
 
-/** Set provider env (called by Rust IM router via /api/provider/set on sidecar creation).
- * This ensures the Sidecar uses the correct provider BEFORE pre-warm starts. */
+/** Set provider env (called by Rust IM router via /api/provider/set on sidecar creation or config hot-reload).
+ *
+ * Provider env is baked into SDK subprocess environment variables at spawn time
+ * and CANNOT be updated on a running process. If a session is already running
+ * with stale env (e.g., pre-warm started before sync_ai_config arrived),
+ * we must restart it — same pattern as setMcpServers().
+ */
 export function setSessionProviderEnv(providerEnv: ProviderEnv | undefined): void {
   const oldLabel = currentProviderEnv?.baseUrl ?? 'anthropic';
   const newLabel = providerEnv?.baseUrl ?? 'anthropic';
-  if (oldLabel === newLabel && currentProviderEnv?.apiKey === providerEnv?.apiKey) return;
+  // Full equality check — all ProviderEnv fields affect subprocess env (authType, apiProtocol, etc.)
+  if (providerEnvEqual(currentProviderEnv, providerEnv)) return;
+
+  // Resume safety: switching FROM third-party (has baseUrl) TO Anthropic official (no baseUrl)
+  // requires a fresh session. Anthropic validates thinking block signatures that third-party
+  // providers don't, so resuming with third-party messages causes signature errors.
+  // Must check BEFORE updating currentProviderEnv.
+  const switchingFromThirdPartyToAnthropic = currentProviderEnv?.baseUrl && !providerEnv?.baseUrl;
+  if (switchingFromThirdPartyToAnthropic) {
+    sessionRegistered = false;
+    console.log('[agent] provider switch: third-party → Anthropic — will create fresh session (signature incompatible)');
+  }
+
   currentProviderEnv = providerEnv;
-  console.log(`[agent] session provider env set: ${oldLabel} -> ${newLabel}`);
+  console.log(`[agent] session provider env set: ${oldLabel} → ${newLabel}`);
+
+  // If a session is running, its subprocess has the OLD provider env.
+  // Restart so the next session picks up the updated environment.
+  if (querySession) {
+    if (isProcessing && !isPreWarming) {
+      // Active user turn in progress — defer restart to avoid killing mid-response.
+      // The restart will fire after the current turn completes (pendingConfigRestart).
+      console.log('[agent] provider changed during active turn → deferring restart');
+      pendingConfigRestart = true;
+    } else {
+      console.log(`[agent] provider changed (${oldLabel} → ${newLabel}) → aborting session (preWarm=${isPreWarming})`);
+      abortPersistentSession();
+    }
+  } else if (isProcessing) {
+    // startStreamingSession() is in progress but querySession hasn't been assigned yet.
+    // buildClaudeSessionEnv() may have already read the stale currentProviderEnv.
+    // Set pendingConfigRestart so it triggers a restart after the first turn completes.
+    console.log('[agent] provider changed while session starting → will restart after first turn');
+    pendingConfigRestart = true;
+  }
+
+  // Reset retry counter and re-warm (same tail as setMcpServers/triggerProxyRestart)
+  preWarmFailCount = 0;
+  if (!isProcessing || isPreWarming) {
+    schedulePreWarm();
+  }
+}
+
+/** Deep equality check for ProviderEnv — all fields affect subprocess environment. */
+function providerEnvEqual(a: ProviderEnv | undefined, b: ProviderEnv | undefined): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return a.baseUrl === b.baseUrl
+    && a.apiKey === b.apiKey
+    && a.authType === b.authType
+    && a.apiProtocol === b.apiProtocol
+    && a.maxOutputTokens === b.maxOutputTokens
+    && a.upstreamFormat === b.upstreamFormat;
 }
 
 /**
