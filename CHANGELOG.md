@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.52] - 2026-03-24
+
+### Added
+- **OpenAI Bridge `maxOutputTokensParamName` 配置**：用户可选 `max_tokens`（默认，兼容 DeepSeek/Qwen 等）、`max_completion_tokens`（OpenAI o1/o3/GPT-5、vLLM）、`max_output_tokens`（Responses API），UI 改为接口格式 + key-value 联动形式
+- **Bridge `supports_edit` 能力自适应**：从 Plugin `/capabilities` 接口读取 `edit` 能力，不支持编辑的插件（如微信）自动跳过 draft+edit 流程，一次性发送完整消息
+- **单实例 PID lock file**：`~/.myagents/app.lock` 防止 macOS 自动重启导致生产版与 debug 版双实例冲突
+- **`app_dirs` 模块**：集中管理数据目录路径 `myagents_data_dir()`，预留未来 dev/prod 隔离扩展点
+
+### Fixed
+- **OpenAI Bridge 兼容性**：不再默认转发 `max_tokens`/`temperature`/`top_p`/`stop`，解决 OpenAI 推理模型（o1/o3/GPT-5）返回 400 的问题
+- **微信 Bot 长文丢失**：finalize 检测到 501 时发送完整消息替代静默丢弃，用户不再只看到前 50 字符
+- **Session Sidecar SSE 自动恢复**：系统休眠/crash 后 Tab 不再永久 loading
+- **定时任务"仅一次"模式显示错误**：StatusBar/Overlay 未读 schedule 字段导致显示为"每 30 分钟"
+
+---
+
 ## [0.1.51] - 2026-03-24
 
 ### Added
