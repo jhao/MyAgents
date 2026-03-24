@@ -38,6 +38,24 @@ const MAX_RESTART_BACKOFF_SECS: u64 = 30;
 /// HTTP timeout for Sidecar API calls
 const SIDECAR_HTTP_TIMEOUT_SECS: u64 = 300;
 
+/// Result of Phase 1 of ensure_sidecar: either the sidecar is healthy, or we need to create one.
+pub enum EnsureSidecarPrep {
+    /// Existing sidecar is healthy — return immediately with port.
+    Healthy(u16),
+    /// Need to create/restart sidecar — extracted info for Phase 2.
+    NeedCreate(EnsureSidecarInfo),
+}
+
+/// Info extracted from router state needed to create a sidecar (Phase 2).
+/// Cloned out so the router lock can be released during the blocking create.
+#[derive(Clone)]
+pub struct EnsureSidecarInfo {
+    pub session_key: String,
+    pub session_id: String,
+    pub workspace: PathBuf,
+    pub prev_count: u32,
+}
+
 /// Error from Sidecar routing — distinguishes bufferable vs non-bufferable failures.
 #[derive(Debug)]
 pub enum RouteError {
@@ -124,19 +142,47 @@ impl SessionRouter {
     /// Ensure a Sidecar is running for the given session key.
     /// Returns `(port, is_new_sidecar)` — `is_new_sidecar` is true when a new Sidecar was created
     /// (caller should sync AI config like model/MCP after creation).
-    /// Called while holding the router lock (brief: health check ~4.5s worst case + spawn ~2s).
+    ///
+    /// IMPORTANT: This method holds the router lock for the ENTIRE duration including
+    /// the blocking `ensure_session_sidecar` call (up to 5 minutes). Use `ensure_sidecar_split`
+    /// when the caller can release the lock between phases (e.g., heartbeat, background tasks).
+    /// This legacy method is kept for callers that need atomic read-create-write under one lock
+    /// (e.g., the message processing loop where per-peer locks already serialize access).
     pub async fn ensure_sidecar<R: Runtime>(
         &mut self,
         session_key: &str,
         app_handle: &AppHandle<R>,
         manager: &ManagedSidecarManager,
     ) -> Result<(u16, bool), String> {
+        // Phase 1: Check existing healthy sidecar (brief)
+        let prep = self.prepare_ensure_sidecar(session_key).await;
+        if let EnsureSidecarPrep::Healthy(port) = prep {
+            return Ok((port, false));
+        }
+
+        // Phase 2: Create sidecar (blocking — holds lock the entire time)
+        let info = match prep {
+            EnsureSidecarPrep::NeedCreate(info) => info,
+            EnsureSidecarPrep::Healthy(_) => unreachable!(),
+        };
+        let port = Self::create_sidecar_blocking(info.clone(), app_handle, manager).await?;
+
+        // Phase 3: Write result back
+        self.commit_ensure_sidecar(session_key, &info, port);
+
+        Ok((port, true))
+    }
+
+    // ---- Split ensure_sidecar into 3 phases for lock-free blocking ----
+
+    /// Phase 1: Check if sidecar is healthy, or extract info needed to create one.
+    /// Holds the lock briefly (health check ~4.5s worst case).
+    pub async fn prepare_ensure_sidecar(&self, session_key: &str) -> EnsureSidecarPrep {
         // Check existing peer session
         if let Some(ps) = self.peer_sessions.get(session_key) {
             if ps.sidecar_port > 0 {
-                // Verify Sidecar is still healthy via HTTP
                 if self.check_sidecar_health(ps.sidecar_port).await {
-                    return Ok((ps.sidecar_port, false));
+                    return EnsureSidecarPrep::Healthy(ps.sidecar_port);
                 }
                 ulog_warn!(
                     "[im-router] Sidecar on port {} unhealthy for {}",
@@ -146,36 +192,44 @@ impl SessionRouter {
             }
         }
 
-        // Preserve message_count from existing session (P2 fix)
         let prev_count = self
             .peer_sessions
             .get(session_key)
             .map(|ps| ps.message_count)
             .unwrap_or(0);
 
-        // Need to create or restart Sidecar
         let workspace = self
             .peer_sessions
             .get(session_key)
             .map(|ps| ps.workspace_path.clone())
             .unwrap_or_else(|| self.default_workspace.clone());
 
-        // Reuse existing session_id (stable per peer) or generate new for first-time peers.
-        // Bun receives --session-id and uses SDK resume to restore conversation history
-        // after crash recovery, idle collection, or app restart.
         let session_id = self
             .peer_sessions
             .get(session_key)
             .map(|ps| ps.session_id.clone())
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-        let owner = SidecarOwner::Agent(session_key.to_string());
+        EnsureSidecarPrep::NeedCreate(EnsureSidecarInfo {
+            session_key: session_key.to_string(),
+            session_id,
+            workspace,
+            prev_count,
+        })
+    }
 
-        // Use spawn_blocking because ensure_session_sidecar uses reqwest::blocking
+    /// Phase 2: Create the sidecar (blocking, up to 5 minutes). Does NOT hold the router lock.
+    /// This is a static method — callers invoke it after releasing the lock.
+    pub async fn create_sidecar_blocking<R: Runtime>(
+        info: EnsureSidecarInfo,
+        app_handle: &AppHandle<R>,
+        manager: &ManagedSidecarManager,
+    ) -> Result<u16, String> {
+        let owner = SidecarOwner::Agent(info.session_key.clone());
         let app_clone = app_handle.clone();
         let manager_clone = Arc::clone(manager);
-        let sid = session_id.clone();
-        let ws = workspace.clone();
+        let sid = info.session_id.clone();
+        let ws = info.workspace.clone();
 
         let result = tokio::task::spawn_blocking(move || {
             ensure_session_sidecar(&app_clone, &manager_clone, &sid, &ws, owner)
@@ -184,33 +238,38 @@ impl SessionRouter {
         .map_err(|e| format!("spawn_blocking failed: {}", e))?
         .map_err(|e| format!("Failed to ensure Sidecar: {}", e))?;
 
-        let port = result.port;
         ulog_info!(
             "[im-router] Sidecar ready for {} on port {} (workspace={})",
-            session_key,
-            port,
-            workspace.display(),
+            info.session_key,
+            result.port,
+            info.workspace.display(),
         );
 
-        // Parse source type and source_id from session_key
-        let (source_type, source_id) = parse_session_key(session_key);
+        Ok(result.port)
+    }
 
-        // Update or create peer session (preserving message_count)
+    /// Phase 3: Write the new sidecar port back into the peer session map.
+    /// Holds the lock briefly.
+    pub fn commit_ensure_sidecar(
+        &mut self,
+        session_key: &str,
+        info: &EnsureSidecarInfo,
+        port: u16,
+    ) {
+        let (source_type, source_id) = parse_session_key(session_key);
         self.peer_sessions.insert(
             session_key.to_string(),
             PeerSession {
                 session_key: session_key.to_string(),
-                session_id,
+                session_id: info.session_id.clone(),
                 sidecar_port: port,
-                workspace_path: workspace,
+                workspace_path: info.workspace.clone(),
                 source_type,
                 source_id,
-                message_count: prev_count,
+                message_count: info.prev_count,
                 last_active: Instant::now(),
             },
         );
-
-        Ok((port, true))
     }
 
     /// Get a reference to a peer session by session_key.

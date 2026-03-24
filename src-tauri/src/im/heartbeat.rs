@@ -342,16 +342,35 @@ impl HeartbeatRunner {
 
         ulog_debug!("[heartbeat] Acquired peer lock for {}", session_key);
 
-        // Ensure sidecar is running — same pattern as user message flow.
-        // If sidecar was idle-collected (port=0), this will restart it automatically.
-        let (port, is_new_sidecar) = {
-            let mut router_guard = router.lock().await;
-            match router_guard.ensure_sidecar(&session_key, app_handle, sidecar_manager).await {
-                Ok(result) => result,
-                Err(e) => {
-                    ulog_warn!("[heartbeat] Failed to ensure sidecar for {}: {}", self.bot_label, e);
-                    *self.executing.lock().await = false;
-                    return false;
+        // Ensure sidecar is running — split into 3 phases to avoid holding router lock
+        // during the blocking sidecar creation (up to 5 minutes).
+        // Phase 1: Check health / extract info (brief lock)
+        let prep = {
+            let router_guard = router.lock().await;
+            router_guard.prepare_ensure_sidecar(&session_key).await
+        };
+
+        use super::router::EnsureSidecarPrep;
+        let (port, is_new_sidecar) = match prep {
+            EnsureSidecarPrep::Healthy(p) => (p, false),
+            EnsureSidecarPrep::NeedCreate(info) => {
+                // Phase 2: Create sidecar (NO lock held — blocking up to 5 min)
+                match super::router::SessionRouter::create_sidecar_blocking(
+                    info.clone(), app_handle, sidecar_manager,
+                ).await {
+                    Ok(port) => {
+                        // Phase 3: Write result back (brief lock)
+                        {
+                            let mut router_guard = router.lock().await;
+                            router_guard.commit_ensure_sidecar(&session_key, &info, port);
+                        }
+                        (port, true)
+                    }
+                    Err(e) => {
+                        ulog_warn!("[heartbeat] Failed to ensure sidecar for {}: {}", self.bot_label, e);
+                        *self.executing.lock().await = false;
+                        return false;
+                    }
                 }
             }
         };
