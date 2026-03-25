@@ -794,7 +794,7 @@ export default function TabProvider({
                 track('tool_use', { tool: tool.name });
 
                 // For Task tool, add taskStartTime and initial taskStats
-                const toolSimple: ToolUseSimple = tool.name === 'Task'
+                const toolSimple: ToolUseSimple = (tool.name === 'Task' || tool.name === 'Agent')
                     ? { ...tool, inputJson: '', isLoading: true, taskStartTime: Date.now(), taskStats: { toolCount: 0, inputTokens: 0, outputTokens: 0 } }
                     : { ...tool, inputJson: '', isLoading: true };
                 setStreamingMessage(prev => {
