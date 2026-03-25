@@ -1661,6 +1661,10 @@ pub fn start_tab_sidecar<R: Runtime>(
         thread::spawn(move || {
             let reader = BufReader::new(stdout);
             for line in reader.lines().flatten() {
+                // Skip noise already written by Bun's unified logger
+                if line.starts_with("[sse] ") || line.starts_with("[http] ") {
+                    continue;
+                }
                 ulog_info!("[bun-out][{}] {}", tab_id_clone, line);
             }
         });
@@ -2404,6 +2408,13 @@ fn create_new_session_sidecar<R: Runtime>(
         thread::spawn(move || {
             let reader = BufReader::new(stdout);
             for line in reader.lines().flatten() {
+                // Skip noise that Bun's unified logger already writes directly:
+                // [sse] streaming events, [http] routing, [agent][sdk] message summaries.
+                // Bun writes these to the unified log file via its own logger interceptor;
+                // capturing them again from stdout causes double-write.
+                if line.starts_with("[sse] ") || line.starts_with("[http] ") {
+                    continue;
+                }
                 ulog_info!("[bun-out][session:{}] {}", session_id_for_log, line);
             }
         });

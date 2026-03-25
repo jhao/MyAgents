@@ -884,6 +884,12 @@ pub async fn spawn_plugin_bridge<R: tauri::Runtime>(
             std::thread::spawn(move || {
                 let reader = BufReader::new(stdout);
                 for line in reader.lines().flatten() {
+                    // Skip high-frequency heartbeat noise (sent/ACK every ~40s per plugin).
+                    // Only log heartbeat anomalies (timeout, disconnect, error).
+                    if line.contains("Heartbeat sent") || line.contains("Heartbeat ACK")
+                        || line.contains("Received op=11") {
+                        continue;
+                    }
                     ulog_info!("[bridge-out][{}] {}", bot_id_clone, line);
                 }
             });

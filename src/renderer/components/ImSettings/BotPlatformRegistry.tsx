@@ -13,7 +13,7 @@ import ConfirmDialog from '@/components/ConfirmDialog';
 import type { InstalledPlugin } from '../../../shared/types/im';
 import { PROMOTED_PLUGINS } from './promotedPlugins';
 import telegramIcon from './assets/telegram.png';
-import feishuIcon from './assets/feishu.jpeg';
+// feishuIcon import removed — old built-in Feishu hidden from this page (replaced by OpenClaw plugin)
 import dingtalkIcon from './assets/dingtalk.svg';
 
 // Guide images

@@ -4987,9 +4987,18 @@ async function startStreamingSession(preWarm = false): Promise<void> {
       messageCount++;
       lastSdkEventAt = Date.now();
       // stream_event is high-frequency (per token delta) — skip logging entirely;
-      // other types (user/assistant/result/system_init) are low-frequency and important
-      if (sdkMessage.type !== 'stream_event') {
-        console.log(`[agent][sdk] message #${messageCount} type=${sdkMessage.type}`, logStringify(sdkMessage));
+      // other types (user/assistant/result/system_init) are low-frequency and important.
+      // Log only a compact summary to console (unified log). Full JSON is persisted
+      // to the session log file via appendLogLine below AND captured by Rust bun-out.
+      // Logging full JSON here caused double-write: [BUN] + [RUST][bun-out] both contain it.
+      if (sdkMessage.type !== 'stream_event' && sdkMessage.type !== 'rate_limit_event') {
+        const msg = sdkMessage as Record<string, unknown>;
+        const model = (msg.message as Record<string, unknown>)?.model ?? '';
+        const stopReason = (msg.message as Record<string, unknown>)?.stop_reason ?? '';
+        const subtype = msg.subtype ?? '';
+        const extra = subtype ? ` subtype=${subtype}` : model ? ` model=${model}` : '';
+        const stop = stopReason ? ` stop=${stopReason}` : '';
+        console.log(`[agent][sdk] message #${messageCount} type=${sdkMessage.type}${extra}${stop}`);
       }
       try {
         const line = `${localTimestamp()} ${logStringify(sdkMessage)}`;

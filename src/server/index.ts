@@ -1337,8 +1337,13 @@ async function main() {
       const url = new URL(request.url);
       const pathname = url.pathname;
 
-      // Skip logging high-frequency polling paths
-      if (pathname !== '/api/unified-log' && pathname !== '/agent/dir' && pathname !== '/sessions') {
+      // Skip logging high-frequency polling/config-sync paths to reduce unified log noise.
+      // These fire every 15s (health) or on every Tab focus (commands/agents/mcp) with zero diagnostic value.
+      const SILENT_PATHS = new Set([
+        '/health', '/api/unified-log', '/agent/dir', '/sessions',
+        '/api/commands', '/api/agents/enabled', '/api/git/branch',
+      ]);
+      if (!SILENT_PATHS.has(pathname)) {
         console.debug(`[http] ${request.method} ${pathname}`);
       }
 

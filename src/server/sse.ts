@@ -93,8 +93,17 @@ function heartbeatChunk(): Uint8Array {
   return encoder.encode(': ping\n\n');
 }
 
+// High-frequency streaming events — skip console.log to reduce unified log noise.
+// These events fire per-token/per-delta and produce thousands of lines with zero diagnostic value.
+const SILENT_EVENTS = new Set([
+  'chat:message-chunk', 'chat:thinking-delta', 'chat:tool-input-delta',
+  'chat:content-block-stop', 'chat:message-sdk-uuid', 'chat:log',
+]);
+
 export function broadcast(event: string, data: unknown): void {
-  console.log(`[sse] ${event} -> ${summarizePayload(event, data)}`);
+  if (!SILENT_EVENTS.has(event)) {
+    console.log(`[sse] ${event} -> ${summarizePayload(event, data)}`);
+  }
   // Update last-value cache for stateful events
   if (CACHED_EVENTS.has(event)) {
     lastValueCache.set(event, data);
