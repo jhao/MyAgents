@@ -7272,7 +7272,15 @@ description: >
   });
 
   console.log(`Web UI server listening on http://localhost:${port}`);
-  console.log(`[server] Version: MCP-Install-Fix-v2`);
+
+  // ── Sidecar Boot Banner: single-line for AI grep ──
+  {
+    const model = getSessionModel() || '?';
+    const mcpList = getMcpServers();
+    const mcpNames = mcpList ? Object.keys(mcpList).join(',') || 'none' : 'none';
+    const bridge = getOpenAiBridgeConfig() ? 'yes' : 'no';
+    console.log(`[boot] pid=${process.pid} port=${port} bun=${Bun.version} workspace=${currentAgentDir} session=${initialSessionId ?? 'new'} resume=${!!initialSessionId} model=${model} bridge=${bridge} mcp=${mcpNames}`);
+  }
 
   // Verify PATH detection
   import('./utils/shell').then(({ getShellEnv, getShellPath }) => {
