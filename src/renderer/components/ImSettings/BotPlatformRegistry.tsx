@@ -266,7 +266,7 @@ export default function BotPlatformRegistry() {
                 key={`promoted-${pp.pluginId}`}
                 className="group relative flex flex-col items-center gap-3 rounded-xl border border-[var(--line)] bg-[var(--paper-elevated)] p-5"
               >
-                {(isInstalling || isUpdating) ? (
+                {isInstalling ? (
                   <Loader2 className="h-12 w-12 animate-spin text-[var(--ink-muted)]" />
                 ) : (
                   <img src={pp.icon} alt={pp.name} className="h-12 w-12 rounded-xl" />
