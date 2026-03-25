@@ -352,6 +352,48 @@ let shouldAbortSession = false;
 // This prevents Tab config sync from aborting a shared IM session mid-response.
 let pendingConfigRestart = false;
 let sessionTerminationPromise: Promise<void> | null = null;
+
+/**
+ * Await sessionTerminationPromise with a timeout.
+ * On timeout, force-clean session state so the caller is never permanently blocked.
+ */
+async function awaitSessionTermination(timeoutMs = 10_000, label = ''): Promise<void> {
+  if (!sessionTerminationPromise) return;
+  let timerId: ReturnType<typeof setTimeout>;
+  try {
+    await Promise.race([
+      sessionTerminationPromise,
+      new Promise<never>((_, reject) => {
+        timerId = setTimeout(() => reject(new Error(`sessionTermination timeout (${label})`)), timeoutMs);
+      }),
+    ]);
+  } catch (error) {
+    const isTimeout = error instanceof Error && error.message.includes('timeout');
+    console.warn(`[agent] ${label}: sessionTerminationPromise ${isTimeout ? 'timed out' : 'rejected'} after ${timeoutMs}ms, force-cleaning:`, error);
+    // Force-clean state so the caller can proceed — mirrors the finally block of startStreamingSession.
+    // Must cover ALL mutable state that the finally block would have reset, otherwise orphaned
+    // flags (e.g. isStreamingMessage=true) cause secondary deadlocks.
+    const session = querySession;
+    querySession = null;
+    isProcessing = false;
+    isPreWarming = false;
+    isStreamingMessage = false;
+    // Don't null sessionTerminationPromise — the real finally block may still be running
+    // and will call resolveTermination!(). Nulling it here creates a race where a subsequent
+    // caller skips waiting while the old finally is still doing cleanup.
+    // Wake any blocked messageGenerator so it doesn't hang forever
+    if (messageResolver) {
+      const resolve = messageResolver;
+      messageResolver = null;
+      resolve(null);
+    }
+    setSessionState('idle');
+    try { void session?.close(); } catch { /* subprocess may already be dead */ }
+  } finally {
+    clearTimeout(timerId!);
+  }
+}
+
 let isInterruptingResponse = false;
 let isStreamingMessage = false;
 let isApiRetrying = false;  // Track api_retry state to clear when streaming resumes
@@ -566,13 +608,7 @@ async function forceAbortCurrentTurnAndRecover(): Promise<void> {
   console.warn('[agent] force-aborting session after interrupt timeout');
   abortPersistentSession();
 
-  if (sessionTerminationPromise) {
-    try {
-      await sessionTerminationPromise;
-    } catch (error) {
-      console.warn('[agent] forced stop: session termination error:', error);
-    }
-  }
+  await awaitSessionTermination(10_000, 'forceAbort');
 
   // Another control flow (reset/switch session) already took over.
   if (!shouldAbortSession) {
@@ -589,8 +625,13 @@ async function forceAbortCurrentTurnAndRecover(): Promise<void> {
     return;
   }
 
-  console.log('[agent] forced stop: scheduling recovery pre-warm');
-  schedulePreWarm();
+  // Do NOT schedulePreWarm() here.
+  // After force-abort, if we eagerly pre-warm, a new sessionTerminationPromise is created.
+  // Any subsequent rewindSession() / resetSession() that awaits sessionTerminationPromise
+  // will block on the NEW pre-warm session — causing permanent deadlock.
+  // Instead, clean up and let the user's next action (rewind / new message) start the session.
+  console.log('[agent] forced stop: session terminated, awaiting user action');
+  shouldAbortSession = false;
 }
 
 // ===== Interaction Scenario (unified system prompt) =====
@@ -3394,15 +3435,8 @@ export async function resetSession(): Promise<void> {
     abortPersistentSession();
     messageQueue.length = 0; // Clear queue so old session doesn't pick up stale messages
 
-    // Wait for the session to fully terminate
-    if (sessionTerminationPromise) {
-      try {
-        await sessionTerminationPromise;
-        console.log('[agent] resetSession: SDK session terminated');
-      } catch (error) {
-        console.warn('[agent] resetSession: session termination error:', error);
-      }
-    }
+    await awaitSessionTermination(10_000, 'resetSession');
+    console.log('[agent] resetSession: SDK session terminated (or timed out)');
     querySession = null;
   }
 
@@ -3609,9 +3643,7 @@ export async function switchToSession(targetSessionId: string): Promise<boolean>
     console.log('[agent] switchToSession: aborting current session');
     abortPersistentSession();
     messageQueue.length = 0; // Clear queue before waiting so old session doesn't pick up stale messages
-    if (sessionTerminationPromise) {
-      await sessionTerminationPromise;
-    }
+    await awaitSessionTermination(10_000, 'switchToSession');
     querySession = null;
   }
 
@@ -3816,9 +3848,7 @@ export async function enqueueUserMessage(
     abortPersistentSession();
     // Wait for the current session to fully terminate before proceeding
     // This prevents race conditions where old session continues processing
-    if (sessionTerminationPromise) {
-      await sessionTerminationPromise;
-    }
+    await awaitSessionTermination(10_000, 'enqueueUserMessage/providerChange');
     querySession = null;
     isProcessing = false;
     setSessionState('idle');
@@ -4338,9 +4368,7 @@ export async function rewindSession(userMessageId: string): Promise<{
     // 4. 中止当前 session（需要新 session 用 resumeSessionAt 截断 SDK 历史）
     abortPersistentSession();
     messageQueue.length = 0;
-    if (sessionTerminationPromise) {
-      try { await sessionTerminationPromise; } catch { /* ignore */ }
-    }
+    await awaitSessionTermination(10_000, 'rewind');
     shouldAbortSession = false;
 
     // 5. 收集被删消息内容（恢复到输入框）
@@ -4499,9 +4527,7 @@ export function forkSession(assistantMessageId: string): {
 }
 
 async function startStreamingSession(preWarm = false): Promise<void> {
-  if (sessionTerminationPromise) {
-    await sessionTerminationPromise;
-  }
+  await awaitSessionTermination(10_000, 'startStreamingSession');
 
   if (isProcessing || querySession) {
     return;
@@ -4516,7 +4542,13 @@ async function startStreamingSession(preWarm = false): Promise<void> {
   shouldAbortSession = false;
   resetAbortFlag();
   isProcessing = true;
-  currentSessionUuids.clear(); // 新 session 实例，旧 UUID 不再有效
+  // Only clear UUID tracking for brand-new sessions.
+  // For resume sessions (sessionRegistered=true), loadMessagesFromStorage has already
+  // seeded currentSessionUuids from disk — clearing them here would break rewind
+  // during the pre-warm window (before SDK system_init re-populates via stdout events).
+  if (!sessionRegistered) {
+    currentSessionUuids.clear();
+  }
   let preWarmStartedOk = false; // Tracks whether pre-warm received system_init
   let abortedByTimeout = false; // Distinguishes timeout abort from config-change abort
   let detectedAlreadyInUse = false; // stderr reported "Session ID already in use"
