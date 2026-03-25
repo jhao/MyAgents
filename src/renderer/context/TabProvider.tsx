@@ -663,11 +663,17 @@ export default function TabProvider({
                 const payload = data as { sessionState: SessionState } | null;
                 if (payload?.sessionState) {
                     setSessionState(payload.sessionState);
-                    // When backend reports 'idle', unconditionally reset frontend loading state.
                     if (payload.sessionState === 'idle') {
+                        // When backend reports 'idle', unconditionally reset frontend loading state.
                         isStreamingRef.current = false;
                         setIsLoading(false);
                         setSystemStatus(null);
+                    } else if (payload.sessionState === 'running' && !isStreamingRef.current) {
+                        // Session is running but we haven't received any streaming events yet.
+                        // This happens when a Tab connects mid-flight (e.g., IM session in progress)
+                        // and receives a replayed chat:status → "running" from the SSE last-value cache.
+                        // Set isLoading so the UI shows the loading state instead of action buttons.
+                        setIsLoading(true);
                     }
                 }
                 break;
