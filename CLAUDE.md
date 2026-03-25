@@ -137,6 +137,7 @@ MyAgents 是 OpenClaw 的**通用 Plugin 适配层**，不是各家 IM 的硬编
 | Sidecar 用 `__dirname` / `readFileSync` | bun build 硬编码路径，生产环境出错 | 内联常量或 `getScriptDir()` |
 | 日志日期用 UTC `toISOString` | 与本地日期文件名不匹配 | 统一用 `localDate()`（`src/shared/logTime.ts`） |
 | UI 硬编码颜色（`#fff`、`bg-blue-500`） | 破坏设计系统一致性 | 使用 CSS Token `var(--xxx)`，参考 design_guide.md |
+| 表单用原生 `<select>` | 系统下拉框样式与设计系统不一致（macOS/Windows 各异） | 使用 `<CustomSelect>` 组件（`@/components/CustomSelect`） |
 | CronTask 新增字段不加 `#[serde(default)]` | 旧版 JSON 反序列化失败 | 非核心字段 MUST 加 `#[serde(default)]` |
 | Rust 子进程日志用 `log::info!` | 不进统一日志 | MUST 用 `ulog_info!` / `ulog_error!` |
 | 裸 `std::process::Command::new()` | Windows 弹出黑色控制台窗口 | `crate::process_cmd::new()` |
