@@ -59,7 +59,7 @@ export default function BotPlatformRegistry() {
   const [installNpmSpec, setInstallNpmSpec] = useState('');
   const [showInstallInput, setShowInstallInput] = useState(false);
   const [installing, setInstalling] = useState(false);
-  const [updating, setUpdating] = useState<string | null>(null); // pluginId being updated
+  const [updatingSet, setUpdatingSet] = useState<Set<string>>(new Set()); // pluginIds being updated concurrently
   const toast = useToast();
   const toastRef = useRef(toast);
   toastRef.current = toast;
@@ -141,7 +141,7 @@ export default function BotPlatformRegistry() {
 
   const handleUpdatePlugin = useCallback(async (npmSpec: string, pluginId: string) => {
     if (!isTauriEnvironment()) return;
-    setUpdating(pluginId);
+    setUpdatingSet(prev => new Set(prev).add(pluginId));
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       const result = await invoke<InstalledPlugin>('cmd_install_openclaw_plugin', { npmSpec });
@@ -163,7 +163,9 @@ export default function BotPlatformRegistry() {
       if (!isMountedRef.current) return;
       toastRef.current.error(`更新失败: ${err}`);
     } finally {
-      if (isMountedRef.current) setUpdating(null);
+      if (isMountedRef.current) {
+        setUpdatingSet(prev => { const next = new Set(prev); next.delete(pluginId); return next; });
+      }
     }
   }, []);
 
@@ -230,11 +232,11 @@ export default function BotPlatformRegistry() {
                   </span>
                   <button
                     onClick={() => handleUpdatePlugin(p.plugin!.npmSpec, p.plugin!.pluginId)}
-                    disabled={updating === p.plugin.pluginId}
+                    disabled={updatingSet.has(p.plugin.pluginId)}
                     className="rounded-full p-1 text-[var(--ink-muted)] transition-colors hover:bg-[var(--paper-inset)] hover:text-[var(--ink)] disabled:opacity-50"
                     title="检查更新"
                   >
-                    <RefreshCw className={`h-3 w-3 ${updating === p.plugin.pluginId ? 'animate-spin' : ''}`} />
+                    <RefreshCw className={`h-3 w-3 ${updatingSet.has(p.plugin.pluginId) ? 'animate-spin' : ''}`} />
                   </button>
                 </div>
               ) : (
@@ -260,7 +262,7 @@ export default function BotPlatformRegistry() {
             const installedPlugin = installedPlugins.find(p => p.pluginId === pp.pluginId);
             const isInstalled = !!installedPlugin;
             const isInstalling = autoInstalling === pp.pluginId;
-            const isUpdating = updating === pp.pluginId;
+            const isUpdating = updatingSet.has(pp.pluginId);
             return (
               <div
                 key={`promoted-${pp.pluginId}`}
