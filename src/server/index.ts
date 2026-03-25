@@ -126,6 +126,7 @@ import {
   stripPlaywrightResults,
   setSidecarPort,
   getOpenAiBridgeConfig,
+  getSessionModel,
   syncProjectUserConfig,
   setProxyConfig,
   initSocksBridgeFromEnv,
@@ -1299,11 +1300,28 @@ async function main() {
       return {
         baseUrl: config.baseUrl,
         apiKey: config.apiKey,
-        model: config.model,
+        model: config.model, // undefined when aliases exist (modelMapping handles it)
         maxOutputTokens: config.maxOutputTokens,
         maxOutputTokensParamName: config.maxOutputTokensParamName,
         upstreamFormat: config.upstreamFormat,
       };
+    },
+    // Dynamic model mapping: when aliases exist, map any Claude model ID to the provider's model.
+    // Called per-request, so it always reflects the latest provider config.
+    modelMapping: (requestModel: string) => {
+      const config = getOpenAiBridgeConfig();
+      if (!config?.modelAliases) return undefined; // No aliases → fall through to modelOverride
+      const aliases = config.modelAliases;
+      // Map SDK-resolved model names to provider models
+      if (requestModel.startsWith('claude') && requestModel.includes('sonnet') && aliases.sonnet) return aliases.sonnet;
+      if (requestModel.startsWith('claude') && requestModel.includes('opus') && aliases.opus) return aliases.opus;
+      if (requestModel.startsWith('claude') && requestModel.includes('haiku') && aliases.haiku) return aliases.haiku;
+      // Safety fallback: if this is a Claude model name that wasn't matched by any alias
+      // (e.g., partial alias config — only sonnet configured, not opus/haiku),
+      // fall back to currentModel to prevent raw "claude-*" from leaking to upstream.
+      if (requestModel.startsWith('claude-')) return getSessionModel() || undefined;
+      // Non-Claude models pass through as-is (e.g., the main model "deepseek-chat")
+      return undefined;
     },
     logger: (msg) => console.log(msg),
   });

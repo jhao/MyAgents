@@ -317,7 +317,7 @@ export default function TabProvider({
     // Each send pushes to the queue; each message-complete shifts from it.
     const pendingUserMessagesRef = useRef<string[]>([]);
     const lastCompletedTextRef = useRef('');
-    const lastProviderEnvRef = useRef<{ baseUrl?: string; apiKey?: string; authType?: string; apiProtocol?: 'anthropic' | 'openai'; maxOutputTokens?: number; maxOutputTokensParamName?: 'max_tokens' | 'max_completion_tokens' | 'max_output_tokens'; upstreamFormat?: 'chat_completions' | 'responses' } | undefined>(undefined);
+    const lastProviderEnvRef = useRef<{ baseUrl?: string; apiKey?: string; authType?: string; apiProtocol?: 'anthropic' | 'openai'; maxOutputTokens?: number; maxOutputTokensParamName?: 'max_tokens' | 'max_completion_tokens' | 'max_output_tokens'; upstreamFormat?: 'chat_completions' | 'responses'; modelAliases?: { sonnet?: string; opus?: string; haiku?: string } } | undefined>(undefined);
     const lastModelRef = useRef<string | undefined>(undefined);
 
     // Notify parent when generating state changes (for close confirmation)

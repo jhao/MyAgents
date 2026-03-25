@@ -2392,6 +2392,19 @@ export function buildClaudeSessionEnv(providerEnv?: ProviderEnv): NodeJS.Process
   // Use provided providerEnv or fall back to currentProviderEnv
   const effectiveProviderEnv = providerEnv ?? currentProviderEnv;
 
+  // ── Model alias mapping for sub-agents (applies to ALL protocol paths) ──
+  // SDK sub-agents use aliases like "sonnet"/"opus"/"haiku" which resolve to claude-* model IDs.
+  // For third-party providers, set ANTHROPIC_DEFAULT_*_MODEL so the SDK resolves aliases
+  // to provider-specific model IDs (e.g., "sonnet" → "deepseek-chat" instead of "claude-sonnet-4-6").
+  // Hoisted above the OpenAI early return so both protocol paths benefit.
+  const aliases = effectiveProviderEnv?.modelAliases;
+  if (aliases) {
+    if (aliases.sonnet) env.ANTHROPIC_DEFAULT_SONNET_MODEL = aliases.sonnet;
+    if (aliases.opus) env.ANTHROPIC_DEFAULT_OPUS_MODEL = aliases.opus;
+    if (aliases.haiku) env.ANTHROPIC_DEFAULT_HAIKU_MODEL = aliases.haiku;
+    console.log(`[env] Model aliases set: sonnet=${aliases.sonnet ?? '(none)'}, opus=${aliases.opus ?? '(none)'}, haiku=${aliases.haiku ?? '(none)'}`);
+  }
+
   // OpenAI Bridge: if provider uses OpenAI protocol, loopback to sidecar
   if (effectiveProviderEnv?.apiProtocol === 'openai' && sidecarPort > 0) {
     // SDK requests go to sidecar's /v1/messages route, which translates to OpenAI format
@@ -2419,6 +2432,7 @@ export function buildClaudeSessionEnv(providerEnv?: ProviderEnv): NodeJS.Process
       maxOutputTokens: effectiveProviderEnv.maxOutputTokens,
       maxOutputTokensParamName: effectiveProviderEnv.maxOutputTokensParamName,
       upstreamFormat: effectiveProviderEnv.upstreamFormat,
+      modelAliases: effectiveProviderEnv.modelAliases,
     };
     console.log(`[env] OpenAI bridge: ANTHROPIC_BASE_URL → loopback :${sidecarPort}, upstream → ${effectiveProviderEnv.baseUrl}, proxy vars stripped`);
     return env;
@@ -2483,18 +2497,6 @@ export function buildClaudeSessionEnv(providerEnv?: ProviderEnv): NodeJS.Process
     delete env.ANTHROPIC_AUTH_TOKEN;
     delete env.ANTHROPIC_API_KEY;
     console.log('[env] ANTHROPIC_AUTH_TOKEN cleared (using default auth)');
-  }
-
-  // ── Model alias mapping for sub-agents ──
-  // SDK sub-agents use aliases like "sonnet"/"opus"/"haiku" which resolve to claude-* model IDs.
-  // For third-party providers, set ANTHROPIC_DEFAULT_*_MODEL so the SDK resolves aliases
-  // to provider-specific model IDs (e.g., "sonnet" → "deepseek-chat" instead of "claude-sonnet-4-6").
-  const aliases = effectiveProviderEnv?.modelAliases;
-  if (aliases) {
-    if (aliases.sonnet) env.ANTHROPIC_DEFAULT_SONNET_MODEL = aliases.sonnet;
-    if (aliases.opus) env.ANTHROPIC_DEFAULT_OPUS_MODEL = aliases.opus;
-    if (aliases.haiku) env.ANTHROPIC_DEFAULT_HAIKU_MODEL = aliases.haiku;
-    console.log(`[env] Model aliases set: sonnet=${aliases.sonnet ?? '(none)'}, opus=${aliases.opus ?? '(none)'}, haiku=${aliases.haiku ?? '(none)'}`);
   }
 
   return env;
