@@ -855,9 +855,14 @@ pub async fn spawn_plugin_bridge<R: tauri::Runtime>(
         let openclaw_pkg = std::path::Path::new(plugin_dir)
             .join("node_modules").join("openclaw").join("package.json");
         let needs_repair = if openclaw_pkg.exists() {
-            // Check if it's our shim (name="openclaw", version contains "shim")
+            // Parse JSON and check version field specifically (not raw string search)
             std::fs::read_to_string(&openclaw_pkg)
-                .map(|s| !s.contains("-shim"))
+                .ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .map(|v| !v.get("version")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .contains("-shim"))
                 .unwrap_or(true)
         } else {
             true // Missing entirely
@@ -1352,7 +1357,7 @@ pub async fn install_openclaw_plugin<R: tauri::Runtime>(
             let node_dir = node_path.parent().map(|p| p.to_path_buf());
             match tokio::task::spawn_blocking(move || {
                 let mut cmd = crate::process_cmd::new(&node_path);
-                cmd.args([npm_cli.to_str().unwrap_or(""), "install", "--ignore-scripts"])
+                cmd.args([npm_cli.to_str().unwrap_or(""), "install", "--ignore-scripts", "--omit=peer"])
                     .current_dir(&repair_dir)
                     .env("NODE_OPTIONS", "--no-experimental-require-module");
                 if let Some(ref nd) = node_dir {
