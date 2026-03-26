@@ -287,6 +287,7 @@ async function ensureAgentDir(dir: string): Promise<string> {
 interface SkillsConfig {
   seeded: string[];
   disabled: string[];
+  generation: number;  // Monotonic counter — incremented on every skill CRUD operation
 }
 
 function getSkillsConfigPath(): string {
@@ -296,13 +297,14 @@ function getSkillsConfigPath(): string {
 
 function readSkillsConfig(): SkillsConfig {
   const configPath = getSkillsConfigPath();
-  const defaults: SkillsConfig = { seeded: [], disabled: [] };
+  const defaults: SkillsConfig = { seeded: [], disabled: [], generation: 0 };
   try {
     if (existsSync(configPath)) {
       const raw = JSON.parse(readFileSync(configPath, 'utf-8'));
       return {
         seeded: Array.isArray(raw?.seeded) ? raw.seeded : defaults.seeded,
         disabled: Array.isArray(raw?.disabled) ? raw.disabled : defaults.disabled,
+        generation: typeof raw?.generation === 'number' ? raw.generation : 0,
       };
     }
   } catch (err) {
@@ -316,10 +318,52 @@ function writeSkillsConfig(config: SkillsConfig): void {
   try {
     const dir = dirname(configPath);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    // Auto-increment generation on every write — signals Tab Sidecars to re-sync symlinks
+    config.generation = (config.generation || 0) + 1;
     writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
   } catch (err) {
     console.error('[skills-config] Error writing config:', err);
   }
+}
+
+/**
+ * Bump skills generation counter without changing seeded/disabled lists.
+ * Called after skill CRUD operations (create/update/delete/upload/import)
+ * that don't go through writeSkillsConfig but DO change the available skill set.
+ * Tab Sidecars detect this change and re-sync symlinks on next /api/commands fetch.
+ */
+function bumpSkillsGeneration(): void {
+  const config = readSkillsConfig();
+  writeSkillsConfig(config);
+}
+
+/**
+ * Lazy skill sync: Track the last generation we synced to avoid redundant sync work.
+ * When a Tab Sidecar's /api/commands or /api/skills is called, we compare the current
+ * generation in skills-config.json against this value. Only if they differ do we run
+ * syncProjectUserConfig(). This covers the case where the Global Sidecar modified
+ * global skills (create/toggle/delete) without the Tab Sidecar knowing.
+ */
+let lastSyncedSkillsGeneration = -1;  // -1 forces first sync
+
+/**
+ * Sync project skill symlinks if the skills generation has changed.
+ * Returns true if sync was performed, false if skipped (already up-to-date).
+ */
+function syncSkillsIfNeeded(projectDir: string): boolean {
+  const config = readSkillsConfig();
+  if (config.generation === lastSyncedSkillsGeneration) return false;
+  syncProjectUserConfig(projectDir);
+  lastSyncedSkillsGeneration = config.generation;
+  return true;
+}
+
+/**
+ * Mark the current generation as synced (call after explicit syncProjectUserConfig
+ * in CRUD handlers to avoid redundant re-sync on next /api/commands fetch).
+ */
+function markSkillsSynced(): void {
+  lastSyncedSkillsGeneration = readSkillsConfig().generation;
 }
 
 /**
@@ -4611,6 +4655,10 @@ async function main() {
       // GET /api/commands - Get all available slash commands and skills
       if (pathname === '/api/commands' && request.method === 'GET') {
         try {
+          // Lazy sync: only re-sync symlinks if global skills have changed (generation counter).
+          // Covers the case where Global Sidecar (Settings) modified skills without Tab Sidecar knowing.
+          if (currentAgentDir) syncSkillsIfNeeded(currentAgentDir);
+
           // Start with empty array, builtin commands added at the end
           // Order: project commands -> user commands -> skills -> builtin (so custom can override builtin)
           const commands: SlashCommand[] = [];
@@ -5067,6 +5115,9 @@ async function main() {
       // Supports ?agentDir= for listing skills from a specific workspace (e.g. from Launcher)
       if (pathname === '/api/skills' && request.method === 'GET') {
         try {
+          // Lazy sync: ensure symlinks are current before listing
+          if (currentAgentDir) syncSkillsIfNeeded(currentAgentDir);
+
           const scope = url.searchParams.get('scope') || 'all';
           const queryAgentDir = url.searchParams.get('agentDir');
           const { skillsDir: effectiveSkillsDir } = getProjectBaseDirs(queryAgentDir);
@@ -5142,8 +5193,8 @@ async function main() {
           }
           writeSkillsConfig(config);
           // Re-sync project skill symlinks if this sidecar has an agentDir
-          // (Global Sidecar has no agentDir; Tab Sidecars will sync on next session start)
-          if (agentDir) syncProjectUserConfig(agentDir);
+          // (Global Sidecar has no agentDir; Tab Sidecars will sync on next /api/commands or /api/skills)
+          if (agentDir) { syncProjectUserConfig(agentDir); markSkillsSynced(); }
           return jsonResponse({ success: true });
         } catch (error) {
           console.error('[api/skill/toggle-enable] Error:', error);
@@ -5296,8 +5347,11 @@ async function main() {
             }
           }
 
-          // Imported user skills — sync symlinks into project
-          if (synced > 0 && agentDir) syncProjectUserConfig(agentDir);
+          // Imported user skills — bump generation + sync symlinks into project
+          if (synced > 0) {
+            bumpSkillsGeneration();
+            if (agentDir) { syncProjectUserConfig(agentDir); markSkillsSynced(); }
+          }
           return jsonResponse({
             success: true,
             synced,
@@ -5410,8 +5464,11 @@ async function main() {
             // Write content to new location
             writeFileSync(skillPath, content, 'utf-8');
 
-            // User skill renamed — re-sync to fix old dangling symlink + create new one
-            if (payload.scope === 'user' && agentDir) syncProjectUserConfig(agentDir);
+            // User skill renamed — bump generation + re-sync to fix old dangling symlink + create new one
+            if (payload.scope === 'user') {
+              bumpSkillsGeneration();
+              if (agentDir) { syncProjectUserConfig(agentDir); markSkillsSynced(); }
+            }
             return jsonResponse({
               success: true,
               path: skillPath,
@@ -5459,8 +5516,11 @@ async function main() {
           }
 
           rmSync(skillDir, { recursive: true, force: true });
-          // User skill deleted — re-sync to remove dangling symlinks in project
-          if (scope === 'user' && agentDir) syncProjectUserConfig(agentDir);
+          // User skill deleted — bump generation + re-sync to remove dangling symlinks
+          if (scope === 'user') {
+            bumpSkillsGeneration();
+            if (agentDir) { syncProjectUserConfig(agentDir); markSkillsSynced(); }
+          }
           return jsonResponse({ success: true });
         } catch (error) {
           console.error('[api/skill] Error:', error);
@@ -5507,8 +5567,9 @@ async function main() {
           // Copy the skill folder
           copyDirRecursiveSync(srcDir, destDir, '[api/skill/copy-to-global]');
 
-          // Sync symlinks into project
-          if (currentAgentDir) syncProjectUserConfig(currentAgentDir);
+          // Bump generation + sync symlinks into project
+          bumpSkillsGeneration();
+          if (currentAgentDir) { syncProjectUserConfig(currentAgentDir); markSkillsSynced(); }
 
           return jsonResponse({ success: true, folderName });
         } catch (error) {
@@ -5559,8 +5620,11 @@ async function main() {
           const skillPath = join(skillDir, 'SKILL.md');
           writeFileSync(skillPath, content, 'utf-8');
 
-          // New user skill — sync symlink into project so SDK can discover it
-          if (payload.scope === 'user' && agentDir) syncProjectUserConfig(agentDir);
+          // New user skill — bump generation so Tab Sidecars re-sync symlinks
+          if (payload.scope === 'user') {
+            bumpSkillsGeneration();
+            if (agentDir) { syncProjectUserConfig(agentDir); markSkillsSynced(); }
+          }
           return jsonResponse({ success: true, path: skillPath, folderName });
         } catch (error) {
           console.error('[api/skill/create] Error:', error);
@@ -5682,6 +5746,10 @@ async function main() {
                 writeFileSync(fullPath, entry.getData());
               }
 
+              if (payload.scope === 'user') {
+                bumpSkillsGeneration();
+                if (agentDir) { syncProjectUserConfig(agentDir); markSkillsSynced(); }
+              }
               return jsonResponse({
                 success: true,
                 folderName,
@@ -5718,6 +5786,10 @@ async function main() {
             const skillPath = join(skillDir, 'SKILL.md');
             writeFileSync(skillPath, fileBuffer);
 
+            if (payload.scope === 'user') {
+              bumpSkillsGeneration();
+              if (agentDir) { syncProjectUserConfig(agentDir); markSkillsSynced(); }
+            }
             return jsonResponse({
               success: true,
               folderName,
@@ -5829,6 +5901,10 @@ async function main() {
 
           copyDir(sourcePath, targetDir);
 
+          if (payload.scope === 'user') {
+            bumpSkillsGeneration();
+            if (agentDir) { syncProjectUserConfig(agentDir); markSkillsSynced(); }
+          }
           return jsonResponse({
             success: true,
             folderName,
