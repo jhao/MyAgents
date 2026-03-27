@@ -20,6 +20,20 @@
 - `src/shared/` — 前后端共享类型
 - `src-tauri/` — Tauri Rust 层
 - `specs/` — 设计文档（tech_docs/、guides/、prd/、research/）
+- `bundled-agents/myagents_helper/` — 内置 MA 小助理（见下方说明）
+
+### 内置 MA 小助理（`bundled-agents/myagents_helper/`）
+
+应用内置了一个 AI 助手（MA 小助理），运行在 `~/.myagents/` 工作区中，职能是产品首席客服 — 帮用户诊断问题、配置工具、管理 Agent。
+
+**核心机制**：小助理通过 `/self-config` Skill 调用内置 `myagents` CLI 工具，**直接执行**用户请求的管理操作（配置 Provider、安装 MCP、管理 Agent Channel、创建定时任务等），而不是输出操作步骤让用户自己做。CLI 通过 Admin API（`/api/admin/*`）与 Rust Management API 通信，能力与 GUI 对等。
+
+**文件结构**：
+- `CLAUDE.md` — 小助理的元认知（架构速览、日志格式、错误速查表、诊断工作流）
+- `.claude/skills/self-config/SKILL.md` — CLI 操作技能（MCP/Provider/Agent/Cron/Plugin CRUD）
+- `.claude/skills/support/SKILL.md` — 用户支持技能（日志分析、Bug Report 生成）
+
+**开发约束**：修改 `bundled-agents/myagents_helper/` 的 CLAUDE.md 或 Skills 后，MUST bump `ADMIN_AGENT_VERSION`（`src-tauri/src/commands.rs`），否则 `cmd_sync_admin_agent` 版本门控不会触发同步，用户端小助理不会更新。
 
 ## 开发命令
 
