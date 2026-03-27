@@ -1083,6 +1083,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
               permissionMode: cron.config.permissionMode,
               providerEnv: cron.config.providerEnv,
               schedule: cron.config.schedule,
+              delivery: cron.config.delivery,
             });
             await startCronTaskIpc(task.id);
             await startCronScheduler(task.id);
@@ -1807,6 +1808,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
         onClose={() => setShowCronSettings(false)}
         initialPrompt={cronPrompt}
         initialConfig={cronState.config}
+        workspacePath={agentDir}
         onConfirm={async (config: CronSettingsResult) => {
           const providerEnv = buildProviderEnv(currentProvider);
 

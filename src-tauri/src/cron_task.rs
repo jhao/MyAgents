@@ -2075,6 +2075,8 @@ pub async fn cmd_update_cron_task_fields(
     notify_enabled: Option<bool>,
     model: Option<String>,
     permission_mode: Option<String>,
+    delivery: Option<CronDelivery>,
+    clear_delivery: Option<bool>,
 ) -> Result<CronTask, String> {
     let manager = get_cron_task_manager();
 
@@ -2116,6 +2118,8 @@ pub async fn cmd_update_cron_task_fields(
         if let Some(ne) = notify_enabled { task.notify_enabled = ne; }
         if let Some(m) = model { task.model = Some(m); }
         if let Some(pm) = permission_mode { task.permission_mode = pm; }
+        if let Some(d) = delivery { task.delivery = Some(d); }
+        else if clear_delivery == Some(true) { task.delivery = None; }
         task.updated_at = Utc::now();
     }
 

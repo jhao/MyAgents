@@ -20,9 +20,11 @@ import WorkspaceIcon from './launcher/WorkspaceIcon';
 import { useToast } from './Toast';
 import { useConfig } from '@/hooks/useConfig';
 import ConfirmDialog from './ConfirmDialog';
+import CustomSelect from './CustomSelect';
 import TaskRunHistory from './scheduled-tasks/TaskRunHistory';
 import ScheduleTypeTabs from './scheduled-tasks/ScheduleTypeTabs';
 import * as cronClient from '@/api/cronTaskClient';
+import { useDeliveryChannels } from '@/hooks/useDeliveryChannels';
 
 interface CronTaskDetailPanelProps {
     task: CronTask;
@@ -94,6 +96,8 @@ export default function CronTaskDetailPanel({ task, botInfo, onClose, onDelete, 
     const [editMaxExec, setEditMaxExec] = useState(task.endConditions.maxExecutions ? String(task.endConditions.maxExecutions) : '');
     const [editAiCanExit, setEditAiCanExit] = useState(task.endConditions.aiCanExit);
     const [editNotify, setEditNotify] = useState(task.notifyEnabled);
+    const [editDeliveryBotId, setEditDeliveryBotId] = useState(task.delivery?.botId ?? '');
+    const { options: deliveryOptions, hasChannels, resolveDelivery, getChannelInfo } = useDeliveryChannels(task.workspacePath);
     const isAtSchedule = editSchedule?.kind === 'at';
 
     useEffect(() => {
@@ -109,6 +113,7 @@ export default function CronTaskDetailPanel({ task, botInfo, onClose, onDelete, 
         setEditDeadline(task.endConditions.deadline || '');
         setEditMaxExec(task.endConditions.maxExecutions ? String(task.endConditions.maxExecutions) : '');
         setEditAiCanExit(task.endConditions.aiCanExit); setEditNotify(task.notifyEnabled);
+        setEditDeliveryBotId(task.delivery?.botId ?? '');
         setIsEditing(true);
     }, [task]);
 
@@ -118,16 +123,29 @@ export default function CronTaskDetailPanel({ task, botInfo, onClose, onDelete, 
             const endConditions: CronEndConditions = isAtSchedule ? { aiCanExit: false }
                 : editEndMode === 'forever' ? { aiCanExit: editAiCanExit }
                 : { deadline: editDeadline ? new Date(editDeadline).toISOString() : undefined, maxExecutions: editMaxExec ? parseInt(editMaxExec, 10) : undefined, aiCanExit: editAiCanExit };
+            // Delivery update logic: set if resolved, clear if user chose default, preserve if unchanged
+            const deliveryFields: { delivery?: import('@/types/cronTask').CronDelivery; clearDelivery?: boolean } = {};
+            if (editDeliveryBotId) {
+                const resolved = resolveDelivery(editDeliveryBotId);
+                if (resolved) {
+                    deliveryFields.delivery = resolved;
+                }
+                // If channel was removed and can't resolve, don't touch delivery (preserve existing)
+            } else {
+                // User explicitly selected "桌面通知" (empty value) — clear delivery
+                deliveryFields.clearDelivery = true;
+            }
             await cronClient.updateCronTaskFields(task.id, {
                 name: editName.trim() || undefined, prompt: editPrompt.trim(),
                 schedule: editSchedule ?? undefined, intervalMinutes: editSchedule?.kind === 'every' ? editSchedule.minutes : editInterval,
                 endConditions, notifyEnabled: editNotify,
+                ...deliveryFields,
             });
             if (!isMountedRef.current) return;
             toast.success('任务已更新'); onClose(); // Close to refresh — cron:task-updated event triggers parent list reload
         } catch (err) { if (!isMountedRef.current) return; toast.error(`更新失败: ${err instanceof Error ? err.message : String(err)}`); }
         finally { if (isMountedRef.current) setIsSaving(false); }
-    }, [task.id, editName, editPrompt, editSchedule, editInterval, editEndMode, editDeadline, editMaxExec, editAiCanExit, editNotify, isAtSchedule, toast, onClose]);
+    }, [task.id, editName, editPrompt, editSchedule, editInterval, editEndMode, editDeadline, editMaxExec, editAiCanExit, editNotify, editDeliveryBotId, resolveDelivery, isAtSchedule, toast, onClose]);
 
     const handleDelete = useCallback(async () => {
         setIsDeleting(true); try { await onDelete(task.id); onClose(); } catch { /* caller handles */ } finally { if (isMountedRef.current) { setIsDeleting(false); setShowDeleteConfirm(false); } }
@@ -239,6 +257,14 @@ export default function CronTaskDetailPanel({ task, botInfo, onClose, onDelete, 
                                     <div className="flex items-center gap-2.5"><Bell className="h-4 w-4 text-[var(--ink-muted)]" /><span className="text-sm text-[var(--ink)]">每次执行完即发送通知</span></div>
                                     <ToggleSwitch enabled={editNotify} onChange={setEditNotify} />
                                 </div>
+
+                                {/* 投递渠道 — 仅在通知开启且有可用 Channel 时显示 */}
+                                {editNotify && hasChannels && (
+                                    <div className="space-y-2">
+                                        <label className="text-sm font-medium text-[var(--ink)]">投递渠道</label>
+                                        <CustomSelect value={editDeliveryBotId} options={deliveryOptions} onChange={setEditDeliveryBotId} placeholder="桌面通知（默认）" />
+                                    </div>
+                                )}
                             </>
                         ) : (
                             /* ====== DETAIL MODE ====== */
@@ -309,6 +335,13 @@ export default function CronTaskDetailPanel({ task, botInfo, onClose, onDelete, 
                                         <DetailTag label={task.endConditions.maxExecutions ? `最多 ${task.endConditions.maxExecutions} 次` : '无限次'} />
                                         <DetailTag label={task.endConditions.aiCanExit ? 'AI 可退出' : 'AI 不可退出'} />
                                         <DetailTag label={task.notifyEnabled ? '通知开启' : '通知关闭'} />
+                                        {task.delivery && (() => {
+                                            const info = getChannelInfo(task.delivery.botId);
+                                            const label = info
+                                                ? `投递: ${info.name} (${info.platform})${info.status !== 'online' ? ' · 离线' : ''}`
+                                                : `投递: ${task.delivery.botId} (${task.delivery.platform}) · 已移除`;
+                                            return <DetailTag label={label} />;
+                                        })()}
                                     </div>
                                 </div>
 

@@ -16,6 +16,7 @@ import * as cronClient from '@/api/cronTaskClient';
 import { getSessions, type SessionMetadata } from '@/api/sessionClient';
 import type { CronSchedule, CronEndConditions, CronRunMode } from '@/types/cronTask';
 import { MIN_CRON_INTERVAL } from '@/types/cronTask';
+import { useDeliveryChannels } from '@/hooks/useDeliveryChannels';
 
 function toLocalDateTimeString(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -99,6 +100,7 @@ export default function TaskCreateModal({ onClose, onCreated }: TaskCreateModalP
   const [schedule, setSchedule] = useState<CronSchedule | null>(null);
   const [intervalMinutes, setIntervalMinutes] = useState(30);
   const [notifyEnabled, setNotifyEnabled] = useState(true);
+  const [deliveryBotId, setDeliveryBotId] = useState('');
   const [runMode, setRunMode] = useState<CronRunMode>('new_session');
   const [selectedSessionId, setSelectedSessionId] = useState<string>('');
   const [workspaceSessions, setWorkspaceSessions] = useState<SessionMetadata[]>([]);
@@ -110,6 +112,7 @@ export default function TaskCreateModal({ onClose, onCreated }: TaskCreateModalP
   const [aiCanExit, setAiCanExit] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
 
+  const { options: deliveryOptions, hasChannels, resolveDelivery } = useDeliveryChannels(selectedProjectPath);
   const isAtSchedule = schedule?.kind === 'at';
 
   useEffect(() => {
@@ -185,10 +188,12 @@ export default function TaskCreateModal({ onClose, onCreated }: TaskCreateModalP
           ? { aiCanExit }
           : { deadline: deadline ? new Date(deadline).toISOString() : undefined, maxExecutions: maxExecutions ? parseInt(maxExecutions, 10) : undefined, aiCanExit };
 
+      const delivery = (notifyEnabled && deliveryBotId) ? resolveDelivery(deliveryBotId) : undefined;
       const task = await cronClient.createCronTask({
         workspacePath: selectedProjectPath, sessionId, prompt: prompt.trim(),
         intervalMinutes: schedule?.kind === 'every' ? schedule.minutes : intervalMinutes,
         endConditions, runMode, notifyEnabled, schedule: schedule ?? undefined, name: name.trim() || undefined,
+        delivery,
       });
       await cronClient.startCronTask(task.id);
       await cronClient.startCronScheduler(task.id);
@@ -198,7 +203,7 @@ export default function TaskCreateModal({ onClose, onCreated }: TaskCreateModalP
     } catch (err) {
       toast.error(`创建失败: ${err instanceof Error ? err.message : String(err)}`);
     } finally { setIsCreating(false); }
-  }, [errors, isCreating, name, prompt, selectedProjectPath, schedule, intervalMinutes, endConditionMode, deadline, maxExecutions, aiCanExit, notifyEnabled, runMode, selectedSessionId, onClose, onCreated, toast, isAtSchedule]);
+  }, [errors, isCreating, name, prompt, selectedProjectPath, schedule, intervalMinutes, endConditionMode, deadline, maxExecutions, aiCanExit, notifyEnabled, deliveryBotId, resolveDelivery, runMode, selectedSessionId, onClose, onCreated, toast, isAtSchedule]);
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/30 backdrop-blur-sm"
@@ -346,6 +351,14 @@ export default function TaskCreateModal({ onClose, onCreated }: TaskCreateModalP
             </div>
             <ToggleSwitch enabled={notifyEnabled} onChange={setNotifyEnabled} />
           </div>
+
+          {/* 投递渠道 — 仅在通知开启且有可用 Channel 时显示 */}
+          {notifyEnabled && hasChannels && (
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-[var(--ink)]">投递渠道</label>
+              <CustomSelect value={deliveryBotId} options={deliveryOptions} onChange={setDeliveryBotId} placeholder="桌面通知（默认）" />
+            </div>
+          )}
         </div>
 
         {/* ── Footer ── */}

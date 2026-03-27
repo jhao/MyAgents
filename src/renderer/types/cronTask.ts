@@ -25,6 +25,15 @@ export interface CronEndConditions {
 }
 
 /**
+ * Delivery target for cron task results (mirrors Rust CronDelivery)
+ */
+export interface CronDelivery {
+  botId: string;
+  chatId: string;
+  platform: string;
+}
+
+/**
  * Flexible schedule types for cron tasks (mirrors Rust CronSchedule)
  */
 export type CronSchedule =
@@ -57,6 +66,8 @@ export interface CronTask {
   lastError?: string;
   /** Source IM Bot ID that created this task */
   sourceBotId?: string;
+  /** Where to deliver execution results (IM channel) */
+  delivery?: CronDelivery;
   /** Flexible schedule (overrides intervalMinutes when present) */
   schedule?: CronSchedule;
   /** Human-readable name for the task */
@@ -103,6 +114,8 @@ export interface CronTaskConfig {
   schedule?: CronSchedule;
   /** Human-readable name */
   name?: string;
+  /** Where to deliver execution results (IM channel) */
+  delivery?: CronDelivery;
 }
 
 /**

@@ -5,6 +5,8 @@ import { useState, useCallback, useMemo, useRef } from 'react';
 import type { CronEndConditions, CronRunMode, CronTaskConfig, CronSchedule } from '@/types/cronTask';
 import { MIN_CRON_INTERVAL } from '@/types/cronTask';
 import ScheduleTypeTabs from '@/components/scheduled-tasks/ScheduleTypeTabs';
+import CustomSelect from '@/components/CustomSelect';
+import { useDeliveryChannels } from '@/hooks/useDeliveryChannels';
 
 /** Toggle Switch */
 function ToggleSwitch({ enabled, onChange }: { enabled: boolean; onChange: (v: boolean) => void }) {
@@ -73,6 +75,7 @@ type InitialConfig = {
   notifyEnabled: boolean;
   schedule?: CronSchedule;
   executionTarget?: ExecutionTarget;
+  delivery?: import('@/types/cronTask').CronDelivery;
 };
 
 interface CronTaskSettingsModalProps {
@@ -81,6 +84,8 @@ interface CronTaskSettingsModalProps {
   onConfirm: (config: CronSettingsResult) => void;
   initialPrompt?: string;
   initialConfig?: InitialConfig | null;
+  /** Current workspace path for delivery channel grouping */
+  workspacePath?: string;
 }
 
 function toLocalDateTimeString(d: Date): string {
@@ -94,6 +99,7 @@ function CronTaskSettingsForm({
   initialConfig,
   onClose,
   onConfirm,
+  workspacePath,
 }: Omit<CronTaskSettingsModalProps, 'isOpen'>) {
   // Execution target: current session (legacy behavior) or new standalone task
   const [executionTarget, setExecutionTarget] = useState<ExecutionTarget>(initialConfig?.executionTarget ?? 'current_session');
@@ -106,6 +112,8 @@ function CronTaskSettingsForm({
   const runMode: CronRunMode = executionTarget === 'current_session' ? 'single_session' : 'new_session';
 
   const [notifyEnabled, setNotifyEnabled] = useState(initialConfig?.notifyEnabled ?? true);
+  const [deliveryBotId, setDeliveryBotId] = useState(initialConfig?.delivery?.botId ?? '');
+  const { options: deliveryOptions, hasChannels, resolveDelivery } = useDeliveryChannels(workspacePath);
 
   // End conditions — pre-compute initial values to avoid purity issues
   const [endCondInit] = useState(() => {
@@ -177,6 +185,7 @@ function CronTaskSettingsForm({
             aiCanExit,
           };
 
+    const delivery = (notifyEnabled && deliveryBotId) ? resolveDelivery(deliveryBotId) : undefined;
     onConfirm({
       prompt: (initialPrompt ?? '').trim(),
       intervalMinutes: schedule?.kind === 'every' ? schedule.minutes : intervalMinutes,
@@ -185,8 +194,9 @@ function CronTaskSettingsForm({
       notifyEnabled,
       executionTarget,
       schedule: schedule ?? undefined,
+      delivery,
     });
-  }, [isValid, initialPrompt, schedule, intervalMinutes, runMode, notifyEnabled, endMode, aiCanExit, useDeadline, deadline, useMaxExecutions, maxExecutions, executionTarget, isAtSchedule, onConfirm]);
+  }, [isValid, initialPrompt, schedule, intervalMinutes, runMode, notifyEnabled, deliveryBotId, resolveDelivery, endMode, aiCanExit, useDeadline, deadline, useMaxExecutions, maxExecutions, executionTarget, isAtSchedule, onConfirm]);
 
   // Backdrop click handling
   const mouseDownOnBackdropRef = useRef(false);
@@ -313,6 +323,14 @@ function CronTaskSettingsForm({
             <ToggleSwitch enabled={notifyEnabled} onChange={setNotifyEnabled} />
           </div>
 
+          {/* 投递渠道 — 仅在通知开启且有可用 Channel 时显示 */}
+          {notifyEnabled && hasChannels && (
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-[var(--ink)]">投递渠道</label>
+              <CustomSelect value={deliveryBotId} options={deliveryOptions} onChange={setDeliveryBotId} placeholder="桌面通知（默认）" />
+            </div>
+          )}
+
           {/* Validation Errors */}
           {validationErrors.length > 0 && (
             <div className="flex items-start gap-2 rounded-lg border border-[var(--error)]/30 bg-[var(--error)]/5 p-3">
@@ -343,6 +361,7 @@ export default function CronTaskSettingsModal({
   onConfirm,
   initialPrompt = '',
   initialConfig = null,
+  workspacePath,
 }: CronTaskSettingsModalProps) {
   if (!isOpen) return null;
 
@@ -352,6 +371,7 @@ export default function CronTaskSettingsModal({
       initialConfig={initialConfig}
       onClose={onClose}
       onConfirm={onConfirm}
+      workspacePath={workspacePath}
     />
   );
 }
