@@ -12,6 +12,7 @@ import SessionHistoryDropdown from '@/components/SessionHistoryDropdown';
 import { FileActionProvider } from '@/context/FileActionContext';
 import SimpleChatInput, { type ImageAttachment, type SimpleChatInputHandle } from '@/components/SimpleChatInput';
 import QueryNavigator from '@/components/chat/QueryNavigator';
+import SelectionCommentMenu from '@/components/SelectionCommentMenu';
 import { UnifiedLogsPanel } from '@/components/UnifiedLogsPanel';
 import WorkspaceConfigPanel, { type Tab as WorkspaceTab } from '@/components/WorkspaceConfigPanel';
 import CronTaskSettingsModal from '@/components/cron/CronTaskSettingsModal';
@@ -1181,6 +1182,33 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
     [handleForceExecuteQueued]
   );
 
+  // Format selected text as Markdown blockquote with [引用] header
+  const formatQuote = useCallback((text: string) =>
+    `[引用]\n${text.split('\n').map(line => `> ${line}`).join('\n')}`,
+  []);
+
+  // Quote selected text — append to input with leading newline
+  const handleQuoteSelection = useCallback((selectedText: string) => {
+    const quote = `\n${formatQuote(selectedText)}\n`;
+    // Read current input value from the textarea DOM element
+    const currentValue = inputRef.current?.value ?? '';
+    const appended = currentValue + quote;
+    chatInputRef.current?.setValue(appended);
+    // Move cursor to end after value is set
+    setTimeout(() => {
+      const textarea = inputRef.current;
+      if (textarea) {
+        textarea.setSelectionRange(appended.length, appended.length);
+      }
+    }, 0);
+  }, [inputRef, formatQuote]);
+
+  // Elaborate = quote + "深入讲讲" then auto-send (uses ref for stability)
+  const handleElaborateSelection = useCallback((selectedText: string) => {
+    const prompt = `${formatQuote(selectedText)}\n\n深入讲讲`;
+    void handleSendMessageRef.current(prompt);
+  }, [formatQuote]);
+
   // Navigate to a specific query message (used by QueryNavigator with virtuoso)
   // Uses messagesRef to avoid invalidating the callback on every streaming token update
   const handleNavigateToQuery = useCallback((messageId: string) => {
@@ -1652,6 +1680,12 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
               </div>
             )}
           </FileActionProvider>
+
+          {/* Text selection floating menu for quoting AI text */}
+          <SelectionCommentMenu
+            onQuote={handleQuoteSelection}
+            onElaborate={handleElaborateSelection}
+          />
 
           {/* Floating input with integrated cron task components */}
           <SimpleChatInput

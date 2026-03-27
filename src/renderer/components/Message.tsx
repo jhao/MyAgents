@@ -5,21 +5,10 @@ import { track } from '@/analytics';
 import AttachmentPreviewList from '@/components/AttachmentPreviewList';
 import BlockGroup from '@/components/BlockGroup';
 import Markdown from '@/components/Markdown';
+import Tip from '@/components/Tip';
 import { useImagePreview } from '@/context/ImagePreviewContext';
 import type { ContentBlock, Message as MessageType } from '@/types/chat';
 import { SOURCE_LABELS, type MessageSource } from '../../shared/types/im';
-
-/** Lightweight CSS-only tooltip — appears instantly on hover, no JS timers. */
-function Tip({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <span className="group/tip relative inline-flex">
-      {children}
-      <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-md bg-[var(--button-dark-bg)]/90 px-2 py-1 text-[11px] text-[var(--button-primary-text)] opacity-0 transition-opacity group-hover/tip:opacity-100">
-        {label}
-      </span>
-    </span>
-  );
-}
 
 interface MessageProps {
   message: MessageType;
@@ -316,7 +305,7 @@ const Message = memo(function Message({ message, isLoading = false, onRewind, on
   // Assistant message
   if (typeof message.content === 'string') {
     return (
-      <div className="flex justify-start w-full px-4 py-2 select-none">
+      <div className="flex justify-start w-full px-4 py-2 select-none" data-role="assistant">
         <div className="w-full max-w-none">
           <div className="text-[var(--ink)] select-text">
             <Markdown>{message.content}</Markdown>
@@ -392,7 +381,7 @@ const Message = memo(function Message({ message, isLoading = false, onRewind, on
     : -1;
 
   return (
-    <div className="flex justify-start select-none">
+    <div className="flex justify-start select-none" data-role="assistant">
       <div className="w-full">
         <article className="w-full px-3 py-2">
           <div className="space-y-3">
