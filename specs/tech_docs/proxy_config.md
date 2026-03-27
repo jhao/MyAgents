@@ -276,3 +276,23 @@ let client = reqwest::Client::builder()
 - `src-tauri/src/sidecar.rs` - Bun Sidecar 代理注入
 - `src-tauri/src/updater.rs` - Updater 代理配置
 - `src-tauri/src/sse_proxy.rs` - SSE 代理禁用
+
+---
+
+## 代理使用场景完整列表
+
+| 组件 | 代理来源 | 特殊处理 |
+|------|---------|---------|
+| Rust reqwest（HTTP proxy） | `proxy_config::read_proxy_settings()` | `local_http` 内置 `.no_proxy()` |
+| Bun Sidecar subprocess | env vars（`HTTP_PROXY` 等） | SDK 子进程继承 |
+| OpenAI Bridge subprocess | **代理变量被剥离** | SDK→Bridge 是 loopback，Bridge→upstream 从 `process.env` 读代理 |
+| Plugin Bridge | `apply_proxy_env()` 注入 | 与 Sidecar 相同逻辑 |
+| Updater | Rust reqwest | 使用 `local_http` |
+
+### SOCKS5 桥接机制
+
+Bun/Node.js 的 `fetch()` 不支持 `socks5://` 环境变量。系统启动 HTTP-to-SOCKS5 桥接代理（`src/server/utils/socks-bridge.ts`）在本地随机端口，SDK subprocess 连接桥接代理而非直连 SOCKS5 服务器。
+
+### OpenAI Bridge 代理剥离
+
+当供应商使用 OpenAI 协议时，SDK subprocess 的 `ANTHROPIC_BASE_URL` 指向 sidecar loopback。此时**必须剥离所有代理变量**，否则 SDK 的 `fetchOptions.proxy` 会将 loopback 请求路由到系统代理（→ 超时/502）。Bridge handler 自身从 `process.env` 读取代理访问上游 API。

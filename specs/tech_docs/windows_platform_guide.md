@@ -246,6 +246,37 @@ Remove-Item src-tauri\target\x86_64-pc-windows-msvc\release\resources -Recurse -
 
 ---
 
+## Pit-of-Success 进程管理模块
+
+### process_cmd (`src-tauri/src/process_cmd.rs`)
+
+所有 Rust 层子进程 MUST 通过 `crate::process_cmd::new()` 创建。内置 Windows `CREATE_NO_WINDOW` 标志，防止 GUI 应用启动子进程时弹出黑色控制台窗口。
+
+### system_binary (`src-tauri/src/system_binary.rs`)
+
+Tauri GUI 应用从 Finder/Explorer 启动时不继承 shell PATH（无 homebrew、无用户 PATH）。`system_binary::find(binary_name)` 自动补充常见路径（`/opt/homebrew/bin`、`/usr/local/bin`、`C:\Program Files\nodejs` 等），确保系统工具（npm、git、pgrep 等）可被发现。
+
+## Plugin 安装 Fallback 链
+
+三级 fallback 确保社区插件安装成功：
+
+```
+1. 系统 npm（system_binary::find("npm")）
+   └─ 失败 →
+2. 内置 npm（bundled Node.js + npm-cli.js）
+   └─ NODE_OPTIONS=--no-experimental-require-module（Windows Node.js v24 CJS/ESM 修复）
+   └─ 失败 →
+3. Bun fallback（bun add）
+```
+
+安装后流程：
+1. `npm/bun install` → 安装插件及其依赖
+2. **依赖修复**：`npm install --ignore-scripts --omit=peer`
+3. **SDK Shim 安装**（最后一步，last-write-wins）：覆盖 `node_modules/openclaw/` 为自定义 shim
+4. **Bridge 启动前 shim 完整性检查**：解析 `package.json` version 字段，检测损坏自动修复
+
+---
+
 ## ⚠️ Windows 依赖项
 
 ### Git for Windows（必需）

@@ -438,7 +438,7 @@ let ack_data = Self::build_ack_frame(&frame);
 ws_write.send(WsMessage::Binary(ack_data.into())).await;
 ```
 
-配合 24 小时 dedup 缓存 TTL 作为防御兜底，防止长时间运行后重连导致消息重复处理。
+配合 72 小时 dedup 缓存 TTL（`DEDUP_TTL_SECS = 72 * 60 * 60`）作为防御兜底，防止长时间运行后重连导致消息重复处理。
 
 ### 2.13 Plugin Bridge（OpenClaw 社区插件桥接）
 
@@ -1028,3 +1028,52 @@ src/shared/types/im.ts         # ImBotConfig, ImBotStatus, ImPlatform, Installed
 | [架构总览](./architecture.md) | MyAgents 整体架构 |
 | [Session ID 架构](./session_id_architecture.md) | Session 管理机制 |
 | [Sidecar 管理](./bundled_bun.md) | Bun Sidecar 生命周期 |
+
+## Agent Channel 架构 (v0.1.41+)
+
+v0.1.41 将 IM Bot 升级为 Agent 实体，Channel 为可插拔连接。新旧系统并存运行：
+
+### 新 Tauri Commands
+
+| 命令 | 用途 |
+|------|------|
+| `cmd_start_agent_channel` | 启动 Agent Channel |
+| `cmd_stop_agent_channel` | 停止 Agent Channel |
+| `cmd_agent_channel_status` | 查询 Channel 状态 |
+| `cmd_all_agents_status` | 查询所有 Agent 状态 |
+| `cmd_update_agent_config` | 更新 Agent 配置 |
+| `cmd_install_openclaw_plugin` | 安装 OpenClaw 社区插件 |
+| `cmd_uninstall_openclaw_plugin` | 卸载插件 |
+| `cmd_list_openclaw_plugins` | 列出已安装插件 |
+
+> 旧命令 `cmd_start_im_bot` 等已标 `@deprecated`，内部转发到新 Agent API。
+
+### InteractionScenario 扩展
+
+系统提示词支持四种场景：
+- `desktop` — 桌面客户端对话
+- `im` — 内置 IM Bot（Telegram/飞书/钉钉）
+- `agent-channel` — Agent Channel（OpenClaw 插件，platform 为任意字符串）
+- `cron` — 定时任务
+
+Agent Channel 与 IM Bot 的区别：`platform` 字段为 `string` 而非固定枚举，支持任意社区插件平台。
+
+### 数据模型
+
+```typescript
+// src/shared/types/agent.ts
+interface AgentConfig {
+  id: string;
+  name: string;
+  workspacePath?: string;
+  providerId?: string;
+  model?: string;
+  channels: ChannelConfig[];
+}
+
+interface ChannelConfig {
+  id: string;
+  type: ChannelType; // 'telegram' | 'dingtalk' | 'openclaw:{pluginId}'
+  // ... credentials per type
+}
+```

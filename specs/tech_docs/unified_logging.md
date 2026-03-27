@@ -221,6 +221,31 @@ for (const entry of entries) {
 [2025-01-25T10:30:46.234Z] Assistant: Hi there!
 ```
 
+## Boot Banner (v0.1.53)
+
+应用启动和每个 Sidecar 创建时输出 `[boot]` 单行自检信息：
+
+```
+[boot] v=0.1.53 build=release os=macos-aarch64 provider=deepseek mcp=2 agents=3 channels=5 cron=12 proxy=false dir=/Users/xxx/.myagents
+[boot] pid=12345 port=31415 bun=1.3.6 workspace=/path session=abc-123 resume=true model=deepseek-chat bridge=yes mcp=playwright,im-cron
+```
+
+**排查第一步**：`grep '[boot]' ./logs/unified-*.log`
+
+## 日志降噪策略 (v0.1.53)
+
+五层过滤将信噪比从 36% 提升到 ~85%：
+
+| 层 | 位置 | 过滤内容 |
+|----|------|---------|
+| L1 | `sse.ts` SILENT_EVENTS | `chat:message-chunk`、`chat:thinking-delta`、`chat:tool-input-delta`、`chat:content-block-stop`、`chat:message-sdk-uuid`、`chat:log` |
+| L2 | `index.ts` SILENT_PATHS | `/health`、`/api/unified-log`、`/agent/dir`、`/sessions`、`/api/commands`、`/api/agents/enabled`、`/api/git/branch` |
+| L3 | `sidecar.rs` bun-out 去重 | Bun logger 初始化后停止 stdout 捕获（检测 `[Logger] Unified logging initialized`） |
+| L4 | `bridge.rs` heartbeat 过滤 | `Heartbeat sent`、`Heartbeat ACK`、`Received op=11` |
+| L5 | `agent-session.ts` SDK message | 摘要替代完整 JSON（`type=assistant model=opus`） |
+
+**时间戳格式**：本地时间 `YYYY-MM-DD HH:MM:SS.mmm`（非 UTC ISO 8601）。
+
 ## 故障排查
 
 ### 日志不显示
