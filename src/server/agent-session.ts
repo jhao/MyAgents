@@ -12,6 +12,7 @@ import { imMediaToolServer, getImMediaContext } from './tools/im-media-tool';
 import { getImBridgeToolsContext, getImBridgeToolServer } from './tools/im-bridge-tools';
 import { getBuiltinMcp } from './tools/builtin-mcp-registry';
 import { startSocksBridge, stopSocksBridge, isSocksBridgeRunning } from './utils/socks-bridge';
+import { startFileWatcher } from './file-watcher';
 import { resolveAuthHeaders, onTokenChange, startTokenRefreshScheduler } from './mcp-oauth';
 // Side-effect imports: each registers itself in the builtin MCP registry
 import './tools/gemini-image-tool';
@@ -531,12 +532,17 @@ let pendingResumeSessionAt: string | undefined;
 // 时间回溯进行中 — 阻止 enqueueUserMessage 并发写入
 let rewindPromise: Promise<unknown> | null = null;
 
-// 当前 SDK session 分配的 UUID 集合（区分「本 session 分配」vs「从磁盘加载的旧 UUID」）。
-// rewindSession 使用此集合校验 lastAssistantUuid 是否属于当前 session：
-// - 属于 → 可安全用于 resumeSessionAt（SDK 一定认识该 UUID）
-// - 不属于 → session 被重建过（如换机、No conversation found 恢复），旧 UUID 对 SDK 无意义，
-//   强行传 resumeSessionAt 会导致 SDK 报错、session 启动失败、用户消息丢失。
+// 当前 SDK session 的 UUID 集合（包含磁盘加载 + 运行时 SDK 输出）。
+// 主要用途：rewindFiles 的前置校验（UUID 不属于当前 session → 跳过 rewindFiles 调用）。
+// 注意：此集合不适合作为 resumeSessionAt 的唯一判断依据 — 磁盘加载的 UUID 可能已过期
+// （session 被重建过），需配合 liveSessionUuids 双层校验。
 const currentSessionUuids = new Set<string>();
+
+// 仅由当前 SDK subprocess stdout 事件填充的 UUID 集合。
+// 当此集合非空时，表示 SDK subprocess 已经运行过并输出了消息 —— 这些 UUID 一定存在于
+// SDK 的 session JSONL 中，可安全用于 resumeSessionAt。
+// 当此集合为空（pre-warm 窗口期，SDK 尚未 system_init）时，回退到 currentSessionUuids。
+const liveSessionUuids = new Set<string>();
 
 // ===== 持久 Session 门控 =====
 // 消息交付：事件驱动替代轮询，generator 阻塞在 waitForMessage 直到新消息到达
@@ -1323,6 +1329,7 @@ async function buildSdkMcpServers(): Promise<Record<string, SdkMcpServerConfig |
   }
 
   for (const server of externalServers) {
+    try {
     // Log server env for debugging
     if (isDebugMode && server.env && Object.keys(server.env).length > 0) {
       console.log(`[agent] MCP ${server.id}: Custom env vars: ${Object.keys(server.env).join(', ')}`);
@@ -1330,7 +1337,8 @@ async function buildSdkMcpServers(): Promise<Record<string, SdkMcpServerConfig |
 
     if (server.type === 'stdio' && server.command) {
       let command = server.command;
-      let args = [...(server.args || [])];
+      // Defensive: args may be non-array (e.g. boolean `true`) due to CLI parsing bugs or manual config edits
+      let args = [...(Array.isArray(server.args) ? server.args : [])];
 
       // For npx commands: prefer system npx → bundled Node.js npx → bun x
       // System Node.js is maintained by the user's package manager, more reliable than our bundled npm.
@@ -1465,6 +1473,11 @@ async function buildSdkMcpServers(): Promise<Record<string, SdkMcpServerConfig |
       console.log(`[agent] MCP ${server.id}: ${server.type} → ${maskedUrl}`);
     } else if (server.type === 'sse' || server.type === 'http') {
       console.warn(`[agent] MCP ${server.id}: Missing url for ${server.type} server, skipping`);
+    }
+    } catch (err) {
+      // Isolate individual MCP errors — one bad config must not take down all MCPs
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[agent] MCP ${server.id}: initialization failed, skipping: ${msg}`);
     }
   }
 
@@ -3374,6 +3387,7 @@ function clearMessageState(): void {
 
   strippedToolResultIds.clear();
   currentSessionUuids.clear();
+  liveSessionUuids.clear();
   isStreamingMessage = false;
   messageSequence = 0;
   pendingConfigRestart = false;
@@ -3606,6 +3620,11 @@ export async function initializeAgent(
   // Initialize logger for new session (lazy file creation)
   initLogger(sessionId);
   console.log(`[agent] init dir=${agentDir} initialPrompt=${hasInitialPrompt ? 'yes' : 'no'} sessionId=${sessionId} resume=${sessionRegistered}`);
+
+  // Start file watcher for workspace directory changes → SSE push to frontend.
+  // Watcher is workspace-scoped (survives session restarts). startFileWatcher()
+  // deduplicates if already watching the same path.
+  startFileWatcher(agentDir);
 
   // Self-resolve workspace config from disk (MCP/provider/model).
   // Eliminates dependency on pre-serialized snapshots (providerEnvJson, mcpServersJson)
@@ -4437,15 +4456,19 @@ export async function rewindSession(userMessageId: string): Promise<{
     persistMessagesToStorage();
 
     // 7. 设置下次 query 的对话截断点
-    //    仅当 UUID 属于当前 SDK session 时才使用 resumeSessionAt。
-    //    旧 UUID（从磁盘加载、来自其他机器/已重建的 session）对当前 SDK 无意义，
-    //    强行传入会导致 SDK 报错 → session 启动失败 → 用户消息丢失。
-    const uuidIsCurrentSession = lastAssistantUuid && currentSessionUuids.has(lastAssistantUuid);
-    if (uuidIsCurrentSession) {
+    //    双层 UUID 校验：
+    //    - liveSessionUuids（运行时 SDK stdout）非空时以它为准 —— UUID 一定在 SDK JSONL 中
+    //    - liveSessionUuids 为空（pre-warm 窗口期）时回退到 currentSessionUuids（含磁盘种子），
+    //      此时 catch block 的 "No message found" 恢复兜底防止过期 UUID 崩溃
+    //    - 两者都不包含 → session 被重建过，旧 UUID 无意义，创建新 session
+    const uuidIsLive = lastAssistantUuid && liveSessionUuids.size > 0
+      ? liveSessionUuids.has(lastAssistantUuid)     // 权威：SDK subprocess 确认过
+      : lastAssistantUuid && currentSessionUuids.has(lastAssistantUuid); // 回退：磁盘种子
+    if (uuidIsLive) {
       pendingResumeSessionAt = lastAssistantUuid;
     } else {
       if (lastAssistantUuid) {
-        console.warn(`[agent] rewind: skipping resumeSessionAt — UUID ${lastAssistantUuid} not in current session (stale from disk/previous session)`);
+        console.warn(`[agent] rewind: skipping resumeSessionAt — UUID ${lastAssistantUuid} not in ${liveSessionUuids.size > 0 ? 'live' : 'current'} session (stale from disk/previous session)`);
       }
       pendingResumeSessionAt = undefined;
       sessionRegistered = false;
@@ -4606,6 +4629,9 @@ async function startStreamingSession(preWarm = false): Promise<void> {
   if (!sessionRegistered) {
     currentSessionUuids.clear();
   }
+  // liveSessionUuids 始终清除 — 新的 subprocess 尚未输出任何消息，
+  // 直到 SDK stdout 事件重新填充后才能作为 resumeSessionAt 的权威来源。
+  liveSessionUuids.clear();
   let preWarmStartedOk = false; // Tracks whether pre-warm received system_init
   let abortedByTimeout = false; // Distinguishes timeout abort from config-change abort
   let detectedAlreadyInUse = false; // stderr reported "Session ID already in use"
@@ -4660,11 +4686,12 @@ async function startStreamingSession(preWarm = false): Promise<void> {
     }
     // sessionRegistered 不在此处修改 — 等待 system_init 确认
 
-    // 消费 rewind 设置的对话截断点
+    // 读取 rewind 设置的对话截断点（不立即消费 — 等 system_init 确认后再清除）
     // 持久 session 模式下，pre-warm 即最终 session（用户消息通过 wakeGenerator 投递），
     // 必须在 pre-warm 时就传 resumeSessionAt，否则 SDK 会加载完整历史不截断
+    // 延迟消费原因：如果 query 因 UUID 无效而启动失败，重试时仍需要 anchor；
+    // catch block 的 "No message found" 恢复会主动清除无效 anchor 防止无限重试。
     const rewindResumeAt = pendingResumeSessionAt;
-    if (rewindResumeAt) pendingResumeSessionAt = undefined;
 
     // Fork detection: if this session was created via fork, override resume/sessionId
     // to use SDK's forkSession option (load source history + branch to new session).
@@ -5040,6 +5067,14 @@ async function startStreamingSession(preWarm = false): Promise<void> {
           console.log('[agent] pre-warm: system_init buffered (will replay on first message)');
         }
 
+        // system_init confirms SDK session started — consume the rewind anchor.
+        // This is the success signal: the UUID was accepted (or wasn't needed).
+        // If the UUID had been invalid, the SDK would have exited with error BEFORE system_init.
+        if (pendingResumeSessionAt) {
+          console.log(`[agent] system_init received — rewind anchor consumed: ${pendingResumeSessionAt}`);
+          pendingResumeSessionAt = undefined;
+        }
+
         // Save SDK session_id and verify unified session status
         if (nextSystemInit.session_id) {
           const isUnified = nextSystemInit.session_id === sessionId;
@@ -5381,6 +5416,7 @@ async function startStreamingSession(preWarm = false): Promise<void> {
         // Track SDK user UUID — only for non-synthetic messages
         if (!(sdkMessage as { isSynthetic?: boolean }).isSynthetic && sdkMessage.uuid) {
           currentSessionUuids.add(sdkMessage.uuid);
+          liveSessionUuids.add(sdkMessage.uuid);
           for (let i = messages.length - 1; i >= 0; i--) {
             if (messages[i].role === 'user' && !messages[i].sdkUuid) {
               messages[i].sdkUuid = sdkMessage.uuid;
@@ -5469,6 +5505,7 @@ async function startStreamingSession(preWarm = false): Promise<void> {
         // （thinking → text），resumeSessionAt 需要最后一条的 UUID 才能保留完整回答
         if (sdkMessage.uuid) {
           currentSessionUuids.add(sdkMessage.uuid);
+          liveSessionUuids.add(sdkMessage.uuid);
           currentAssistant.sdkUuid = sdkMessage.uuid;
           // Broadcast to frontend so fork button appears during streaming
           // (user messages already broadcast this; assistant messages were missing it)
@@ -5870,6 +5907,22 @@ async function startStreamingSession(preWarm = false): Promise<void> {
         schedulePreWarm(); // Establish resumed session so next user message works
       }
       return; // Skip error broadcast, let finally handle cleanup + pre-warm retry
+    }
+
+    // "No message found with message.uuid" recovery: resumeSessionAt pointed to a UUID
+    // that doesn't exist in the SDK's session JSONL. This happens when:
+    //   - Session was rebuilt (No conversation found → new session, old UUIDs stale)
+    //   - SDK's async JSONL save didn't flush before subprocess was interrupted
+    //   - currentSessionUuids (seeded from disk) included UUIDs from a previous SDK session
+    // Fix: clear the invalid rewind anchor so retry resumes with full history intact.
+    // Keep sessionRegistered=true — the session itself exists, only the UUID is wrong.
+    // The retry will use `resume: sessionId` without resumeSessionAt, loading all messages.
+    if (errorMessage.includes('No message found with message.uuid') && sessionRegistered) {
+      console.warn(`[agent] resumeSessionAt UUID rejected by SDK — clearing rewind anchor, retry will resume with full history`);
+      pendingResumeSessionAt = undefined;
+      // Don't modify sessionRegistered — session exists, just the UUID is invalid.
+      // Don't return — let pre-warm retry (finally block) handle recovery.
+      // For non-pre-warm (user message triggered): fall through to error broadcast.
     }
 
     // "No conversation found" recovery: our metadata has sessionRegistered=true but

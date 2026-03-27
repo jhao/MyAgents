@@ -61,6 +61,7 @@
       "../src/shared": "shared",
       "../bundled-skills": "bundled-skills",
       "../bundled-agents": "bundled-agents",
+      "../src/cli": "cli",
       "../mino": "mino",
       "infoplist/en.lproj/InfoPlist.strings": "en.lproj/InfoPlist.strings",
       "infoplist/zh-Hans.lproj/InfoPlist.strings": "zh-Hans.lproj/InfoPlist.strings"

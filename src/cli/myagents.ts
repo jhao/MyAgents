@@ -34,27 +34,41 @@ function parseArgs(args: string[]): { positional: string[]; flags: Record<string
     const arg = args[i];
     if (arg.startsWith('--')) {
       const key = arg.slice(2);
-      // Boolean flags (no value follows, or next arg is also a flag)
+      // Boolean flags (no value follows)
       if (key === 'help' || key === 'json' || key === 'dry-run' || key === 'disable-nonessential') {
         flags[camelCase(key)] = true;
         i++;
         continue;
       }
-      // Key-value flags
-      const value = args[i + 1];
-      if (value === undefined || value.startsWith('--')) {
-        flags[camelCase(key)] = true;
-        i++;
-        continue;
-      }
+      // Repeatable flags: ALWAYS consume the next token as a value, even if it
+      // starts with '--' (e.g. --args "--stdio"). The boolean-fallback check
+      // below must NOT run for repeatable flags — it would overwrite the
+      // accumulated array with `true`.
       if (repeatable.has(key)) {
+        const value = args[i + 1];
+        if (value === undefined) {
+          // No value — normalize to empty array (not boolean) to keep type consistent
+          const cKey = camelCase(key);
+          if (!flags[cKey]) flags[cKey] = [];
+          i++;
+          continue;
+        }
         // Collect values under camelCase key for consistency with non-repeatable flags
         const cKey = camelCase(key);
         const arr = (flags[cKey] as string[]) || [];
         arr.push(value);
         flags[cKey] = arr;
         i += 2;
-      } else {
+        continue;
+      }
+      // Key-value flags (non-repeatable)
+      const value = args[i + 1];
+      if (value === undefined || value.startsWith('--')) {
+        flags[camelCase(key)] = true;
+        i++;
+        continue;
+      }
+      {
         flags[camelCase(key)] = value;
         i += 2;
       }
