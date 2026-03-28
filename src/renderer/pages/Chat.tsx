@@ -1190,16 +1190,18 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
 
   // Quote selected text — append blockquote + placeholder for user to type over
   const handleQuoteSelection = useCallback((selectedText: string) => {
-    const quote = `\n${formatQuote(selectedText)}\n针对引用的内容：`;
-    // Read current input value from the textarea DOM element
     const currentValue = inputRef.current?.value ?? '';
+    // Only prepend \n when there's existing content (so the quote starts on a new line)
+    const prefix = currentValue ? '\n' : '';
+    const quote = `${prefix}${formatQuote(selectedText)}\n针对引用的内容：`;
     const appended = currentValue + quote;
     chatInputRef.current?.setValue(appended);
-    // Move cursor to end after value is set
+    // Move cursor to end + scroll textarea to bottom so user sees the appended quote
     setTimeout(() => {
       const textarea = inputRef.current;
       if (textarea) {
         textarea.setSelectionRange(appended.length, appended.length);
+        textarea.scrollTop = textarea.scrollHeight;
         textarea.focus();
       }
     }, 0);
