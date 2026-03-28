@@ -108,8 +108,8 @@ function CronTaskSettingsForm({
   const [schedule, setSchedule] = useState<CronSchedule | null>(initialConfig?.schedule ?? null);
   const [intervalMinutes, setIntervalMinutes] = useState(initialConfig?.intervalMinutes ?? 30);
 
-  // Run mode (only for current_session — new_task always uses new_session)
-  const runMode: CronRunMode = executionTarget === 'current_session' ? 'single_session' : 'new_session';
+  // Run mode: Loop forces single_session; otherwise current_session→single, new_task→new
+  const runMode: CronRunMode = schedule?.kind === 'loop' ? 'single_session' : (executionTarget === 'current_session' ? 'single_session' : 'new_session');
 
   const [notifyEnabled, setNotifyEnabled] = useState(initialConfig?.notifyEnabled ?? true);
   const [deliveryBotId, setDeliveryBotId] = useState(initialConfig?.delivery?.botId ?? '');
@@ -136,6 +136,7 @@ function CronTaskSettingsForm({
   const [aiCanExit, setAiCanExit] = useState(endCondInit.aiCanExit);
 
   const isAtSchedule = schedule?.kind === 'at';
+  const isLoopSchedule = schedule?.kind === 'loop';
 
   const handleScheduleChange = useCallback((s: CronSchedule | null, m: number) => {
     setSchedule(s);
@@ -229,15 +230,21 @@ function CronTaskSettingsForm({
           <div>
             <SectionHeader icon={MessageSquare}>执行模式</SectionHeader>
             <div className="mt-3">
+              {isLoopSchedule ? (
+                <p className="text-sm text-[var(--ink-muted)]">连续对话（保持上下文）— Ralph Loop 固定使用此模式</p>
+              ) : (
               <div className="flex gap-2">
                 <PillButton selected={executionTarget === 'current_session'} onClick={() => setExecutionTarget('current_session')}>当前对话</PillButton>
                 <PillButton selected={executionTarget === 'new_task'} onClick={() => setExecutionTarget('new_task')}>新开对话</PillButton>
               </div>
+              )}
+              {!isLoopSchedule && (
               <p className="mt-1.5 text-[13px] text-[var(--ink-muted)]">
                 {executionTarget === 'current_session'
                   ? '在当前对话中定时执行，保持上下文'
                   : '创建独立定时任务，不占用当前对话'}
               </p>
+              )}
             </div>
           </div>
 

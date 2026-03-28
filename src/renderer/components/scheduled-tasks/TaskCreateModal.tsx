@@ -114,6 +114,7 @@ export default function TaskCreateModal({ onClose, onCreated }: TaskCreateModalP
 
   const { options: deliveryOptions, hasChannels, resolveDelivery } = useDeliveryChannels(selectedProjectPath);
   const isAtSchedule = schedule?.kind === 'at';
+  const isLoopSchedule = schedule?.kind === 'loop';
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -192,7 +193,7 @@ export default function TaskCreateModal({ onClose, onCreated }: TaskCreateModalP
       const task = await cronClient.createCronTask({
         workspacePath: selectedProjectPath, sessionId, prompt: prompt.trim(),
         intervalMinutes: schedule?.kind === 'every' ? schedule.minutes : intervalMinutes,
-        endConditions, runMode, notifyEnabled, schedule: schedule ?? undefined, name: name.trim() || undefined,
+        endConditions, runMode: isLoopSchedule ? 'single_session' : runMode, notifyEnabled, schedule: schedule ?? undefined, name: name.trim() || undefined,
         delivery,
       });
       await cronClient.startCronTask(task.id);
@@ -203,7 +204,7 @@ export default function TaskCreateModal({ onClose, onCreated }: TaskCreateModalP
     } catch (err) {
       toast.error(`创建失败: ${err instanceof Error ? err.message : String(err)}`);
     } finally { setIsCreating(false); }
-  }, [errors, isCreating, name, prompt, selectedProjectPath, schedule, intervalMinutes, endConditionMode, deadline, maxExecutions, aiCanExit, notifyEnabled, deliveryBotId, resolveDelivery, runMode, selectedSessionId, onClose, onCreated, toast, isAtSchedule]);
+  }, [errors, isCreating, name, prompt, selectedProjectPath, schedule, intervalMinutes, endConditionMode, deadline, maxExecutions, aiCanExit, notifyEnabled, deliveryBotId, resolveDelivery, runMode, selectedSessionId, onClose, onCreated, toast, isAtSchedule, isLoopSchedule]);
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/30 backdrop-blur-sm"
@@ -254,14 +255,20 @@ export default function TaskCreateModal({ onClose, onCreated }: TaskCreateModalP
           <div>
             <SectionHeader icon={MessageSquare}>执行模式</SectionHeader>
             <div className="mt-3">
+              {isLoopSchedule ? (
+                <p className="text-sm text-[var(--ink-muted)]">连续对话（保持上下文）— Ralph Loop 固定使用此模式</p>
+              ) : (
               <div className="flex gap-2">
                 <PillButton selected={runMode === 'new_session'} onClick={() => { setRunMode('new_session'); setSelectedSessionId(''); }}>新开对话</PillButton>
                 <PillButton selected={runMode === 'single_session'} onClick={() => setRunMode('single_session')}>连续对话</PillButton>
               </div>
+              )}
+              {!isLoopSchedule && (
               <p className="mt-1.5 text-[13px] text-[var(--ink-muted)]">
                 {runMode === 'new_session' ? '每次执行创建新对话，无记忆' : '所有执行共用同一对话，AI 能记住之前内容'}
               </p>
-              {runMode === 'single_session' && (
+              )}
+              {!isLoopSchedule && runMode === 'single_session' && (
                 <div className="mt-3">
                   <label className="mb-1 block text-[13px] text-[var(--ink-muted)]">选择对话</label>
                   <CustomSelect value={selectedSessionId}

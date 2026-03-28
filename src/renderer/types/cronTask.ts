@@ -39,7 +39,8 @@ export interface CronDelivery {
 export type CronSchedule =
   | { kind: 'at'; at: string }
   | { kind: 'every'; minutes: number; startAt?: string }
-  | { kind: 'cron'; expr: string; tz?: string };
+  | { kind: 'cron'; expr: string; tz?: string }
+  | { kind: 'loop' };
 
 /**
  * A scheduled cron task (returned from Rust)
@@ -227,6 +228,8 @@ export function formatScheduleDescription(task: CronTask): string {
         return `每 ${formatCronInterval(task.schedule.minutes)}`;
       case 'cron':
         return formatCronExpression(task.schedule.expr);
+      case 'loop':
+        return 'Ralph Loop 无限循环';
     }
   }
   return `每 ${formatCronInterval(task.intervalMinutes)}`;
