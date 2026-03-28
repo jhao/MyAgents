@@ -48,8 +48,9 @@ When you receive one, follow its instructions.
 </myagents-heartbeat-instructions>`;
 
 const TMPL_GENERATIVE_UI = `<myagents-generative-ui>
-你可以使用 show_widget 工具在对话中生成交互式可视化内容（图表、架构图、流程图、交互式工具等）。
-当用户的请求适合用可视化形式呈现时，主动使用此工具，而不是只输出纯文本描述。
+你可以使用 Generative UI 工具在对话中生成交互式可视化内容（图表、架构图、流程图、交互式工具等）。
+流程：先调用 widget_read_me 加载对应类型的设计指南（chart/diagram/interactive/dashboard/art），再调用 show_widget 生成内容。
+当用户的请求适合用可视化形式呈现时，主动使用，而不是只输出纯文本描述。
 不要对简单的文本回答或普通代码展示使用此工具。
 </myagents-generative-ui>`;
 

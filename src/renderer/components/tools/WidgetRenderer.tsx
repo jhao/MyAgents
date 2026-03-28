@@ -129,6 +129,17 @@ export default function WidgetRenderer({ widgetCode, isStreaming, title }: Widge
     return () => window.removeEventListener('message', onMessage);
   }, [widgetCode, isStreaming, sendToIframe, cacheKey]);
 
+  // Theme change observer — push updated CSS vars to iframe when dark/light mode toggles
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      if (iframeReady.current) {
+        sendToIframe({ type: 'widget:theme', css: buildWidgetCssVars() });
+      }
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme'] });
+    return () => observer.disconnect();
+  }, [sendToIframe]);
+
   // iframe onLoad fallback for ready race condition (CodePilot Bug #6)
   const onIframeLoad = useCallback(() => {
     if (!iframeReady.current) {
