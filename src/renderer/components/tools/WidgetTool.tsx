@@ -4,7 +4,12 @@
  * Renders as an inline widget card in the message flow:
  * - Header with icon + title
  * - WidgetRenderer iframe (streaming preview → finalized interactive content)
- * - Shimmer overlay during streaming
+ * - Shimmer skeleton overlay during loading
+ *
+ * CRITICAL: WidgetRenderer is ALWAYS mounted (even during skeleton phase).
+ * This ensures the iframe is pre-loaded and ready when widget_code arrives,
+ * avoiding the race condition where all deltas arrive in a burst but the
+ * iframe isn't ready yet.
  */
 
 import { useMemo } from 'react';
@@ -44,6 +49,7 @@ export default function WidgetTool({ tool }: WidgetToolProps) {
   const title = parsedInput?.title ?? 'widget';
   const widgetCode = parsedInput?.widget_code ?? '';
   const isStreaming = !!(tool.isLoading && !tool.result);
+  const showSkeleton = !widgetCode && isStreaming;
 
   // Check error from result (MCP results arrive as JSON-wrapped content array)
   const errorMessage = useMemo(() => {
@@ -56,33 +62,6 @@ export default function WidgetTool({ tool }: WidgetToolProps) {
   const displayTitle = formatTitle(title);
   const icon = pickIcon(title);
 
-  // No widget_code yet — show skeleton with shimmer
-  if (!widgetCode && isStreaming) {
-    return (
-      <div className="my-1.5 overflow-hidden rounded-[var(--radius-lg)] border border-[var(--line)] bg-[var(--paper-elevated)]">
-        <div className="flex items-center gap-2 px-4 pt-3 pb-2">
-          <span className="text-[var(--accent)]">{icon}</span>
-          <span className="text-[13px] font-medium text-[var(--ink-muted)]">
-            {displayTitle}
-          </span>
-          <Loader2 className="h-3 w-3 animate-spin text-[var(--ink-subtle)]" />
-          <span className="text-[11px] text-[var(--ink-subtle)]">AI 正在设计可视化方案…</span>
-        </div>
-        <div className="space-y-3 px-4 pb-4">
-          {/* Shimmer skeleton lines */}
-          <div className="h-3 w-3/4 animate-[shimmer-slide_2s_ease-in-out_infinite] rounded bg-gradient-to-r from-[var(--paper-inset)] via-[var(--paper-elevated)] to-[var(--paper-inset)] bg-[length:200%_100%]" />
-          <div className="h-3 w-full animate-[shimmer-slide_2s_ease-in-out_infinite_0.15s] rounded bg-gradient-to-r from-[var(--paper-inset)] via-[var(--paper-elevated)] to-[var(--paper-inset)] bg-[length:200%_100%]" />
-          <div className="h-3 w-5/6 animate-[shimmer-slide_2s_ease-in-out_infinite_0.3s] rounded bg-gradient-to-r from-[var(--paper-inset)] via-[var(--paper-elevated)] to-[var(--paper-inset)] bg-[length:200%_100%]" />
-          <div className="mt-2 h-20 w-full animate-[shimmer-slide_2s_ease-in-out_infinite_0.45s] rounded-[8px] bg-gradient-to-r from-[var(--paper-inset)] via-[var(--paper-elevated)] to-[var(--paper-inset)] bg-[length:200%_100%]" />
-          <div className="flex gap-3">
-            <div className="h-3 w-1/3 animate-[shimmer-slide_2s_ease-in-out_infinite_0.6s] rounded bg-gradient-to-r from-[var(--paper-inset)] via-[var(--paper-elevated)] to-[var(--paper-inset)] bg-[length:200%_100%]" />
-            <div className="h-3 w-1/4 animate-[shimmer-slide_2s_ease-in-out_infinite_0.75s] rounded bg-gradient-to-r from-[var(--paper-inset)] via-[var(--paper-elevated)] to-[var(--paper-inset)] bg-[length:200%_100%]" />
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   // Error state
   if (errorMessage) {
     return (
@@ -93,14 +72,13 @@ export default function WidgetTool({ tool }: WidgetToolProps) {
             Widget 渲染失败
           </span>
         </div>
-        {errorMessage && (
-          <p className="px-3 pb-2 text-[12px] text-[var(--ink-muted)]">{errorMessage}</p>
-        )}
+        <p className="px-3 pb-2 text-[12px] text-[var(--ink-muted)]">{errorMessage}</p>
       </div>
     );
   }
 
-  // Normal render — has widget_code
+  // Normal render — WidgetRenderer is ALWAYS mounted to ensure iframe is pre-loaded.
+  // Skeleton overlay is shown on top when widget_code hasn't arrived yet.
   return (
     <div className="my-1.5">
       {/* Header */}
@@ -110,15 +88,40 @@ export default function WidgetTool({ tool }: WidgetToolProps) {
           {displayTitle}
         </span>
         {isStreaming && (
-          <Loader2 className="h-3 w-3 animate-spin text-[var(--ink-subtle)]" />
+          <>
+            <Loader2 className="h-3 w-3 animate-spin text-[var(--ink-subtle)]" />
+            {showSkeleton && (
+              <span className="text-[11px] text-[var(--ink-subtle)]">AI 正在设计可视化方案…</span>
+            )}
+          </>
         )}
       </div>
-      {/* Widget iframe */}
-      <WidgetRenderer
-        widgetCode={widgetCode}
-        isStreaming={isStreaming}
-        title={displayTitle}
-      />
+
+      {/* Widget container — iframe always mounted, skeleton overlay on top when loading */}
+      <div className="relative overflow-hidden rounded-[var(--radius-lg)] border border-[var(--line)] bg-[var(--paper-elevated)]">
+        {/* WidgetRenderer always mounted — iframe pre-loads during skeleton phase */}
+        <WidgetRenderer
+          widgetCode={widgetCode}
+          isStreaming={isStreaming}
+          title={displayTitle}
+        />
+
+        {/* Skeleton overlay — covers iframe until widget_code arrives */}
+        {showSkeleton && (
+          <div className="absolute inset-0 bg-[var(--paper-elevated)]">
+            <div className="space-y-3 px-4 py-4">
+              <div className="h-3 w-3/4 animate-[shimmer-slide_2s_ease-in-out_infinite] rounded bg-gradient-to-r from-[var(--paper-inset)] via-[var(--paper-elevated)] to-[var(--paper-inset)] bg-[length:200%_100%]" />
+              <div className="h-3 w-full animate-[shimmer-slide_2s_ease-in-out_infinite_0.15s] rounded bg-gradient-to-r from-[var(--paper-inset)] via-[var(--paper-elevated)] to-[var(--paper-inset)] bg-[length:200%_100%]" />
+              <div className="h-3 w-5/6 animate-[shimmer-slide_2s_ease-in-out_infinite_0.3s] rounded bg-gradient-to-r from-[var(--paper-inset)] via-[var(--paper-elevated)] to-[var(--paper-inset)] bg-[length:200%_100%]" />
+              <div className="mt-2 h-20 w-full animate-[shimmer-slide_2s_ease-in-out_infinite_0.45s] rounded-[8px] bg-gradient-to-r from-[var(--paper-inset)] via-[var(--paper-elevated)] to-[var(--paper-inset)] bg-[length:200%_100%]" />
+              <div className="flex gap-3">
+                <div className="h-3 w-1/3 animate-[shimmer-slide_2s_ease-in-out_infinite_0.6s] rounded bg-gradient-to-r from-[var(--paper-inset)] via-[var(--paper-elevated)] to-[var(--paper-inset)] bg-[length:200%_100%]" />
+                <div className="h-3 w-1/4 animate-[shimmer-slide_2s_ease-in-out_infinite_0.75s] rounded bg-gradient-to-r from-[var(--paper-inset)] via-[var(--paper-elevated)] to-[var(--paper-inset)] bg-[length:200%_100%]" />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
