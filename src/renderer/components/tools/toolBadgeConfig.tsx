@@ -324,6 +324,21 @@ export function getToolBadgeConfig(toolName: string): ToolBadgeConfig {
       };
     // Default - Blue (fallback for unknown tools like MCP tools, server_tool_use)
     default:
+      // Generative UI tools - Amber/Warm
+      if (toolName.startsWith('mcp__generative-ui__')) {
+        return {
+          icon: <Sparkles className="size-2.5" />,
+          colors: {
+            border: 'border-amber-200/60 dark:border-amber-500/30',
+            bg: 'bg-amber-50/80 dark:bg-amber-500/10',
+            text: 'text-amber-700 dark:text-amber-400',
+            hoverBg: 'hover:bg-amber-100/80 dark:hover:bg-amber-500/20',
+            chevron: 'text-amber-400 dark:text-amber-500',
+            iconColor: 'text-amber-500 dark:text-amber-400'
+          }
+        };
+      }
+
       // Gemini Image tools - Purple
       if (toolName.startsWith('mcp__gemini-image__')) {
         return {
@@ -375,6 +390,9 @@ export function getToolMainLabel(tool: ToolUseSimple): string {
   if (tool.name === 'Task' || tool.name === 'Agent') {
     const subagentType = getStringProp(tool.parsedInput, 'subagent_type');
     return subagentType || tool.name;
+  }
+  if (tool.name.startsWith('mcp__generative-ui__')) {
+    return '可视化';
   }
   if (tool.name.startsWith('mcp__gemini-image__')) {
     return tool.name.includes('edit_image') ? '编辑图片' : '生成图片';
@@ -571,6 +589,10 @@ export function getToolExpandedLabel(tool: ToolUseSimple): string {
     case 'KillShell':
       return 'Kill Shell';
     default:
+      if (tool.name.startsWith('mcp__generative-ui__')) {
+        const widgetTitle = getStringProp(tool.parsedInput, 'title');
+        return widgetTitle ? widgetTitle.replace(/_/g, ' ') : '可视化';
+      }
       if (tool.name.startsWith('mcp__gemini-image__')) {
         return tool.name.includes('edit_image') ? '编辑图片' : '生成图片';
       }

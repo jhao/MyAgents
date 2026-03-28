@@ -16,6 +16,7 @@ import TaskTool from './tools/TaskTool';
 import TodoWriteTool from './tools/TodoWriteTool';
 import WebFetchTool from './tools/WebFetchTool';
 import WebSearchTool from './tools/WebSearchTool';
+import WidgetTool from './tools/WidgetTool';
 import WriteTool from './tools/WriteTool';
 import CronTaskCard from './scheduled-tasks/CronTaskCard';
 
@@ -91,6 +92,10 @@ export default function ToolUse({ tool: rawTool }: ToolUseProps) {
     case 'NotebookEdit':
       return <NotebookEditTool tool={tool} />;
     default: {
+      // Route generative-ui MCP tools to widget renderer
+      if (tool.name.startsWith('mcp__generative-ui__')) {
+        return <WidgetTool tool={tool} />;
+      }
       // Route gemini-image MCP tools to custom component
       if (tool.name.startsWith('mcp__gemini-image__')) {
         return <GeminiImageTool tool={tool} />;

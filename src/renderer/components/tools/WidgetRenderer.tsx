@@ -1,0 +1,181 @@
+/**
+ * WidgetRenderer — Sandboxed iframe container for Generative UI widgets.
+ *
+ * Handles:
+ * - iframe lifecycle (srcdoc, ready detection, onLoad fallback)
+ * - postMessage communication (update/finalize/resize/link)
+ * - Streaming preview with script stripping + debounce
+ * - Height synchronization with first-resize-no-transition optimization
+ * - Module-level height cache to survive component remounts (CodePilot Bug #4)
+ */
+
+import { useRef, useEffect, useCallback, useState, useMemo } from 'react';
+import { openExternal } from '@/utils/openExternal';
+import { buildWidgetCssVars } from './widgetCssVars';
+import { buildSandboxHtml } from './widgetSandboxHtml';
+
+// ===== Module-level height cache (survives component lifecycle) =====
+// Key: first 200 chars of widget_code. Prevents height jump on streaming→final remount.
+const heightCache = new Map<string, number>();
+
+function getCacheKey(widgetCode: string): string {
+  return widgetCode.slice(0, 200);
+}
+
+// ===== Script sanitization for streaming preview =====
+
+function sanitizeForStreaming(html: string): string {
+  // Remove complete <script>...</script> blocks
+  let cleaned = html.replace(/<script[\s\S]*?<\/script>/gi, '');
+  // Remove unclosed <script... tail (prevents half-script showing as visible text)
+  const lastScriptOpen = cleaned.toLowerCase().lastIndexOf('<script');
+  if (lastScriptOpen !== -1) {
+    const hasClose = cleaned.toLowerCase().indexOf('</script>', lastScriptOpen);
+    if (hasClose === -1) {
+      cleaned = cleaned.substring(0, lastScriptOpen);
+    }
+  }
+  // Remove all on* event handler attributes (quoted and unquoted)
+  cleaned = cleaned.replace(/\s+on\w+\s*=\s*"[^"]*"/gi, '');
+  cleaned = cleaned.replace(/\s+on\w+\s*=\s*'[^']*'/gi, '');
+  cleaned = cleaned.replace(/\s+on\w+\s*=\s*[^\s>"'][^\s>]*/gi, '');
+  return cleaned;
+}
+
+// ===== Component =====
+
+interface WidgetRendererProps {
+  widgetCode: string;
+  isStreaming: boolean;
+  title: string;
+}
+
+const DEBOUNCE_MS = 120;
+const MAX_HEIGHT = 600;
+const MIN_HEIGHT = 60;
+
+export default function WidgetRenderer({ widgetCode, isStreaming, title }: WidgetRendererProps) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const iframeReady = useRef(false);
+  const lastSentHtml = useRef('');
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasFinalized = useRef(false);
+
+  // Initialize height from cache or default
+  const cacheKey = getCacheKey(widgetCode);
+  const [height, setHeight] = useState(() => heightCache.get(cacheKey) ?? MIN_HEIGHT);
+  const [firstResize, setFirstResize] = useState(true);
+
+  // Build srcdoc once (CSS vars captured at mount time)
+  const srcdoc = useMemo(() => {
+    const cssVars = buildWidgetCssVars();
+    return buildSandboxHtml(cssVars);
+  }, []);
+
+  // Send message to iframe
+  const sendToIframe = useCallback((msg: Record<string, unknown>) => {
+    iframeRef.current?.contentWindow?.postMessage(msg, '*');
+  }, []);
+
+  // Handle messages from iframe
+  useEffect(() => {
+    function onMessage(e: MessageEvent) {
+      // Only process messages from our own iframe (prevents cross-widget interference)
+      if (e.source !== iframeRef.current?.contentWindow) return;
+      if (!e.data?.type) return;
+
+      switch (e.data.type) {
+        case 'widget:ready':
+          iframeReady.current = true;
+          // If we already have content, send it immediately
+          if (widgetCode && !hasFinalized.current) {
+            const html = isStreaming ? sanitizeForStreaming(widgetCode) : widgetCode;
+            sendToIframe({ type: isStreaming ? 'widget:update' : 'widget:finalize', html });
+            lastSentHtml.current = html;
+          }
+          break;
+
+        case 'widget:resize': {
+          const h = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, e.data.height));
+          setHeight(h);
+          heightCache.set(cacheKey, h);
+          if (e.data.first) setFirstResize(false);
+          break;
+        }
+
+        case 'widget:link':
+          if (e.data.href) {
+            openExternal(e.data.href);
+          }
+          break;
+      }
+    }
+
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [widgetCode, isStreaming, sendToIframe, cacheKey]);
+
+  // iframe onLoad fallback for ready race condition (CodePilot Bug #6)
+  const onIframeLoad = useCallback(() => {
+    if (!iframeReady.current) {
+      iframeReady.current = true;
+      if (widgetCode) {
+        const html = isStreaming ? sanitizeForStreaming(widgetCode) : widgetCode;
+        sendToIframe({ type: isStreaming ? 'widget:update' : 'widget:finalize', html });
+        lastSentHtml.current = html;
+      }
+    }
+  }, [widgetCode, isStreaming, sendToIframe]);
+
+  // Streaming update: debounced, script-stripped
+  useEffect(() => {
+    if (!isStreaming || !iframeReady.current || hasFinalized.current) return;
+
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    debounceTimer.current = setTimeout(() => {
+      const html = sanitizeForStreaming(widgetCode);
+      if (html !== lastSentHtml.current) {
+        sendToIframe({ type: 'widget:update', html });
+        lastSentHtml.current = html;
+      }
+    }, DEBOUNCE_MS);
+
+    return () => {
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    };
+  }, [widgetCode, isStreaming, sendToIframe]);
+
+  // Finalize: when streaming ends, send full HTML with scripts
+  useEffect(() => {
+    if (!isStreaming && widgetCode && iframeReady.current && !hasFinalized.current) {
+      hasFinalized.current = true;
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+      sendToIframe({ type: 'widget:finalize', html: widgetCode });
+      lastSentHtml.current = widgetCode;
+    }
+  }, [isStreaming, widgetCode, sendToIframe]);
+
+  return (
+    <div
+      className="relative w-full overflow-hidden rounded-[var(--radius-lg)] border border-[var(--line)] bg-[var(--paper-elevated)]"
+      style={{
+        height: `${height}px`,
+        transition: firstResize ? 'none' : 'height 0.15s ease',
+      }}
+    >
+      <iframe
+        ref={iframeRef}
+        sandbox="allow-scripts"
+        srcDoc={srcdoc}
+        onLoad={onIframeLoad}
+        title={title}
+        className="h-full w-full border-none"
+        style={{ display: 'block' }}
+      />
+      {/* Streaming overlay */}
+      {isStreaming && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-[var(--paper-elevated)] to-transparent" />
+      )}
+    </div>
+  );
+}
