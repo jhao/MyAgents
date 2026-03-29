@@ -353,8 +353,8 @@ export default function FilePreviewModal({
     if (embedded) {
         return (
             <div className="flex h-full flex-col overflow-hidden">
-                {/* Inline header with edit actions */}
-                <div className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-[var(--line-subtle)] px-4 py-2">
+                {/* Inline header with gradient fade (matches Chat header style) */}
+                <div className="relative z-10 flex flex-shrink-0 items-center justify-between gap-2 px-4 py-2 after:pointer-events-none after:absolute after:inset-x-0 after:top-full after:h-6 after:bg-gradient-to-b after:from-[var(--paper-elevated)] after:to-transparent">
                     <div className="flex min-w-0 items-center gap-2">
                         <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-[var(--accent-warm-muted)]">
                             <FileText className="h-3.5 w-3.5 text-[var(--accent)]" />
