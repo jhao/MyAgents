@@ -202,10 +202,14 @@ async function loadPlugin() {
   // message context (senderOpenId, chatId, accountId) through async call chains.
   // MCP tool calls arrive as separate HTTP requests — outside the original
   // withTicket() scope — so we must re-inject the ticket before tool.execute().
+  //
+  // NOTE: require.resolve() with subpath fails because the plugin's package.json
+  // "exports" field only exposes ".". Use absolute path require() instead —
+  // verified to share the same AsyncLocalStorage instance as the plugin's own code.
   if (entryModule && /lark|feishu/i.test(entryModule)) {
     try {
-      const ticketModPath = require.resolve(`${entryModule}/src/core/lark-ticket.js`, { paths: [pluginDir!] });
-      const ticketMod = require(ticketModPath);
+      const ticketPath = `${pluginDir}/node_modules/${entryModule}/src/core/lark-ticket.js`;
+      const ticketMod = require(ticketPath);
       if (typeof ticketMod.withTicket === 'function') {
         pluginWithTicket = ticketMod.withTicket;
         console.log('[plugin-bridge] Discovered withTicket() for LarkTicket context injection');
