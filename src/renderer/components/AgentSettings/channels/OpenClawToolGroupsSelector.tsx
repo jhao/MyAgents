@@ -18,9 +18,9 @@ const FEISHU_TOOL_GROUPS: ToolGroup[] = [
     { id: 'task', name: '任务', description: '任务/任务列表/评论/子任务', toolCount: 4 },
     { id: 'sheet', name: '电子表格', description: '电子表格读写', toolCount: 1 },
     { id: 'search', name: '搜索', description: '搜索文档和知识库', toolCount: 1 },
-    { id: 'im', name: 'IM 操作', description: '消息发送/资源获取/已读状态', toolCount: 4, sensitive: true },
+    { id: 'im', name: 'IM 操作', description: '消息发送/资源获取/已读状态/图片上传', toolCount: 6, sensitive: true },
     { id: 'common', name: '用户信息', description: '查询/搜索飞书用户', toolCount: 2 },
-    { id: 'perm', name: '权限管理', description: '文档权限设置（敏感操作）', toolCount: 1, sensitive: true },
+    { id: 'perm', name: '权限管理', description: '文档权限设置（敏感操作）', toolCount: 0, sensitive: true },
 ];
 
 const TOOL_GROUPS_BY_PLUGIN: Record<string, ToolGroup[]> = {
