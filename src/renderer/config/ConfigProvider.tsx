@@ -59,6 +59,33 @@ function normalizeAgents(config: AppConfig): boolean {
     return repaired;
 }
 
+/**
+ * Migrate old hardcoded openclawEnabledToolGroups to undefined (= all groups).
+ * Before v0.1.56, ChannelWizard wrote a fixed subset ['doc','chat','wiki_drive','bitable']
+ * which silently hid calendar/task/sheet/search/common/im tools.
+ * Clear it so all plugin tool groups are enabled by default.
+ */
+const LEGACY_TOOL_GROUPS = new Set(['doc', 'chat', 'wiki_drive', 'bitable']);
+function migrateToolGroups(config: AppConfig): boolean {
+    if (!config.agents) return false;
+    let changed = false;
+    for (const agent of config.agents) {
+        for (const ch of (agent.channels ?? [])) {
+            const groups = ch.openclawEnabledToolGroups;
+            if (!groups || groups.length === 0) continue;
+            // Only clear if it's the exact old default (user didn't customize)
+            if (groups.length === LEGACY_TOOL_GROUPS.size && groups.every(g => LEGACY_TOOL_GROUPS.has(g))) {
+                ch.openclawEnabledToolGroups = undefined;
+                changed = true;
+            }
+        }
+    }
+    if (changed) {
+        console.log('[ConfigProvider] Migrated legacy openclawEnabledToolGroups → undefined (all groups enabled)');
+    }
+    return changed;
+}
+
 // ============= Context Types =============
 
 export interface ConfigDataValue {
@@ -221,6 +248,11 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
             if (normalizeAgents(loadedConfig) && loadedConfig.agents) {
                 await persistAgents(loadedConfig.agents);
                 console.log('[ConfigProvider] Repaired agents with missing channels — persisted to disk');
+            }
+
+            // Migrate old hardcoded tool groups → undefined (= all groups enabled)
+            if (migrateToolGroups(loadedConfig) && loadedConfig.agents) {
+                await persistAgents(loadedConfig.agents);
             }
 
             // Ensure every project has a linked AgentConfig (basicAgent).
