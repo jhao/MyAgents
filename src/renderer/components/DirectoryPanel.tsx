@@ -1420,6 +1420,7 @@ const DirectoryPanel = memo(forwardRef<DirectoryPanelHandle, DirectoryPanelProps
                   disableDrop
                   rowHeight={ROW_HEIGHT}
                   indent={16}
+                  paddingTop={stickyAncestors.length * ROW_HEIGHT}
                   height={treeHeight}
                   width="100%"
                   className="overscroll-none"

@@ -226,11 +226,16 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
   const isDraggingSplitRef = useRef(false);
   const splitRatioRef = useRef(splitRatio);
   splitRatioRef.current = splitRatio;
+  // Store drag listeners in refs so unmount cleanup can remove them
+  const dragMoveRef = useRef<((ev: MouseEvent) => void) | null>(null);
+  const dragUpRef = useRef<(() => void) | null>(null);
   // When split view is active, workspace should use overlay mode (like narrow layout)
   const shouldUseWorkspaceOverlay = isNarrowLayout || (isSplitViewEnabled && splitFile !== null);
 
   const handleSplitFilePreview = useCallback((file: { name: string; content: string; size: number; path: string }) => {
     setSplitFile(file);
+    // Collapse workspace when entering split mode — otherwise the overlay backdrop covers the preview
+    setShowWorkspace(false);
   }, []);
 
   const handleSplitDividerMouseDown = useCallback((e: React.MouseEvent) => {
@@ -248,24 +253,29 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
     };
     const onMouseUp = () => {
       isDraggingSplitRef.current = false;
+      dragMoveRef.current = null;
+      dragUpRef.current = null;
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
     };
+    dragMoveRef.current = onMouseMove;
+    dragUpRef.current = onMouseUp;
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
   }, []); // stable — uses ref for splitRatio
 
-  // Cleanup drag listeners on unmount
+  // Cleanup drag listeners on unmount (prevents leak if component unmounts mid-drag)
   useEffect(() => {
     return () => {
-      if (isDraggingSplitRef.current) {
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-      }
+      if (dragMoveRef.current) document.removeEventListener('mousemove', dragMoveRef.current);
+      if (dragUpRef.current) document.removeEventListener('mouseup', dragUpRef.current);
+      isDraggingSplitRef.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
     };
   }, []);
 
@@ -1838,7 +1848,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
             onOpenSettings={handleOpenSettings}
             onSyncSkillToGlobal={handleSyncSkillToGlobal}
             onRefreshAll={triggerWorkspaceRefresh}
-            onFilePreviewExternal={isSplitViewEnabled ? handleSplitFilePreview : undefined}
+            onFilePreviewExternal={isSplitViewEnabled && !isNarrowLayout ? handleSplitFilePreview : undefined}
           />
         </div>
       )}
@@ -1877,7 +1887,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
               onOpenSettings={handleOpenSettings}
               onSyncSkillToGlobal={handleSyncSkillToGlobal}
               onRefreshAll={triggerWorkspaceRefresh}
-              onFilePreviewExternal={isSplitViewEnabled ? handleSplitFilePreview : undefined}
+              onFilePreviewExternal={isSplitViewEnabled && !isNarrowLayout ? handleSplitFilePreview : undefined}
             />
           </div>
         </>
