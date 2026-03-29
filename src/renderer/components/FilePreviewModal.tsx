@@ -362,7 +362,7 @@ export default function FilePreviewModal({
                         <span className="truncate text-[13px] font-medium text-[var(--ink)]">{name}</span>
                         <span className="flex-shrink-0 text-[11px] text-[var(--ink-muted)]">{formatFileSize(size)}</span>
                     </div>
-                    <div className="flex flex-shrink-0 items-center gap-1">
+                    <div className="flex flex-shrink-0 items-center gap-2">
                         {onFullscreen && !isEditing && (
                             <Tip label="全屏预览" position="bottom">
                                 <button type="button" onClick={onFullscreen}
