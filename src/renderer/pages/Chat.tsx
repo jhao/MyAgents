@@ -223,6 +223,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
   // Clear split panel when feature is turned off (prevents stale split state)
   useEffect(() => { if (!isSplitViewEnabled) setSplitFile(null); }, [isSplitViewEnabled]);
   const [splitRatio, setSplitRatio] = useState(0.5); // 0-1, left panel fraction
+  const [isDraggingSplit, setIsDraggingSplit] = useState(false);
   const isDraggingSplitRef = useRef(false);
   const splitRatioRef = useRef(splitRatio);
   splitRatioRef.current = splitRatio;
@@ -234,13 +235,23 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
 
   const handleSplitFilePreview = useCallback((file: { name: string; content: string; size: number; path: string }) => {
     setSplitFile(file);
-    // Collapse workspace when entering split mode — otherwise the overlay backdrop covers the preview
-    setShowWorkspace(false);
+    // Keep workspace open — user can dismiss it manually
   }, []);
+
+  // When split closes, restore workspace sidebar to visible (non-collapsed)
+  const prevSplitFileRef = useRef(splitFile);
+  useEffect(() => {
+    if (prevSplitFileRef.current && !splitFile) {
+      // Split just closed → show workspace sidebar
+      setShowWorkspace(true);
+    }
+    prevSplitFileRef.current = splitFile;
+  }, [splitFile]);
 
   const handleSplitDividerMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     isDraggingSplitRef.current = true;
+    setIsDraggingSplit(true);
     const startX = e.clientX;
     const startRatio = splitRatioRef.current;
     const containerWidth = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect().width;
@@ -253,6 +264,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
     };
     const onMouseUp = () => {
       isDraggingSplitRef.current = false;
+      setIsDraggingSplit(false);
       dragMoveRef.current = null;
       dragUpRef.current = null;
       document.removeEventListener('mousemove', onMouseMove);
@@ -1550,7 +1562,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
     <div className="relative flex h-full flex-row overflow-hidden overscroll-none bg-[var(--paper-elevated)] text-[var(--ink)]">
       {/* Left side: chat area (+ side workspace when wide & no split) */}
       <div
-        className="relative flex min-w-0 flex-row overflow-hidden"
+        className={`relative flex min-w-0 flex-row overflow-hidden ${!isDraggingSplit ? 'transition-all duration-300 ease-in-out' : ''}`}
         style={splitFile ? { width: `${splitRatio * 100}%`, flexShrink: 0 } : { flex: 1 }}
       >
       <div className={`flex min-w-0 flex-1 flex-col overflow-hidden ${showWorkspace && !shouldUseWorkspaceOverlay ? 'border-r border-[var(--line-subtle)]' : ''}`}>
