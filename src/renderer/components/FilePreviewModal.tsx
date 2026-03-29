@@ -364,7 +364,7 @@ export default function FilePreviewModal({
                     </div>
                     <div className="flex flex-shrink-0 items-center gap-1">
                         {onFullscreen && !isEditing && (
-                            <Tip label="全屏预览">
+                            <Tip label="全屏预览" position="bottom">
                                 <button type="button" onClick={onFullscreen}
                                     className="rounded-md p-1 text-[var(--ink-muted)] transition-colors hover:bg-[var(--paper-inset)] hover:text-[var(--ink)]">
                                     <Expand className="h-3.5 w-3.5" />
@@ -372,7 +372,7 @@ export default function FilePreviewModal({
                             </Tip>
                         )}
                         {canEdit && !isEditing && (
-                            <Tip label="编辑">
+                            <Tip label="编辑" position="bottom">
                                 <button type="button" onClick={handleEdit} disabled={isLoading || !!error}
                                     className="rounded-md p-1 text-[var(--ink-muted)] transition-colors hover:bg-[var(--paper-inset)] hover:text-[var(--ink)] disabled:opacity-40">
                                     <Edit2 className="h-3.5 w-3.5" />
@@ -391,7 +391,7 @@ export default function FilePreviewModal({
                                 </button>
                             </>
                         )}
-                        <Tip label="关闭">
+                        <Tip label="关闭" position="bottom">
                             <button type="button" onClick={handleClose}
                                 className="rounded-md p-1 text-[var(--ink-muted)] transition-colors hover:bg-[var(--paper-inset)] hover:text-[var(--ink)]">
                                 <X className="h-3.5 w-3.5" />
@@ -425,7 +425,7 @@ export default function FilePreviewModal({
             {/* Modal backdrop */}
             <div
                 className="fixed inset-0 z-[210] flex items-center justify-center bg-black/30 backdrop-blur-sm"
-                style={{ padding: '2vh 1vw' }}
+                style={{ padding: '3vh 3vw' }}
                 onMouseDown={handleBackdropMouseDown}
                 onClick={handleBackdropClick}
                 onWheel={(e) => e.stopPropagation()}
