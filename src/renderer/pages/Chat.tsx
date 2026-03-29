@@ -1,5 +1,5 @@
-import { AlertTriangle, ArrowLeft, History, Loader2, Plus, PanelRightOpen } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { AlertTriangle, ArrowLeft, History, Loader2, Plus, PanelRightOpen, X } from 'lucide-react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 
 import { track } from '@/analytics';
 import ConfirmDialog from '@/components/ConfirmDialog';
@@ -41,6 +41,9 @@ import { patchAgentConfig, getAgentById } from '@/config/services/agentConfigSer
 import { CUSTOM_EVENTS, isPendingSessionId } from '../../shared/constants';
 import type { InitialMessage } from '@/types/tab';
 // CronTaskConfig type is used via useCronTask hook
+
+// Lazy load FilePreviewModal for split view panel
+const FilePreviewModal = lazy(() => import('@/components/FilePreviewModal'));
 
 /** Inline-editable session title — click to edit, Enter/Blur to save, Esc to cancel */
 function SessionTitleEditor({ title, onRename }: { title: string; onRename: (newTitle: string) => void }) {
@@ -201,6 +204,68 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
   const [showHistory, setShowHistory] = useState(false);
   const [showWorkspace, setShowWorkspace] = useState(true); // Workspace panel visibility
   const [showWorkspaceConfig, setShowWorkspaceConfig] = useState(false); // Workspace config panel
+  // Narrow mode: workspace renders as overlay drawer instead of side panel
+  // Initialize from window.innerWidth to avoid layout flash (FOUC) on first render
+  const [isNarrowLayout, setIsNarrowLayout] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
+  useEffect(() => {
+    const breakpoint = parseInt(getComputedStyle(document.documentElement)
+      .getPropertyValue('--breakpoint-mobile') || '768', 10);
+    const check = () => setIsNarrowLayout(window.innerWidth < breakpoint);
+    check(); // Re-check with actual CSS variable value
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
+
+  // Split view: right-side file preview panel (experimental)
+  const isSplitViewEnabled = config.experimentalSplitView ?? false;
+  const [splitFile, setSplitFile] = useState<{ name: string; content: string; size: number; path: string } | null>(null);
+  const [splitRatio, setSplitRatio] = useState(0.5); // 0-1, left panel fraction
+  const isDraggingSplitRef = useRef(false);
+  const splitRatioRef = useRef(splitRatio);
+  splitRatioRef.current = splitRatio;
+  // When split view is active, workspace should use overlay mode (like narrow layout)
+  const shouldUseWorkspaceOverlay = isNarrowLayout || (isSplitViewEnabled && splitFile !== null);
+
+  const handleSplitFilePreview = useCallback((file: { name: string; content: string; size: number; path: string }) => {
+    setSplitFile(file);
+  }, []);
+
+  const handleSplitDividerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDraggingSplitRef.current = true;
+    const startX = e.clientX;
+    const startRatio = splitRatioRef.current;
+    const containerWidth = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect().width;
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!isDraggingSplitRef.current) return;
+      const dx = ev.clientX - startX;
+      const newRatio = Math.max(0.25, Math.min(0.75, startRatio + dx / containerWidth));
+      setSplitRatio(newRatio);
+    };
+    const onMouseUp = () => {
+      isDraggingSplitRef.current = false;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, []); // stable — uses ref for splitRatio
+
+  // Cleanup drag listeners on unmount
+  useEffect(() => {
+    return () => {
+      if (isDraggingSplitRef.current) {
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    };
+  }, []);
+
   const [workspaceRefreshKey, _setWorkspaceRefreshKey] = useState(0); // Key to trigger workspace refresh
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(
     (currentAgent?.permissionMode as PermissionMode | undefined) ?? currentProject?.permissionMode ?? 'auto'
@@ -1469,8 +1534,13 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
   }, [onNewSession, resetSession]);
 
   return (
-    <div className="flex h-full flex-col overflow-hidden overscroll-none bg-[var(--paper-elevated)] text-[var(--ink)] md:flex-row">
-      <div className={`flex min-w-0 flex-1 flex-col overflow-hidden border-b border-[var(--line-subtle)] md:border-r md:border-b-0 ${showWorkspace ? 'w-full md:w-3/4' : 'w-full'}`}>
+    <div className="relative flex h-full flex-row overflow-hidden overscroll-none bg-[var(--paper-elevated)] text-[var(--ink)]">
+      {/* Left side: chat area (+ side workspace when wide & no split) */}
+      <div
+        className="relative flex min-w-0 flex-row overflow-hidden"
+        style={splitFile ? { width: `${splitRatio * 100}%`, flexShrink: 0 } : { flex: 1 }}
+      >
+      <div className={`flex min-w-0 flex-1 flex-col overflow-hidden ${showWorkspace && !shouldUseWorkspaceOverlay ? 'border-r border-[var(--line-subtle)]' : ''}`}>
         {/* Compact header - single row */}
         <div className="relative z-10 flex h-12 flex-shrink-0 items-center justify-between bg-[var(--paper-elevated)] px-4 after:pointer-events-none after:absolute after:inset-x-0 after:top-full after:h-6 after:bg-gradient-to-b after:from-[var(--paper-elevated)] after:to-transparent">
           <div className="flex items-center gap-2">
@@ -1551,12 +1621,12 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
                 </button>
                 </>
             )}
-            {/* Workspace toggle button - only show when workspace is hidden */}
+            {/* Workspace toggle button - always visible when workspace is hidden */}
             {!showWorkspace && (
               <button
                 type="button"
                 onClick={() => setShowWorkspace(true)}
-                className="hidden md:flex items-center gap-1 rounded-lg px-2 py-1 text-[var(--ink-muted)] transition-colors hover:bg-[var(--hover-bg)] hover:text-[var(--ink)]"
+                className="flex items-center gap-1 rounded-lg px-2 py-1 text-[var(--ink-muted)] transition-colors hover:bg-[var(--hover-bg)] hover:text-[var(--ink)]"
                 title="展开工作区"
               >
                 <PanelRightOpen className="h-4 w-4" />
@@ -1737,10 +1807,11 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
         </div>
       </div>
 
-      {showWorkspace && (
+      {/* Workspace panel — side panel (wide) or overlay drawer (narrow) */}
+      {showWorkspace && !shouldUseWorkspaceOverlay && (
         <div
           ref={directoryPanelContainerRef}
-          className="flex w-full flex-col md:w-1/4"
+          className="flex w-1/4 flex-col"
           style={{ minWidth: 'var(--sidebar-min-width)' }}
         >
           <DirectoryPanel
@@ -1764,8 +1835,96 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
             onOpenSettings={handleOpenSettings}
             onSyncSkillToGlobal={handleSyncSkillToGlobal}
             onRefreshAll={triggerWorkspaceRefresh}
+            onFilePreviewExternal={isSplitViewEnabled ? handleSplitFilePreview : undefined}
           />
         </div>
+      )}
+      </div>{/* End left-side wrapper */}
+
+      {/* Narrow/split mode: workspace as right-side drawer overlay — rendered at root level
+          so backdrop covers both chat area and split-view panel */}
+      {showWorkspace && shouldUseWorkspaceOverlay && (
+        <>
+          <div
+            className="absolute inset-0 z-40 bg-black/30 backdrop-blur-sm"
+            onClick={handleCollapseWorkspace}
+          />
+          <div
+            ref={directoryPanelContainerRef}
+            className="absolute bottom-0 right-0 top-0 z-50 flex w-[340px] max-w-[85%] flex-col border-l border-[var(--line)] bg-[var(--paper-elevated)] shadow-lg"
+          >
+            <DirectoryPanel
+              ref={directoryPanelRef}
+              agentDir={agentDir}
+              projectIcon={currentProject?.icon}
+              projectDisplayName={currentProject?.displayName}
+              provider={currentProvider}
+              providers={providers}
+              onProviderChange={handleProviderChange}
+              onCollapse={handleCollapseWorkspace}
+              onOpenConfig={handleOpenAgentSettings}
+              refreshTrigger={toolCompleteCount + workspaceRefreshTrigger}
+              isTauriDragActive={isTauriDragging && activeZoneId === 'directory-panel'}
+              onInsertReference={handleInsertReference}
+              enabledAgents={enabledAgents}
+              enabledSkills={enabledSkills}
+              enabledCommands={enabledCommands}
+              globalSkillFolderNames={globalSkillFolderNames}
+              onInsertSlashCommand={handleInsertSlashCommand}
+              onOpenSettings={handleOpenSettings}
+              onSyncSkillToGlobal={handleSyncSkillToGlobal}
+              onRefreshAll={triggerWorkspaceRefresh}
+              onFilePreviewExternal={isSplitViewEnabled ? handleSplitFilePreview : undefined}
+            />
+          </div>
+        </>
+      )}
+
+      {/* Split view: draggable divider + right panel */}
+      {splitFile && (
+        <>
+          {/* Draggable divider */}
+          <div
+            className="z-10 flex w-1 cursor-col-resize items-center justify-center bg-[var(--line)] transition-colors hover:bg-[var(--accent)]"
+            onMouseDown={handleSplitDividerMouseDown}
+          >
+            <div className="h-8 w-0.5 rounded-full bg-[var(--ink-subtle)]" />
+          </div>
+          {/* Right panel: file preview */}
+          <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--paper-elevated)]">
+            {/* Header */}
+            <div className="flex h-12 flex-shrink-0 items-center justify-between border-b border-[var(--line-subtle)] px-4">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="truncate text-sm font-medium text-[var(--ink)]">{splitFile.name}</span>
+                <span className="text-xs text-[var(--ink-muted)]">
+                  {splitFile.size < 1024 ? `${splitFile.size} B` : `${(splitFile.size / 1024).toFixed(1)} KB`}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSplitFile(null)}
+                className="rounded-lg p-1.5 text-[var(--ink-muted)] transition-colors hover:bg-[var(--hover-bg)] hover:text-[var(--ink)]"
+                title="关闭预览"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            {/* File content */}
+            <div className="min-h-0 flex-1 overflow-auto">
+              <Suspense fallback={<div className="flex h-full items-center justify-center text-[var(--ink-muted)]"><Loader2 className="h-5 w-5 animate-spin" /></div>}>
+                <FilePreviewModal
+                  name={splitFile.name}
+                  content={splitFile.content}
+                  size={splitFile.size}
+                  path={splitFile.path}
+                  onClose={() => setSplitFile(null)}
+                  onSaved={() => setWorkspaceRefreshTrigger(prev => prev + 1)}
+                  embedded
+                />
+              </Suspense>
+            </div>
+          </div>
+        </>
       )}
 
       {/* Workspace Config Panel */}

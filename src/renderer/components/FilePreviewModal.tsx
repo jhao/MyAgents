@@ -51,6 +51,8 @@ interface FilePreviewModalProps {
     onSave?: (content: string) => Promise<void>;
     /** External reveal-in-finder handler — enables "Open in Finder" without Tab context */
     onRevealFile?: () => Promise<void>;
+    /** When true, render inline (no portal/backdrop) for use in split-view panel */
+    embedded?: boolean;
 }
 
 // Files above this threshold use plaintext mode (skip tokenization) to prevent UI freeze
@@ -73,6 +75,7 @@ export default function FilePreviewModal({
     onSaved,
     onSave,
     onRevealFile,
+    embedded = false,
 }: FilePreviewModalProps) {
     const toast = useToast();
     // Stabilize toast reference to avoid unnecessary effect re-runs
@@ -341,6 +344,59 @@ export default function FilePreviewModal({
             </div>
         );
     };
+
+    // Embedded mode: render content area only (for split-view panel in Chat.tsx)
+    if (embedded) {
+        return (
+            <div className="flex h-full flex-col overflow-hidden">
+                {/* Inline header with edit actions */}
+                <div className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-[var(--line-subtle)] px-4 py-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                        <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-[var(--accent-warm-muted)]">
+                            <FileText className="h-3.5 w-3.5 text-[var(--accent)]" />
+                        </div>
+                        <span className="truncate text-[13px] font-medium text-[var(--ink)]">{name}</span>
+                        <span className="flex-shrink-0 text-[11px] text-[var(--ink-muted)]">{formatFileSize(size)}</span>
+                    </div>
+                    <div className="flex flex-shrink-0 items-center gap-1">
+                        {canEdit && !isEditing && (
+                            <button type="button" onClick={handleEdit} disabled={isLoading || !!error}
+                                className="rounded-md px-2 py-1 text-[11px] font-medium text-[var(--ink-muted)] transition-colors hover:bg-[var(--paper-inset)] hover:text-[var(--ink)]">
+                                <Edit2 className="h-3.5 w-3.5" />
+                            </button>
+                        )}
+                        {canEdit && isEditing && (
+                            <>
+                                <button type="button" onClick={handleCancel}
+                                    className="rounded-md px-2 py-1 text-[11px] font-medium text-[var(--ink-muted)] hover:bg-[var(--paper-inset)]">
+                                    取消
+                                </button>
+                                <button type="button" onClick={handleSave} disabled={isSaving || !hasUnsavedChanges}
+                                    className="rounded-md bg-[var(--accent)] px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-[var(--accent-warm-hover)] disabled:opacity-40">
+                                    {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : '保存'}
+                                </button>
+                            </>
+                        )}
+                    </div>
+                </div>
+                {/* Content */}
+                <div className="flex-1 overflow-hidden">
+                    {renderPreviewContent()}
+                </div>
+                {showUnsavedConfirm && (
+                    <ConfirmDialog
+                        title="未保存的更改"
+                        message="您有未保存的更改，确定要放弃吗？"
+                        confirmText="放弃更改"
+                        cancelText="继续编辑"
+                        confirmVariant="danger"
+                        onConfirm={handleDiscardChanges}
+                        onCancel={() => setShowUnsavedConfirm(false)}
+                    />
+                )}
+            </div>
+        );
+    }
 
     // Render via portal to document.body to escape parent stacking context
     // (prevents chat scrollbar from rendering on top of modal)
