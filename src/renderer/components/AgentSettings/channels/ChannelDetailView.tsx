@@ -139,7 +139,7 @@ export default function ChannelDetailView({
     const isBindingExpanded = bindingExpanded ?? !hasUsers;
 
     useEffect(() => {
-        return () => { isMountedRef.current = false; wecomQrAbortRef.current = true; };
+        return () => { isMountedRef.current = false; wecomQrRunIdRef.current++; };
     }, []);
 
     // Check if OpenClaw plugin is still installed
@@ -420,11 +420,11 @@ export default function ChannelDetailView({
     const [dualDetailMode, setDualDetailMode] = useState<'view' | 'qr' | 'edit'>('view');
     const [wecomQrImageUrl, setWecomQrImageUrl] = useState<string | null>(null);
     const [wecomQrStatus, setWecomQrStatus] = useState<'idle' | 'loading' | 'waiting' | 'success' | 'error'>('idle');
-    const wecomQrAbortRef = useRef(false);
+    const wecomQrRunIdRef = useRef(0);
 
     const startWecomQrRescan = useCallback(async () => {
         if (!isTauriEnvironment()) return;
-        wecomQrAbortRef.current = false;
+        const runId = ++wecomQrRunIdRef.current;
         setWecomQrStatus('loading');
         setDualDetailMode('qr');
         try {
@@ -439,9 +439,9 @@ export default function ChannelDetailView({
             const POLL_INTERVAL = 3000;
             const MAX_POLLS = 100;
             for (let i = 0; i < MAX_POLLS; i++) {
-                if (!isMountedRef.current || wecomQrAbortRef.current) return;
+                if (!isMountedRef.current || wecomQrRunIdRef.current !== runId) return;
                 await new Promise(r => setTimeout(r, POLL_INTERVAL));
-                if (!isMountedRef.current || wecomQrAbortRef.current) return;
+                if (!isMountedRef.current || wecomQrRunIdRef.current !== runId) return;
                 const poll = await invoke<{ status: string; bot_id?: string; secret?: string }>('cmd_wecom_qr_poll', { scode: result.scode });
                 if (poll.status === 'success' && poll.bot_id && poll.secret) {
                     if (!isMountedRef.current) return;
@@ -455,8 +455,7 @@ export default function ChannelDetailView({
                     // Restart the channel so it reconnects with new credentials
                     if (freshChannel) {
                         try {
-                            const { invoke: inv } = await import('@tauri-apps/api/core');
-                            await inv('cmd_stop_agent_channel', { agentId: agent.id, channelId });
+                            await invoke('cmd_stop_agent_channel', { agentId: agent.id, channelId });
                             await invokeStartAgentChannel(agent, { ...freshChannel, openclawPluginConfig: updatedPluginConfig });
                         } catch { /* best-effort restart */ }
                     }
@@ -737,7 +736,7 @@ export default function ChannelDetailView({
                                             {wecomQrStatus === 'loading' ? '正在获取二维码...' : wecomQrStatus === 'waiting' ? '请使用企业微信 App 扫描' : ''}
                                         </p>
                                         <button
-                                            onClick={() => { wecomQrAbortRef.current = true; setDualDetailMode('view'); }}
+                                            onClick={() => { wecomQrRunIdRef.current++; setDualDetailMode('view'); }}
                                             className="text-xs text-[var(--ink-muted)] hover:text-[var(--ink)] hover:underline"
                                         >
                                             取消

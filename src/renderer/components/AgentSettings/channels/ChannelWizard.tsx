@@ -299,17 +299,18 @@ export default function ChannelWizard({
         return () => { cancelled = true; };
     }, [isDualConfig, dualConfigMode, step]);
 
-    // Reset QR state when switching away from QR mode
+    // Reset QR state when switching to QR mode (always re-trigger, even after prior success)
     const handleDualModeSwitch = useCallback((mode: 'qr' | 'config') => {
         setDualConfigMode(mode);
-        if (mode === 'qr' && wecomQrStatus !== 'success') {
-            // Re-trigger QR generation
+        if (mode === 'qr') {
             wecomQrStartedRef.current = false;
             wecomQrAbortRef.current = false;
             setWecomQrStatus('idle');
             setWecomQrImageUrl(null);
+            setWecomQrBotId('');
+            setWecomQrSecret('');
         }
-    }, [wecomQrStatus]);
+    }, []);
 
     // Load OpenClaw plugin info for config schema
     useEffect(() => {

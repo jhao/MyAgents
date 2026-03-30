@@ -957,6 +957,13 @@ pub async fn cmd_wecom_qr_generate() -> Result<WecomQrGenerateResult, String> {
         .await
         .map_err(|e| format!("WeCom QR generate parse failed: {}", e))?;
 
+    // Check for API-level errors (same pattern as poll)
+    let errcode = resp["errcode"].as_i64().unwrap_or(0);
+    if errcode != 0 {
+        let errmsg = resp["errmsg"].as_str().unwrap_or("unknown error");
+        return Err(format!("WeCom QR generate API error {}: {}", errcode, errmsg));
+    }
+
     let data = resp.get("data").ok_or("WeCom QR response missing 'data'")?;
     let scode = data["scode"]
         .as_str()
@@ -967,7 +974,8 @@ pub async fn cmd_wecom_qr_generate() -> Result<WecomQrGenerateResult, String> {
         .ok_or("WeCom QR response missing 'auth_url'")?
         .to_string();
 
-    ulog_info!("[wecom-qr] Generated QR code, scode={}", &scode[..scode.len().min(8)]);
+    let scode_preview: String = scode.chars().take(8).collect();
+    ulog_info!("[wecom-qr] Generated QR code, scode={}", scode_preview);
     Ok(WecomQrGenerateResult { scode, auth_url })
 }
 
@@ -982,10 +990,11 @@ pub struct WecomQrPollResult {
 /// Poll the WeCom QR scan result. Call repeatedly until status is "success".
 #[tauri::command]
 pub async fn cmd_wecom_qr_poll(scode: String) -> Result<WecomQrPollResult, String> {
-    // scode is alphanumeric from WeCom API, safe to interpolate directly
+    // Sanitize scode: only allow alphanumeric (defense-in-depth against URL injection)
+    let safe_scode: String = scode.chars().filter(|c| c.is_alphanumeric()).collect();
     let url = format!(
         "https://work.weixin.qq.com/ai/qc/query_result?scode={}",
-        scode
+        safe_scode
     );
 
     let builder = reqwest::Client::builder()
