@@ -64,7 +64,7 @@ function SessionTitleEditor({ title, onRename }: { title: string; onRename: (new
   };
 
   return (
-    <div className="min-w-0 w-[360px]">
+    <div className="min-w-0 max-w-[360px]">
       {editing ? (
         <input
           ref={inputRef}
@@ -1571,12 +1571,12 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
       <div className={`flex min-w-0 flex-1 flex-col overflow-hidden ${showWorkspace && !shouldUseWorkspaceOverlay ? 'border-r border-[var(--line-subtle)]' : ''}`}>
         {/* Compact header - single row */}
         <div className="relative z-10 flex h-12 flex-shrink-0 items-center justify-between bg-[var(--paper-elevated)] px-4 after:pointer-events-none after:absolute after:inset-x-0 after:top-full after:h-6 after:bg-gradient-to-b after:from-[var(--paper-elevated)] after:to-transparent">
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2">
             {onBack && (
               <button
                 type="button"
                 onClick={onBack}
-                className="rounded-lg p-1.5 text-[var(--ink-muted)] transition-colors hover:bg-[var(--hover-bg)] hover:text-[var(--ink)]"
+                className="flex-shrink-0 rounded-lg p-1.5 text-[var(--ink-muted)] transition-colors hover:bg-[var(--hover-bg)] hover:text-[var(--ink)]"
                 title="Back to projects"
               >
                 <ArrowLeft className="h-4 w-4" />
@@ -1584,7 +1584,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
             )}
             {/* Project name */}
             {agentDir && (
-              <span className="flex items-center gap-1.5 text-sm font-medium text-[var(--ink)]">
+              <span className="flex flex-shrink-0 items-center gap-1.5 text-sm font-medium text-[var(--ink)]">
                 <WorkspaceIcon icon={currentProject?.icon} size={16} />
                 {agentDir.split(/[/\\]/).filter(Boolean).pop()}
               </span>
@@ -1592,7 +1592,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
             {/* Session title — click to rename */}
             {sessionTitle && sessionTitle !== 'New Tab' && sessionTitle !== 'New Chat' && (
               <>
-                <span className="text-[var(--ink-subtle)]">/</span>
+                <span className="flex-shrink-0 text-[var(--ink-subtle)]">/</span>
                 <SessionTitleEditor
                   title={sessionTitle}
                   onRename={(newTitle) => onRenameSession?.(newTitle)}
