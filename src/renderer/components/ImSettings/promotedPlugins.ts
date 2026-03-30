@@ -73,7 +73,7 @@ export const PROMOTED_PLUGINS: PromotedPlugin[] = [
     {
         pluginId: 'openclaw-lark',
         npmSpec: '@larksuite/openclaw-lark',
-        name: '飞书 Bot（官方插件）',
+        name: '飞书',
         description: '飞书开放平台官方 OpenClaw 插件，支持文档/表格/日历等深度集成',
         icon: feishuIcon,
         platformColor: '#3370FF',
@@ -142,7 +142,7 @@ export const PROMOTED_PLUGINS: PromotedPlugin[] = [
     {
         pluginId: 'wecom-openclaw-plugin',
         npmSpec: '@wecom/wecom-openclaw-plugin',
-        name: '企业微信 Bot（官方插件）',
+        name: '企业微信',
         description: '腾讯企业微信官方 OpenClaw 插件，WebSocket 长连接、流式回复',
         icon: wecomIcon,
         platformColor: '#1B66F5',
