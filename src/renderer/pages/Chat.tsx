@@ -2046,9 +2046,9 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
               </div>
             )}
 
-            {/* Terminal view — SINGLE mount point to avoid xterm.js remount/state loss.
-                Uses `hidden` CSS when not active view to preserve terminal state. */}
-            {splitActiveView === 'terminal' && (
+            {/* Terminal view — stays mounted while alive (even when file view is active).
+                Uses `hidden` CSS when not active view to preserve xterm.js canvas state. */}
+            {(terminalAlive || splitActiveView === 'terminal') && (
               <div className={`flex min-w-0 flex-1 flex-col overflow-hidden ${splitActiveView !== 'terminal' ? 'hidden' : ''}`}>
                 {/* Terminal header — only when tab switcher is NOT showing */}
                 {!(splitFile && terminalAlive) && (
