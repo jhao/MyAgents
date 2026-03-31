@@ -45,6 +45,8 @@ interface TerminalPanelProps {
   onTerminalExited: () => void;
   /** Whether this panel is currently the visible view (for fit-on-show) */
   isVisible?: boolean;
+  /** Session ID for this Tab — used to resolve sidecar port for MYAGENTS_PORT env var */
+  sessionId?: string | null;
 }
 
 export function TerminalPanel({
@@ -53,6 +55,7 @@ export function TerminalPanel({
   onTerminalCreated,
   onTerminalExited,
   isVisible = true,
+  sessionId: sessionIdProp,
 }: TerminalPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
@@ -118,8 +121,14 @@ export function TerminalPanel({
     const rows = dims?.rows ?? 24;
     const cols = dims?.cols ?? 80;
 
-    invoke<string>('cmd_terminal_create', { workspacePath, rows, cols })
-      .then((id) => {
+    // Resolve sidecar port for MYAGENTS_PORT env var (lets `myagents` CLI work in terminal)
+    const portPromise = sessionIdProp
+      ? import('@/api/tauriClient').then(m => m.getSessionPort(sessionIdProp))
+      : Promise.resolve(null);
+
+    portPromise.then(port =>
+      invoke<string>('cmd_terminal_create', { workspacePath, rows, cols, sidecarPort: port ?? null })
+    ).then((id) => {
         if (!isMountedRef.current) {
           // Component unmounted during creation — clean up the orphaned PTY
           invoke('cmd_terminal_close', { terminalId: id }).catch(() => {});

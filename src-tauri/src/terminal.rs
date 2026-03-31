@@ -62,6 +62,7 @@ pub async fn cmd_terminal_create(
     workspace_path: String,
     rows: u16,
     cols: u16,
+    sidecar_port: Option<u16>,
 ) -> Result<String, String> {
     let id = uuid::Uuid::new_v4().to_string();
 
@@ -81,8 +82,8 @@ pub async fn cmd_terminal_create(
     let mut cmd = CommandBuilder::new(&shell);
     cmd.cwd(&workspace_path);
 
-    // Inject environment: bundled runtimes PATH + proxy config
-    inject_terminal_env(&mut cmd, &app);
+    // Inject environment: bundled runtimes PATH + proxy config + sidecar port
+    inject_terminal_env(&mut cmd, &app, sidecar_port);
 
     // Spawn shell on the slave end
     let child = pair
@@ -284,7 +285,7 @@ fn default_shell() -> String {
 /// 1. Bundled Bun and Node.js (same PATH as SDK subprocesses)
 /// 2. Proxy configuration (NO_PROXY protects localhost)
 /// 3. ~/.myagents/bin (CLI tools)
-fn inject_terminal_env(cmd: &mut CommandBuilder, app: &AppHandle) {
+fn inject_terminal_env(cmd: &mut CommandBuilder, app: &AppHandle, sidecar_port: Option<u16>) {
     // 1. Build PATH with bundled runtimes
     //    Priority: bundled bun dir → bundled node dir → ~/.myagents/bin → system PATH
     let mut extra_paths: Vec<String> = Vec::new();
@@ -360,6 +361,11 @@ fn inject_terminal_env(cmd: &mut CommandBuilder, app: &AppHandle) {
     cmd.env("NO_PROXY", crate::proxy_config::LOCALHOST_NO_PROXY);
     cmd.env("no_proxy", crate::proxy_config::LOCALHOST_NO_PROXY);
 
-    // 3. Terminal indicator (so scripts can detect they're in MyAgents terminal)
+    // 3. Sidecar port — lets `myagents` CLI talk to the Tab's session sidecar
+    if let Some(port) = sidecar_port {
+        cmd.env("MYAGENTS_PORT", port.to_string());
+    }
+
+    // 4. Terminal indicator (so scripts can detect they're in MyAgents terminal)
     cmd.env("MYAGENTS_TERMINAL", "1");
 }

@@ -2058,6 +2058,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
                   <LazyTerminalPanel
                     workspacePath={agentDir}
                     terminalId={terminalId}
+                    sessionId={sessionId}
                     isVisible={splitActiveView === 'terminal'}
                     onTerminalCreated={(id) => {
                       setTerminalId(id);
