@@ -11,13 +11,7 @@
  */
 
 import type { McpServerDefinition } from '../renderer/config/types';
-
-/**
- * Claude Agent SDK reserved MCP server names — using these causes the SDK to
- * crash with exit code 1: "Invalid MCP configuration: X is a reserved MCP name."
- * Source: claude-code/src/main.tsx (isClaudeInChromeMCPServer, isComputerUseMCPServer)
- */
-const SDK_RESERVED_MCP_NAMES = ['claude-in-chrome', 'computer-use'];
+import { SDK_RESERVED_MCP_NAMES } from './agent-session';
 import {
   loadConfig,
   atomicModifyConfig,

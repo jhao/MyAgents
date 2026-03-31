@@ -36,6 +36,13 @@ const isDebugMode = process.env.DEBUG === '1' || process.env.NODE_ENV === 'devel
 // Shared NO_PROXY value — comprehensive list of localhost addresses to bypass proxy
 const PROXY_NO_PROXY_VAL = 'localhost,localhost.localdomain,127.0.0.1,127.0.0.0/8,::1,[::1]';
 
+/**
+ * Claude Agent SDK reserved MCP server names — using these causes the SDK to
+ * crash with exit code 1: "Invalid MCP configuration: X is a reserved MCP name."
+ * Source: claude-code/src/main.tsx (isClaudeInChromeMCPServer, isComputerUseMCPServer)
+ */
+export const SDK_RESERVED_MCP_NAMES = ['claude-in-chrome', 'computer-use'];
+
 // ===== Inherited Proxy Env Snapshot =====
 // Capture system proxy state at sidecar startup (before any setProxyConfig call).
 // When Rust spawns this sidecar WITHOUT explicit proxy config, the process inherits
@@ -1269,7 +1276,7 @@ export function pinMcpPackageVersions(args: string[]): string[] {
  * Execution strategy for external stdio:
  * - For npx commands: system npx → bundled Node.js npx → bun x
  * - For other commands: Uses user-specified command directly (node/python etc.)
- * - Strips proxy env vars to prevent MCP WebSocket breakage
+ * - Inherits proxy env + injects NO_PROXY to protect localhost (mirrors Rust proxy_config)
  */
 async function buildSdkMcpServers(): Promise<Record<string, SdkMcpServerConfig | typeof cronToolsServer>> {
   // null = MCP not yet configured (e.g. Global sidecar, or Tab pre-warm before /api/mcp/set)
@@ -1279,7 +1286,6 @@ async function buildSdkMcpServers(): Promise<Record<string, SdkMcpServerConfig |
   // Global sidecar never receives /api/mcp/set and correctly gets no MCP.
   // Filter out SDK reserved names to prevent fatal crash:
   // "Invalid MCP configuration: X is a reserved MCP name." → exit code 1
-  const SDK_RESERVED_MCP_NAMES = ['claude-in-chrome', 'computer-use'];
   const allServers: McpServerDefinition[] = currentMcpServers ?? [];
   const servers = allServers.filter(s => {
     const normalized = s.id.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -1447,10 +1453,14 @@ async function buildSdkMcpServers(): Promise<Record<string, SdkMcpServerConfig |
       mcpEnv.NO_PROXY = PROXY_NO_PROXY_VAL;
       mcpEnv.no_proxy = PROXY_NO_PROXY_VAL;
 
-      // Copy user-defined env vars for this server (highest priority, can override proxy)
+      // Copy user-defined env vars for this server (can override outbound proxy vars)
       if (server.env && Object.keys(server.env).length > 0) {
         Object.assign(mcpEnv, server.env);
       }
+      // Re-enforce NO_PROXY after user env merge — user env must NOT defeat localhost protection.
+      // Outbound proxy (HTTP_PROXY) can be overridden by user, but NO_PROXY is non-negotiable.
+      mcpEnv.NO_PROXY = PROXY_NO_PROXY_VAL;
+      mcpEnv.no_proxy = PROXY_NO_PROXY_VAL;
 
       // Playwright MCP: two user-selectable modes (configured in Settings UI):
       // - Isolated (--isolated): concurrent browser sessions, storage-state for login
@@ -1475,7 +1485,7 @@ async function buildSdkMcpServers(): Promise<Record<string, SdkMcpServerConfig |
       const mcpConfig: SdkMcpServerConfig = {
         command,
         args,
-        env: mcpEnv,  // Always set: proxy vars are stripped above
+        env: mcpEnv,  // Always set: proxy inherited + NO_PROXY enforced
       };
 
       result[server.id] = mcpConfig;
