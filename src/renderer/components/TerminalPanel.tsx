@@ -223,10 +223,13 @@ export function TerminalPanel({
   }, [handleResize]);
 
   // 6. Re-fit when panel becomes visible (switching from file view back to terminal)
+  // Double-RAF ensures DOM has fully reflowed after `hidden` class removal.
   useEffect(() => {
     if (isVisible) {
       requestAnimationFrame(() => {
-        fitAddonRef.current?.fit();
+        requestAnimationFrame(() => {
+          fitAddonRef.current?.fit();
+        });
       });
     }
   }, [isVisible]);
@@ -234,7 +237,7 @@ export function TerminalPanel({
   return (
     <div
       ref={containerRef}
-      className="h-full w-full"
+      className="h-full w-full px-2 pb-1"
       style={{ background: TERMINAL_THEME.background }}
     />
   );

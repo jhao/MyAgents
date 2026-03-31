@@ -248,13 +248,18 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
   const [terminalAlive, setTerminalAlive] = useState(false);
   const terminalIdRef = useRef<string | null>(null);
   terminalIdRef.current = terminalId;
+  // Whether the user has the terminal "pinned" to the split panel.
+  // true = terminal is shown in the panel (or being created).
+  // false = terminal may be alive in background but not displayed.
+  // Clicking terminal icon sets true; clicking terminal × sets false.
+  const [terminalPinned, setTerminalPinned] = useState(false);
   // Which view is active in the right panel: 'file' or 'terminal'
   const [splitActiveView, setSplitActiveView] = useState<'file' | 'terminal'>('file');
 
   // Derived: is the right split panel visible?
-  // Must include `splitActiveView === 'terminal'` even when !terminalAlive,
-  // so the TerminalPanel can mount and trigger PTY creation.
-  const splitPanelVisible = splitFile !== null || splitActiveView === 'terminal';
+  const splitPanelVisible = splitFile !== null || (terminalPinned && (terminalAlive || splitActiveView === 'terminal'));
+  // Should the terminal component stay mounted? (for xterm.js state preservation)
+  const terminalMounted = terminalAlive || (terminalPinned && splitActiveView === 'terminal');
 
   // When split view is active or layout is narrow, workspace uses overlay drawer
   const shouldUseWorkspaceOverlay = isNarrowLayout || (isSplitViewEnabled && splitPanelVisible);
@@ -270,6 +275,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
 
   // Open terminal in split panel (called from DirectoryPanel header button)
   const handleOpenTerminal = useCallback(() => {
+    setTerminalPinned(true);
     setSplitActiveView('terminal');
     // If terminal was already created, just switch view; otherwise TerminalPanel will create it
   }, []);
@@ -1950,20 +1956,22 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
       )}
       </div>{/* End left-side wrapper */}
 
-      {/* Split view: draggable divider + right panel */}
-      {splitPanelVisible && (
+      {/* Split view: draggable divider + right panel.
+          Rendered when panel is visible OR terminal is alive (to preserve xterm.js state).
+          Uses `hidden` CSS when panel is not visible but terminal is alive in background. */}
+      {(splitPanelVisible || terminalMounted) && (
         <>
-          {/* Draggable divider */}
+          {/* Draggable divider — hidden when panel is not visible */}
           <div
-            className="z-10 flex w-1 cursor-col-resize items-center justify-center bg-[var(--line)] transition-colors hover:bg-[var(--accent)]"
+            className={`z-10 flex w-1 cursor-col-resize items-center justify-center bg-[var(--line)] transition-colors hover:bg-[var(--accent)] ${!splitPanelVisible ? 'hidden' : ''}`}
             onMouseDown={handleSplitDividerMouseDown}
           >
             <div className="h-8 w-0.5 rounded-full bg-[var(--ink-subtle)]" />
           </div>
           {/* Right panel: file preview OR terminal */}
-          <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-            {/* Tab switcher — only when both file AND terminal are active */}
-            {splitFile && terminalAlive && (
+          <div className={`flex min-w-0 flex-1 flex-col overflow-hidden ${!splitPanelVisible ? 'hidden' : ''}`}>
+            {/* Tab switcher — only when both file AND terminal are pinned */}
+            {splitFile && terminalPinned && terminalAlive && (
               <div className="flex h-9 flex-shrink-0 items-center gap-0.5 border-b border-[var(--line)] bg-[var(--paper-elevated)] px-2">
                 {/* File tab + its own × */}
                 <button
@@ -2008,8 +2016,9 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
                     role="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      // Hide terminal from tab bar, switch to file view
-                      // Terminal keeps running in background (× never kills terminal)
+                      // Dismiss terminal from panel, switch to file view
+                      // Terminal keeps running in background
+                      setTerminalPinned(false);
                       setSplitActiveView('file');
                     }}
                     className="ml-0.5 flex h-4 w-4 items-center justify-center rounded opacity-0 transition-opacity hover:bg-[var(--paper-inset)] group-hover:opacity-100"
@@ -2035,8 +2044,8 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
                     path={splitFile.path}
                     onClose={() => {
                       setSplitFile(null);
-                      // If terminal is alive, switch to it
-                      if (terminalAlive) setSplitActiveView('terminal');
+                      // If terminal is pinned and alive, switch to it
+                      if (terminalPinned && terminalAlive) setSplitActiveView('terminal');
                     }}
                     onSaved={() => setWorkspaceRefreshTrigger(prev => prev + 1)}
                     embedded
@@ -2049,61 +2058,63 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
                 </Suspense>
               </div>
             )}
-
-            {/* Terminal view — stays mounted while alive (even when file view is active).
-                Uses `hidden` CSS when not active view to preserve xterm.js canvas state. */}
-            {(terminalAlive || splitActiveView === 'terminal') && (
-              <div className={`flex min-w-0 flex-1 flex-col overflow-hidden ${splitActiveView !== 'terminal' ? 'hidden' : ''}`}>
-                {/* Terminal header — only when tab switcher is NOT showing */}
-                {!(splitFile && terminalAlive) && (
-                  <div className="flex h-9 flex-shrink-0 items-center justify-between px-3" style={{ background: getTerminalTheme().background }}>
-                    <div className="flex items-center gap-1.5">
-                      <TerminalSquare className="h-3.5 w-3.5" style={{ color: getTerminalTheme().foreground }} />
-                      <span className="text-[12px] font-medium" style={{ color: getTerminalTheme().foreground }}>Terminal</span>
-                      <span className="text-[11px]" style={{ color: getTerminalTheme().brightBlack }}>
-                        {agentDir ? `~/${agentDir.split('/').pop()}` : ''}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        // Hide terminal panel (terminal keeps running in background)
-                        setSplitActiveView('file');
-                      }}
-                      className="flex h-5 w-5 items-center justify-center rounded transition-colors"
-                      style={{ color: getTerminalTheme().brightBlack }}
-                      title="隐藏终端"
-                    >
-                      <span className="text-sm leading-none">×</span>
-                    </button>
-                  </div>
-                )}
-                <Suspense fallback={<div className="flex h-full items-center justify-center" style={{ background: getTerminalTheme().background }}><Loader2 className="h-5 w-5 animate-spin" style={{ color: getTerminalTheme().brightBlack }} /></div>}>
-                  <LazyTerminalPanel
-                    workspacePath={agentDir}
-                    terminalId={terminalId}
-                    sessionId={sessionId}
-                    isVisible={splitActiveView === 'terminal'}
-                    onTerminalCreated={(id) => {
-                      setTerminalId(id);
-                      setTerminalAlive(true);
-                    }}
-                    onTerminalExited={() => {
-                      // Clean up dead session in Rust before clearing state
-                      const deadId = terminalId;
-                      setTerminalAlive(false);
-                      setTerminalId(null);
-                      if (deadId) {
-                        import('@tauri-apps/api/core').then(({ invoke: inv }) => {
-                          inv('cmd_terminal_close', { terminalId: deadId }).catch(() => {});
-                        });
-                      }
-                    }}
-                  />
-                </Suspense>
-              </div>
-            )}
           </div>
+
+          {/* Terminal container — OUTSIDE the visible panel div so it stays mounted
+              even when splitPanelVisible is false. Uses hidden CSS to preserve xterm state. */}
+          {terminalMounted && (
+            <div className={`flex min-w-0 flex-1 flex-col overflow-hidden ${!(splitPanelVisible && splitActiveView === 'terminal') ? 'hidden' : ''}`}>
+              {/* Terminal header — only when tab switcher is NOT showing */}
+              {!(splitFile && terminalPinned && terminalAlive) && (
+                <div className="flex h-9 flex-shrink-0 items-center justify-between px-3" style={{ background: getTerminalTheme().background }}>
+                  <div className="flex items-center gap-1.5">
+                    <TerminalSquare className="h-3.5 w-3.5" style={{ color: getTerminalTheme().foreground }} />
+                    <span className="text-[12px] font-medium" style={{ color: getTerminalTheme().foreground }}>Terminal</span>
+                    <span className="text-[11px]" style={{ color: getTerminalTheme().brightBlack }}>
+                      {agentDir ? `~/${agentDir.split('/').pop()}` : ''}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Dismiss terminal panel (terminal keeps running in background)
+                      setTerminalPinned(false);
+                      setSplitActiveView('file');
+                    }}
+                    className="flex h-5 w-5 items-center justify-center rounded transition-colors"
+                    style={{ color: getTerminalTheme().brightBlack }}
+                    title="隐藏终端"
+                  >
+                    <span className="text-sm leading-none">×</span>
+                  </button>
+                </div>
+              )}
+              <Suspense fallback={<div className="flex h-full items-center justify-center" style={{ background: getTerminalTheme().background }}><Loader2 className="h-5 w-5 animate-spin" style={{ color: getTerminalTheme().brightBlack }} /></div>}>
+                <LazyTerminalPanel
+                  workspacePath={agentDir}
+                  terminalId={terminalId}
+                  sessionId={sessionId}
+                  isVisible={splitPanelVisible && splitActiveView === 'terminal'}
+                  onTerminalCreated={(id) => {
+                    setTerminalId(id);
+                    setTerminalAlive(true);
+                  }}
+                  onTerminalExited={() => {
+                    // Clean up dead session in Rust before clearing state
+                    const deadId = terminalId;
+                    setTerminalAlive(false);
+                    setTerminalPinned(false);
+                    setTerminalId(null);
+                    if (deadId) {
+                      import('@tauri-apps/api/core').then(({ invoke: inv }) => {
+                        inv('cmd_terminal_close', { terminalId: deadId }).catch(() => {});
+                      });
+                    }
+                  }}
+                />
+              </Suspense>
+            </div>
+          )}
         </>
       )}
 
