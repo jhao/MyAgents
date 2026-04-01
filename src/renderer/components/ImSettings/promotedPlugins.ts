@@ -23,6 +23,18 @@ export interface PromotedPlugin {
     npmSpec: string;
     /** Display name */
     name: string;
+    /**
+     * Concise tag label for session history / workspace cards (e.g. "QQ" instead of "QQ Bot").
+     * Falls back to `name` if not set. This is the single source of truth for tag text.
+     */
+    tagLabel?: string;
+    /**
+     * Channel brand — the `id` the plugin registers via `registerChannel({ id: ... })`.
+     * May differ from pluginId (e.g. pluginId="wecom-openclaw-plugin" but brand="wecom").
+     * Used to resolve display names from session keys and session sources, where the
+     * bridge's channel brand appears instead of the npm package name.
+     */
+    channelBrand?: string;
     /** Short description shown on platform card */
     description: string;
     /** Icon asset (imported image path) */
@@ -74,6 +86,7 @@ export const PROMOTED_PLUGINS: PromotedPlugin[] = [
         pluginId: 'openclaw-lark',
         npmSpec: '@larksuite/openclaw-lark',
         name: '飞书',
+        channelBrand: 'feishu',
         description: '飞书开放平台官方 OpenClaw 插件，支持文档/表格/日历等深度集成',
         icon: feishuIcon,
         platformColor: '#3370FF',
@@ -116,6 +129,8 @@ export const PROMOTED_PLUGINS: PromotedPlugin[] = [
         pluginId: 'qqbot',
         npmSpec: '@sliverp/qqbot',
         name: 'QQ Bot',
+        tagLabel: 'QQ',
+        channelBrand: 'qqbot',
         description: '通过 QQ Bot 远程使用 AI Agent',
         icon: qqbotIcon,
         platformColor: '#12B7F5',
@@ -143,6 +158,7 @@ export const PROMOTED_PLUGINS: PromotedPlugin[] = [
         pluginId: 'wecom-openclaw-plugin',
         npmSpec: '@wecom/wecom-openclaw-plugin',
         name: '企业微信',
+        channelBrand: 'wecom',
         description: '腾讯企业微信官方 OpenClaw 插件，WebSocket 长连接、流式回复',
         icon: wecomIcon,
         platformColor: '#1B66F5',
@@ -164,6 +180,7 @@ export const PROMOTED_PLUGINS: PromotedPlugin[] = [
         pluginId: 'openclaw-weixin',
         npmSpec: '@tencent-weixin/openclaw-weixin',
         name: '微信',
+        channelBrand: 'openclaw-weixin',
         description: '通过微信聊天使用 AI Agent，扫码即可连接',
         icon: weixinIcon,
         platformColor: '#07C160',
@@ -172,10 +189,22 @@ export const PROMOTED_PLUGINS: PromotedPlugin[] = [
     },
 ];
 
-/** Find a promoted plugin definition by pluginId */
-export function findPromotedPlugin(pluginId: string | undefined): PromotedPlugin | undefined {
-    if (!pluginId) return undefined;
-    return PROMOTED_PLUGINS.find(p => p.pluginId === pluginId);
+/**
+ * Find a promoted plugin by pluginId OR channelBrand.
+ * This is the single lookup function — covers both npm package names (from config)
+ * and bridge channel brands (from session keys / message sources).
+ */
+export function findPromotedPlugin(id: string | undefined): PromotedPlugin | undefined {
+    if (!id) return undefined;
+    return PROMOTED_PLUGINS.find(p => p.pluginId === id || p.channelBrand === id);
+}
+
+/**
+ * Get the concise tag label for a promoted plugin.
+ * Returns tagLabel if set, otherwise name. Used for session history and workspace card tags.
+ */
+export function getPromotedTagLabel(plugin: PromotedPlugin): string {
+    return plugin.tagLabel ?? plugin.name;
 }
 
 /** Find a promoted plugin by platform string (e.g. "openclaw:qqbot") */
