@@ -4,7 +4,7 @@
  */
 
 import type { SessionMetadata } from '@/api/sessionClient';
-import { findPromotedPlugin, getPromotedTagLabel } from '@/components/ImSettings/promotedPlugins';
+import { findPromotedPlugin } from '@/components/ImSettings/promotedPlugins';
 
 const PREVIEW_MAX_LENGTH = 35;
 
@@ -76,7 +76,7 @@ export function getSessionDisplayText(session: SessionMetadata): string {
 function resolveTagLabel(id: string): string {
     if (BUILTIN_PLATFORM_NAMES[id]) return BUILTIN_PLATFORM_NAMES[id];
     const promoted = findPromotedPlugin(id); // matches pluginId OR channelBrand
-    if (promoted) return getPromotedTagLabel(promoted);
+    if (promoted) return promoted.name;
     return id.charAt(0).toUpperCase() + id.slice(1);
 }
 

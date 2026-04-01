@@ -24,11 +24,6 @@ export interface PromotedPlugin {
     /** Display name */
     name: string;
     /**
-     * Concise tag label for session history / workspace cards (e.g. "QQ" instead of "QQ Bot").
-     * Falls back to `name` if not set. This is the single source of truth for tag text.
-     */
-    tagLabel?: string;
-    /**
      * Channel brand — the `id` the plugin registers via `registerChannel({ id: ... })`.
      * May differ from pluginId (e.g. pluginId="wecom-openclaw-plugin" but brand="wecom").
      * Used to resolve display names from session keys and session sources, where the
@@ -128,8 +123,7 @@ export const PROMOTED_PLUGINS: PromotedPlugin[] = [
     {
         pluginId: 'qqbot',
         npmSpec: '@sliverp/qqbot',
-        name: 'QQ Bot',
-        tagLabel: 'QQ',
+        name: 'QQ',
         channelBrand: 'qqbot',
         description: '通过 QQ Bot 远程使用 AI Agent',
         icon: qqbotIcon,
@@ -197,14 +191,6 @@ export const PROMOTED_PLUGINS: PromotedPlugin[] = [
 export function findPromotedPlugin(id: string | undefined): PromotedPlugin | undefined {
     if (!id) return undefined;
     return PROMOTED_PLUGINS.find(p => p.pluginId === id || p.channelBrand === id);
-}
-
-/**
- * Get the concise tag label for a promoted plugin.
- * Returns tagLabel if set, otherwise name. Used for session history and workspace card tags.
- */
-export function getPromotedTagLabel(plugin: PromotedPlugin): string {
-    return plugin.tagLabel ?? plugin.name;
 }
 
 /** Find a promoted plugin by platform string (e.g. "openclaw:qqbot") */
