@@ -527,6 +527,9 @@ pub struct SidecarManager {
     session_activations: HashMap<String, SessionActivation>,
     /// Port counter for allocation (starts from BASE_PORT)
     port_counter: AtomicU16,
+    /// Session ID -> generation counter. Incremented each time a sidecar is created
+    /// for a session. Used to detect replacements during lock-gap HTTP health checks.
+    sidecar_generations: HashMap<String, u64>,
 }
 
 impl SidecarManager {
@@ -536,7 +539,20 @@ impl SidecarManager {
             instances: HashMap::new(),
             session_activations: HashMap::new(),
             port_counter: AtomicU16::new(BASE_PORT),
+            sidecar_generations: HashMap::new(),
         }
+    }
+
+    /// Increment and return the generation counter for a session.
+    fn next_generation(&mut self, session_id: &str) -> u64 {
+        let gen = self.sidecar_generations.entry(session_id.to_string()).or_insert(0);
+        *gen += 1;
+        *gen
+    }
+
+    /// Get the current generation counter for a session (0 if never created).
+    fn current_generation(&self, session_id: &str) -> u64 {
+        self.sidecar_generations.get(session_id).copied().unwrap_or(0)
     }
 
     /// Get the next available port with max attempts to prevent infinite loop
@@ -2240,9 +2256,12 @@ pub fn ensure_session_sidecar<R: Runtime>(
         }
     };
 
-    // If we found a running sidecar, verify HTTP health (with lock released)
+    // If we found a running sidecar, verify HTTP health (with lock released).
+    // CRITICAL: The lock is dropped during the 2s HTTP check. Another thread (health monitor)
+    // can replace the sidecar during this window. We use a generation counter to detect this
+    // and avoid accidentally killing the healthy replacement.
     if let Some(port) = existing_sidecar_info {
-        // Drop the lock before doing HTTP check to avoid blocking other operations
+        let pre_gen = manager_guard.current_generation(session_id);
         drop(manager_guard);
 
         // Verify HTTP server is actually responsive (not just process alive)
@@ -2250,11 +2269,28 @@ pub fn ensure_session_sidecar<R: Runtime>(
 
         // Re-acquire lock after HTTP check
         let mut manager_guard = manager.lock().map_err(|e| e.to_string())?;
+        let post_gen = manager_guard.current_generation(session_id);
 
-        if http_healthy {
-            // HTTP health check passed - try to reuse the sidecar if it still exists
+        if post_gen != pre_gen {
+            // Generation changed: another thread replaced the sidecar during our HTTP check.
+            // Reuse the replacement instead of blindly removing it.
+            log::info!(
+                "[sidecar] Session {} generation changed ({} → {}) during HTTP check on port {}, reusing replacement",
+                session_id, pre_gen, post_gen, port
+            );
             if let Some(sidecar) = manager_guard.sidecars.get_mut(session_id) {
-                // Double-check port hasn't changed (another thread might have replaced it)
+                if sidecar.is_running() {
+                    sidecar.add_owner(owner);
+                    return Ok(EnsureSidecarResult {
+                        port: sidecar.port,
+                        is_new: false,
+                    });
+                }
+            }
+            // Replacement sidecar also died — fall through to create
+        } else if http_healthy {
+            // Same generation, HTTP healthy — try to reuse
+            if let Some(sidecar) = manager_guard.sidecars.get_mut(session_id) {
                 if sidecar.port == port && sidecar.is_running() {
                     log::info!(
                         "[sidecar] Session {} Sidecar HTTP healthy on port {}, adding owner {:?}",
@@ -2267,13 +2303,13 @@ pub fn ensure_session_sidecar<R: Runtime>(
                     });
                 }
             }
-            // Sidecar was removed or replaced during HTTP check - fall through to create new one
+            // Sidecar gone but generation unchanged (removed without replacement)
             log::info!(
-                "[sidecar] Session {} Sidecar changed during HTTP check, will create new",
+                "[sidecar] Session {} Sidecar removed during HTTP check, will create new",
                 session_id
             );
         } else {
-            // HTTP health check failed - sidecar is unresponsive, remove it if still present
+            // Same generation, HTTP unhealthy — safe to remove (no one replaced it)
             log::warn!(
                 "[sidecar] Session {} Sidecar process alive but HTTP unresponsive on port {}, removing",
                 session_id, port
@@ -2281,9 +2317,6 @@ pub fn ensure_session_sidecar<R: Runtime>(
             manager_guard.sidecars.remove(session_id);
         }
 
-        // Fall through to create new sidecar with the re-acquired lock
-        // We need to call the creation code below, so we store the guard
-        // and use a labeled block to handle the return
         return create_new_session_sidecar(
             app_handle, manager, session_id, workspace_path, owner, manager_guard
         );
@@ -2305,6 +2338,24 @@ fn create_new_session_sidecar<R: Runtime>(
     owner: SidecarOwner,
     mut manager_guard: std::sync::MutexGuard<'_, SidecarManager>,
 ) -> Result<EnsureSidecarResult, String> {
+
+    // Guard against double-creation: if another thread already created a sidecar for this
+    // session (e.g., health monitor raced with frontend), reuse it instead of spawning another.
+    if let Some(existing) = manager_guard.sidecars.get_mut(session_id) {
+        if existing.is_running() {
+            log::info!(
+                "[sidecar] Session {} already has a running sidecar on port {} (created by another thread), reusing",
+                session_id, existing.port
+            );
+            existing.add_owner(owner);
+            return Ok(EnsureSidecarResult {
+                port: existing.port,
+                is_new: false,
+            });
+        }
+        // Exists but dead — remove before creating fresh
+        manager_guard.sidecars.remove(session_id);
+    }
 
     // Need to start a new Sidecar
     // First, find executables
@@ -2430,6 +2481,7 @@ fn create_new_session_sidecar<R: Runtime>(
         created_at: std::time::Instant::now(),
     };
 
+    manager_guard.next_generation(session_id);
     manager_guard.sidecars.insert(session_id.to_string(), sidecar);
 
     // Drop lock before waiting for health
@@ -2499,6 +2551,8 @@ pub fn release_session_sidecar(
 
     if removed {
         if stopped {
+            // Clean up generation counter when sidecar is permanently removed
+            manager_guard.sidecar_generations.remove(session_id);
             log::info!(
                 "[sidecar] Released owner {:?} from session {}, Sidecar stopped (last owner)",
                 owner, session_id
