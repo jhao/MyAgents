@@ -1375,56 +1375,54 @@ async function buildSdkMcpServers(): Promise<Record<string, SdkMcpServerConfig |
       // System Node.js is maintained by the user's package manager, more reliable than our bundled npm.
       // Bundled Node.js serves as fallback for users who don't have Node.js installed.
       if (command === 'npx') {
+        // Pin @latest to known versions for builtin MCPs only (avoids npm registry check on startup)
         if (server.isBuiltin) {
-          // Pin @latest to known versions to avoid npm registry check on every startup
           args = pinMcpPackageVersions(args);
+        }
 
-          // Dual runtime strategy: MCP servers are community npm packages designed for
-          // Node.js. Running them under Bun causes compatibility issues (Playwright pipe
-          // transport, axios adapter, postinstall scripts, etc.).
-          // Priority: system npx → bundled Node.js npx → bun x
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const { getBundledNodeDir: getNodeDir, getBundledRuntimePath, isBunRuntime, getSystemNpxPaths, findExistingPath } = require('./utils/runtime');
-          const systemNpx = findExistingPath(getSystemNpxPaths());
+        // Resolve npx to full path for ALL MCPs (builtin + custom).
+        // Previously custom MCPs used bare 'npx' which relied on SDK's cross-spawn
+        // to find npx.cmd via filtered PATH — failed on Windows when PATH was incomplete
+        // or when the SDK's env whitelist (RK_) didn't propagate Node.js directories.
+        // Resolving to full path eliminates this class of issues (pit-of-success pattern).
+        // Priority: system npx → bundled Node.js npx → bun x
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { getBundledNodeDir: getNodeDir, getBundledRuntimePath, isBunRuntime, getSystemNpxPaths, findExistingPath } = require('./utils/runtime');
+        const systemNpx = findExistingPath(getSystemNpxPaths());
 
-          if (systemNpx) {
-            // 1. System npx available — most reliable, user-maintained
-            command = systemNpx;
-            args = ['-y', ...args];
-            console.log(`[agent] MCP ${server.id}: Using system npx (${systemNpx})`);
+        if (systemNpx) {
+          // 1. System npx available — most reliable, user-maintained
+          command = systemNpx;
+          if (!args.includes('-y')) args = ['-y', ...args];
+          console.log(`[agent] MCP ${server.id}: Using system npx (${systemNpx})`);
+        } else {
+          // 2. Fallback to bundled Node.js npx (use absolute path for deterministic resolution)
+          const nodeDir = getNodeDir();
+          if (nodeDir) {
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            const { join: pathJoin } = require('path');
+            command = process.platform === 'win32' ? pathJoin(nodeDir, 'npx.cmd') : pathJoin(nodeDir, 'npx');
+            if (!args.includes('-y')) args = ['-y', ...args];
+            console.log(`[agent] MCP ${server.id}: System npx not found, using bundled Node.js npx (${command})`);
           } else {
-            // 2. Fallback to bundled Node.js npx (use absolute path for deterministic resolution)
-            const nodeDir = getNodeDir();
-            if (nodeDir) {
-              // eslint-disable-next-line @typescript-eslint/no-require-imports
-              const { join: pathJoin } = require('path');
-              command = process.platform === 'win32' ? pathJoin(nodeDir, 'npx.cmd') : pathJoin(nodeDir, 'npx');
-              args = ['-y', ...args];
-              console.log(`[agent] MCP ${server.id}: System npx not found, using bundled Node.js npx (${command})`);
+            // 3. Last resort: bun x or derive npx from system node
+            const runtime = getBundledRuntimePath();
+            if (isBunRuntime(runtime)) {
+              command = runtime;
+              // bun x doesn't use -y flag — strip only the leading -y (npx auto-confirm)
+              const bunArgs = args[0] === '-y' ? args.slice(1) : args;
+              args = ['x', ...bunArgs];
+              console.log(`[agent] MCP ${server.id}: No Node.js found (system or bundled), falling back to bun x`);
             } else {
-              // 3. Last resort: bun x or derive npx from system node
-              const runtime = getBundledRuntimePath();
-              if (isBunRuntime(runtime)) {
-                command = runtime;
-                args = ['x', ...args];
-                console.log(`[agent] MCP ${server.id}: No Node.js found (system or bundled), falling back to bun x`);
-              } else {
-                // getBundledRuntimePath found a system node — derive npx from same dir
-                // eslint-disable-next-line @typescript-eslint/no-require-imports
-                const { dirname: pathDirname, resolve: pathResolve } = require('path');
-                const npxSibling = pathResolve(pathDirname(runtime), process.platform === 'win32' ? 'npx.cmd' : 'npx');
-                command = npxSibling;
-                args = ['-y', ...args];
-                console.log(`[agent] MCP ${server.id}: Derived npx from system node: ${npxSibling}`);
-              }
+              // getBundledRuntimePath found a system node — derive npx from same dir
+              // eslint-disable-next-line @typescript-eslint/no-require-imports
+              const { dirname: pathDirname, resolve: pathResolve } = require('path');
+              const npxSibling = pathResolve(pathDirname(runtime), process.platform === 'win32' ? 'npx.cmd' : 'npx');
+              command = npxSibling;
+              if (!args.includes('-y')) args = ['-y', ...args];
+              console.log(`[agent] MCP ${server.id}: Derived npx from system node: ${npxSibling}`);
             }
           }
-        } else {
-          // Custom MCP: use system npx with -y for auto-confirm
-          if (!args.includes('-y')) {
-            args = ['-y', ...args];
-          }
-          console.log(`[agent] MCP ${server.id}: Using system npx`);
         }
       }
 
