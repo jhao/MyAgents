@@ -2063,7 +2063,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
                       <TerminalSquare className="h-3.5 w-3.5 text-[var(--ink)]" />
                       <span className="text-[12px] font-medium text-[var(--ink)]">终端</span>
                       <span className="text-[11px] text-[var(--ink-muted)]">
-                        {agentDir ? `~/${agentDir.split('/').pop()}` : ''}
+                        {agentDir ? `~/${agentDir.split(/[/\\]/).pop()}` : ''}
                       </span>
                     </div>
                     <Tip label="隐藏终端" position="bottom">

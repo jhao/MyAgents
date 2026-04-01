@@ -303,10 +303,14 @@ fn default_shell() -> String {
     }
     #[cfg(windows)]
     {
-        // Prefer PowerShell 7 → PowerShell 5 → cmd.exe
+        // Prefer PowerShell 7 → PowerShell 5.1 → cmd.exe
+        // PowerShell supports Unix-like aliases (ls, pwd, clear, cat, etc.),
+        // giving users a familiar experience. cmd.exe lacks these entirely.
         // Use system_binary::find() instead of bare which::which() (CLAUDE.md constraint)
         if crate::system_binary::find("pwsh").is_some() {
             "pwsh".into()
+        } else if crate::system_binary::find("powershell").is_some() {
+            "powershell".into()
         } else {
             std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into())
         }

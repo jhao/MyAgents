@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **供应商验证**：硅基流动等供应商验证超时或报 400 错误
 - **企微插件崩溃**：企业微信插件因 runtime 上下文缺失导致消息收发失败
 - **SSE 重连重复**：重连后 AI 思考过程内容重复显示
+- **Windows 终端无法使用**：内嵌终端在 Windows 上降级到 cmd.exe，所有 Unix 风格命令（ls/pwd/clear 等）均无效。修复 shell 检测链加入 PowerShell 5.1（Windows 自带）
+- **终端中文字体**：终端字体栈缺少中文字体，Windows 中文显示为宋体。补充 PingFang SC / Microsoft YaHei
+- **终端标题 Windows 路径**：标题栏路径分割未处理反斜杠，Windows 下显示为 `~/C:\full\path`
 
 ---
 
