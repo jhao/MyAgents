@@ -1992,10 +1992,10 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
                       setSplitFile(null);
                       setSplitActiveView('terminal');
                     }}
-                    className="ml-0.5 flex h-4 w-4 items-center justify-center rounded opacity-0 transition-opacity hover:bg-[var(--paper-inset)] group-hover:opacity-100"
+                    className="ml-0.5 flex h-5 w-5 items-center justify-center rounded opacity-0 transition-opacity hover:bg-[var(--paper-inset)] group-hover:opacity-100"
                     title="关闭文件"
                   >
-                    <span className="text-[11px] leading-none text-[var(--ink-muted)]">×</span>
+                    <span className="text-[13px] leading-none text-[var(--ink-muted)]">×</span>
                   </span>
                   {splitActiveView === 'file' && (
                     <div className="absolute inset-x-1 -bottom-[5px] h-[2px] rounded-full bg-[var(--accent-warm)]" />
@@ -2012,7 +2012,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
                   }`}
                 >
                   <TerminalSquare className="h-3 w-3" />
-                  Terminal
+                  终端
                   <span
                     role="button"
                     onClick={(e) => {
@@ -2020,10 +2020,10 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
                       setTerminalPinned(false);
                       setSplitActiveView('file');
                     }}
-                    className="ml-0.5 flex h-4 w-4 items-center justify-center rounded opacity-0 transition-opacity hover:bg-[var(--paper-inset)] group-hover:opacity-100"
+                    className="ml-0.5 flex h-5 w-5 items-center justify-center rounded opacity-0 transition-opacity hover:bg-[var(--paper-inset)] group-hover:opacity-100"
                     title="隐藏终端"
                   >
-                    <span className="text-[11px] leading-none text-[var(--ink-muted)]">×</span>
+                    <span className="text-[13px] leading-none text-[var(--ink-muted)]">×</span>
                   </span>
                   {splitActiveView === 'terminal' && (
                     <div className="absolute inset-x-1 -bottom-[5px] h-[2px] rounded-full bg-[var(--accent-warm)]" />
@@ -2066,7 +2066,7 @@ export default function Chat({ onBack, onNewSession, onSwitchSession, initialMes
                   <div className="flex h-9 flex-shrink-0 items-center justify-between px-3" style={{ background: getTerminalTheme().background }}>
                     <div className="flex items-center gap-1.5">
                       <TerminalSquare className="h-3.5 w-3.5" style={{ color: getTerminalTheme().foreground }} />
-                      <span className="text-[12px] font-medium" style={{ color: getTerminalTheme().foreground }}>Terminal</span>
+                      <span className="text-[12px] font-medium" style={{ color: getTerminalTheme().foreground }}>终端</span>
                       <span className="text-[11px]" style={{ color: getTerminalTheme().brightBlack }}>
                         {agentDir ? `~/${agentDir.split('/').pop()}` : ''}
                       </span>

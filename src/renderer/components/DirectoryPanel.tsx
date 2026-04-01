@@ -18,6 +18,7 @@ import {
   ExternalLink,
   TerminalSquare
 } from 'lucide-react';
+import Tip from '@/components/Tip';
 import { forwardRef, lazy, memo, Suspense, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Tree, type TreeApi } from 'react-arborist';
 import {
@@ -1285,25 +1286,26 @@ const DirectoryPanel = memo(forwardRef<DirectoryPanelHandle, DirectoryPanelProps
           <span className="text-base font-semibold text-[var(--ink)]">项目工作区</span>
           {/* Terminal button — next to title */}
           {onOpenTerminal && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenTerminal();
-              }}
-              className={`relative flex h-5 w-5 items-center justify-center rounded transition-colors ${
-                terminalAlive
-                  ? 'text-[var(--accent-warm)] hover:bg-[var(--accent-warm-subtle)]'
-                  : 'text-[var(--ink-muted)] hover:bg-[var(--paper-inset)] hover:text-[var(--ink)]'
-              }`}
-              title={terminalAlive ? '显示终端' : '打开终端'}
-            >
-              <TerminalSquare className="h-3.5 w-3.5" />
-              {/* Alive indicator dot */}
-              {terminalAlive && (
-                <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-[var(--success)]" />
-              )}
-            </button>
+            <Tip label={terminalAlive ? '显示终端' : '打开终端'} position="bottom">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenTerminal();
+                }}
+                className={`relative flex h-5 w-5 items-center justify-center rounded transition-colors ${
+                  terminalAlive
+                    ? 'text-[var(--accent-warm)] hover:bg-[var(--accent-warm-subtle)]'
+                    : 'text-[var(--ink-muted)] hover:bg-[var(--paper-inset)] hover:text-[var(--ink)]'
+                }`}
+              >
+                <TerminalSquare className="h-3.5 w-3.5" />
+                {/* Alive indicator dot */}
+                {terminalAlive && (
+                  <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-[var(--success)]" />
+                )}
+              </button>
+            </Tip>
           )}
         </div>
         {/* Right side buttons */}
