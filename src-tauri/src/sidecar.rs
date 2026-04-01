@@ -387,6 +387,17 @@ impl SessionSidecar {
         }
     }
 
+    /// Check if the sidecar process is alive (regardless of healthy flag).
+    /// Used during generation-change detection: a replacement sidecar may still be
+    /// in `wait_for_health` (healthy=false) but its process is alive and should not be killed.
+    pub fn is_process_alive(&mut self) -> bool {
+        match self.process.try_wait() {
+            Ok(Some(_)) => false,  // Process exited
+            Ok(None) => true,      // Still running
+            Err(_) => false,       // Error checking = assume dead
+        }
+    }
+
     /// Check if this Sidecar has any owners
     /// Reserved for future use (e.g., lifecycle management)
     #[allow(dead_code)]
@@ -645,6 +656,7 @@ impl SidecarManager {
         self.sidecars.clear(); // Session-centric Sidecars (Drop kills processes)
         self.instances.clear(); // Global Sidecar (Drop kills process)
         self.session_activations.clear();
+        self.sidecar_generations.clear();
         // Remove port file so CLI knows the sidecar is down
         remove_global_port_file();
     }
@@ -842,7 +854,12 @@ impl SidecarManager {
             upgraded = true;
         }
 
-        // 2. Upgrade in session_activations HashMap
+        // 2. Migrate generation counter
+        if let Some(gen) = self.sidecar_generations.remove(old_session_id) {
+            self.sidecar_generations.insert(new_session_id.to_string(), gen);
+        }
+
+        // 3. Upgrade in session_activations HashMap
         if let Some(mut activation) = self.session_activations.remove(old_session_id) {
             // Update the session_id field in the activation itself
             activation.session_id = new_session_id.to_string();
@@ -2274,12 +2291,29 @@ pub fn ensure_session_sidecar<R: Runtime>(
         if post_gen != pre_gen {
             // Generation changed: another thread replaced the sidecar during our HTTP check.
             // Reuse the replacement instead of blindly removing it.
+            // IMPORTANT: Use is_process_alive() not is_running() — the replacement may still
+            // be in wait_for_health (healthy=false) but its process is alive and should not be killed.
             log::info!(
                 "[sidecar] Session {} generation changed ({} → {}) during HTTP check on port {}, reusing replacement",
                 session_id, pre_gen, post_gen, port
             );
             if let Some(sidecar) = manager_guard.sidecars.get_mut(session_id) {
                 if sidecar.is_running() {
+                    // Replacement is fully healthy — reuse immediately
+                    sidecar.add_owner(owner);
+                    return Ok(EnsureSidecarResult {
+                        port: sidecar.port,
+                        is_new: false,
+                    });
+                }
+                if sidecar.is_process_alive() {
+                    // Replacement is still starting (healthy=false but process alive).
+                    // Add owner and return its port — the other thread's wait_for_health
+                    // will mark it healthy soon. Don't kill it by falling through to create.
+                    log::info!(
+                        "[sidecar] Session {} replacement on port {} still starting, adding owner and returning",
+                        session_id, sidecar.port
+                    );
                     sidecar.add_owner(owner);
                     return Ok(EnsureSidecarResult {
                         port: sidecar.port,
@@ -2287,7 +2321,7 @@ pub fn ensure_session_sidecar<R: Runtime>(
                     });
                 }
             }
-            // Replacement sidecar also died — fall through to create
+            // Replacement sidecar process also dead — fall through to create
         } else if http_healthy {
             // Same generation, HTTP healthy — try to reuse
             if let Some(sidecar) = manager_guard.sidecars.get_mut(session_id) {
@@ -2341,11 +2375,13 @@ fn create_new_session_sidecar<R: Runtime>(
 
     // Guard against double-creation: if another thread already created a sidecar for this
     // session (e.g., health monitor raced with frontend), reuse it instead of spawning another.
+    // Check is_process_alive() too — a Starting sidecar (healthy=false, process alive) should
+    // not be killed and recreated.
     if let Some(existing) = manager_guard.sidecars.get_mut(session_id) {
-        if existing.is_running() {
+        if existing.is_running() || existing.is_process_alive() {
             log::info!(
-                "[sidecar] Session {} already has a running sidecar on port {} (created by another thread), reusing",
-                session_id, existing.port
+                "[sidecar] Session {} already has a {} sidecar on port {} (created by another thread), reusing",
+                session_id, if existing.healthy { "healthy" } else { "starting" }, existing.port
             );
             existing.add_owner(owner);
             return Ok(EnsureSidecarResult {
@@ -2353,7 +2389,7 @@ fn create_new_session_sidecar<R: Runtime>(
                 is_new: false,
             });
         }
-        // Exists but dead — remove before creating fresh
+        // Exists but process dead — remove before creating fresh
         manager_guard.sidecars.remove(session_id);
     }
 
